@@ -1,0 +1,19 @@
+name: "csp_balance_tracker"
+version: "1.0.0"
+config-version: 2
+
+profile: "csp_balance_tracker"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  csp_balance_tracker:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

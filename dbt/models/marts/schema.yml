@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: monthly_summary
+    description: "Per-CSP, per-month MAB/slab/gap/MoM/trend — PRD §5.2, §8 FR4."
+    columns:
+      - name: csp_code
+        tests:
+          - not_null
+      - name: month
+        tests:
+          - not_null
+      - name: mtd_mab
+        tests:
+          - not_null
+      - name: slab
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["NIL", "S1", "S2", "S3", "S4"]
+      - name: gap_to_min
+        tests:
+          - not_null
+
+  - name: daily_activity
+    description: "Per-CSP per-day ONUS activity rollup — PRD §7.2/§10."
+    columns:
+      - name: csp_code
+        tests:
+          - not_null
+      - name: activity_date
+        tests:
+          - not_null
+      - name: txn_count
+        tests:
+          - not_null

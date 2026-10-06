@@ -1,0 +1,7 @@
+{% comment %}
+CspIdentity — name + code, linked to the CSP detail page. The same two-line
+"name on top, mono code underneath" shape every table row and detail
+header already uses.
+Usage: {% include "dashboard/components/csp_identity.html" with csp_code=csp.csp_code csp_name=csp.name %}
+{% endcomment %}
+<a class="name-link" href="{% url 'dashboard:csp_detail' csp_code %}">{{ csp_name|default:csp_code }}</a><span class="code">{{ csp_code }}</span>

@@ -1,0 +1,102 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Messaging — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Draft only &middot; Nemotron</div>
+    <h1>Messaging</h1>
+    <p class="sub">Nemotron-drafted CSP nudges. Nothing here sends itself &mdash; there is no messaging-provider
+      integration wired up, so Approve just marks a draft ready; actually delivering it today is a manual
+      step (copy the text, send it via your SMS/WhatsApp tool). See docs/ARCHITECTURE.md's autopilot section.</p>
+  </header>
+
+  <div class="stats">
+    <a class="stat{% if not status_filter %} active{% endif %}" href="?">
+      <div class="label">All</div>
+      <div class="value">{{ total_count }}</div>
+      <div class="foot">every draft on file</div>
+    </a>
+    {% for value, label, count in status_rows %}
+    <a class="stat{% if status_filter == value %} active{% endif %}" href="?status={{ value }}">
+      <div class="label">{{ label }}</div>
+      <div class="value">{{ count }}</div>
+      <div class="foot">&nbsp;</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Drafted messages</h2>
+      <span class="hint">{{ messages|length }} shown</span>
+    </div>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>CSP</th><th>Message</th><th>Channel</th><th>Status</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for m in messages %}
+          <tr class="msg-row" data-csp-name="{{ m.csp.name|default:m.csp.csp_code }}">
+            <td><a class="name-link" href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">{{ m.csp.name|default:m.csp.csp_code }}</a><span class="code">{{ m.csp.csp_code }}</span></td>
+            <td style="text-align:left;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ m.text|truncatechars:70 }}</td>
+            <td>{{ m.get_channel_display }}</td>
+            <td><span class="pill msg-{{ m.status }}">{{ m.get_status_display }}</span></td>
+            <td class="mono">{{ m.generated_at|date:"d M, H:i" }}</td>
+            <td><button type="button" class="chip" data-view-message="detail-{{ m.id }}">View</button></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:28px;">No draft messages yet &mdash; runs automatically once a day (see <code>manage.py draft_csp_nudges</code>).</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Detail sources for the drawer — real, already-rendered forms (own CSRF
+       token each), just kept out of the table row's visual flow. The View
+       button below copies this markup into the drawer verbatim: same field
+       names, same action values, same business logic as before, only the
+       presentation moved. -->
+  <div style="display:none;" aria-hidden="true">
+    {% for m in messages %}
+    <div id="detail-{{ m.id }}">
+      <p class="hint" style="margin:-8px 0 14px;">{{ m.csp.csp_code }} &middot; {{ m.get_channel_display }} &middot; {{ m.generated_at|date:"d M, H:i" }}</p>
+      <p class="msg-text">{{ m.text }}</p>
+      {% if m.status == "draft" %}
+      <div class="msg-actions">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="message_id" value="{{ m.id }}">
+          <button type="submit" name="action" value="approve" class="btn-approve">Approve</button>
+        </form>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="message_id" value="{{ m.id }}">
+          <button type="submit" name="action" value="reject" class="btn-reject">Reject</button>
+        </form>
+      </div>
+      {% elif m.reviewed_by %}
+      <p class="hint" style="margin:10px 0 0;">{{ m.get_status_display }} by {{ m.reviewed_by.get_username }} on {{ m.reviewed_at|date:"d M, H:i" }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll('[data-view-message]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const src = document.getElementById(btn.dataset.viewMessage);
+      const title = btn.closest("tr").dataset.cspName || "Message";
+      const body = window.openDrawer(title);
+      body.innerHTML = src.innerHTML;
+    });
+  });
+</script>
+{% endblock %}

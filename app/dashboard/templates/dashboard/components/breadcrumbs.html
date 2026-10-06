@@ -1,0 +1,11 @@
+{% comment %}
+Breadcrumbs — `items` is a list of (label, url_or_none) tuples; the last
+item is rendered as the current page (no link).
+Usage: {% include "dashboard/components/breadcrumbs.html" with items=breadcrumb_items %}
+{% endcomment %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  {% for label, url in items %}
+    {% if not forloop.last %}<a href="{{ url }}">{{ label }}</a><span class="sep">/</span>
+    {% else %}<span class="current">{{ label }}</span>{% endif %}
+  {% endfor %}
+</nav>

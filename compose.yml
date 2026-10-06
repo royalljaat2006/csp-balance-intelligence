@@ -1,0 +1,195 @@
+# Scalability foundation (2026-09-21): the `web` tier is now stateless and
+# horizontally scalable (`docker compose up -d --scale web=N`) behind the
+# `lb` (nginx) service, which is the one thing bound to the host port —
+# `web` itself publishes nothing directly, so scaling it no longer hits a
+# "port already in use" wall. The single `worker` role is split into four
+# independently-scalable services (see the `x-worker` anchor below) so an
+# operator can scale, say, `worker-calling-sheet` without also scaling
+# `worker-autopilot`. `redis` backs the cache/rate-limit/queue layer;
+# `agent-worker` consumes the CSP Operations Agent's async queue. See the
+# scalability report for the full rationale and load-test results.
+
+x-worker: &worker-base
+  image: csp-balance-tracker:latest
+  command: ["worker"]
+  env_file:
+    - .env
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+  # Not an HTTP service — the image's HEALTHCHECK doesn't apply here.
+  healthcheck:
+    disable: true
+  volumes:
+    - ${TRANSACTION_DATA_DIR_HOST}:/data
+    - ${GOOGLE_SERVICE_ACCOUNT_FILE_HOST}:/run/secrets/google-sa.json:ro
+  networks:
+    - app-network
+
+services:
+  lb:
+    image: nginx:1.27-alpine
+    container_name: ${APP_NAME}-lb
+    ports:
+      # Same external contract as before this change: localhost-only, one
+      # published port. Only difference is what's behind it — a load
+      # balancer over N stateless `web` replicas instead of one container.
+      - "127.0.0.1:${APP_PORT}:80"
+    volumes:
+      - ./scripts/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - app-network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: csp-balance-tracker:latest
+    command: ["web"]
+    # No `ports:` here on purpose — `web` is only reachable through `lb`
+    # (or directly on app-network by other containers), which is what makes
+    # `--scale web=3` possible at all: N containers can't all bind the same
+    # host port. See docs/DEPLOYMENT.md's updated topology note.
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Liveness only — see common/views.py's health_live docstring for why
+      # a container healthcheck shouldn't fail on a transient DB blip.
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - app-network
+
+  agent-worker:
+    image: csp-balance-tracker:latest
+    container_name: ${APP_NAME}-agent-worker
+    command: ["agent-worker"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    networks:
+      - app-network
+
+  worker-ingestion:
+    <<: *worker-base
+    container_name: ${APP_NAME}-worker-ingestion
+    environment:
+      WATCH_JOBS: "ingest_transactions"
+
+  worker-calling-sheet:
+    <<: *worker-base
+    container_name: ${APP_NAME}-worker-calling-sheet
+    environment:
+      WATCH_JOBS: "ingest_calling_sheet,sync_daily_snapshots"
+
+  worker-telegram:
+    <<: *worker-base
+    container_name: ${APP_NAME}-worker-telegram
+    environment:
+      WATCH_JOBS: "poll_telegram"
+
+  worker-autopilot:
+    <<: *worker-base
+    container_name: ${APP_NAME}-worker-autopilot
+    environment:
+      WATCH_JOBS: "run_autopilot"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${APP_NAME}-redis
+    # No host port published — same "private, internal-network-only" rule
+    # as `db`. Cache/queue data is disposable (never authoritative state),
+    # so no named volume either: a restart losing it is fine by design.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-network
+
+  # PgBouncer connection pooling (P0 production-hardening fast-pass,
+  # 2026-09-21) — OPT-IN, not the default DATABASE_URL target: switching to
+  # it means pointing DATABASE_URL at pgbouncer:6432 instead of db:5432 (see
+  # docs/DEPLOYMENT.md "Connection pooling"). Not enabled by default this
+  # round so the existing, working direct-to-Postgres path is never put at
+  # risk by an unverified auth/config change in a fast pass. Local dev never
+  # needs this (a handful of connections, CONN_MAX_AGE is enough) — it's a
+  # production-scale concern once many `web`/worker replicas would otherwise
+  # each hold their own persistent connection pool against real Postgres.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: ${APP_NAME}-pgbouncer
+    environment:
+      DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}
+      # Postgres 17 defaults to scram-sha-256 password encryption; pgbouncer's
+      # own default (md5-hashing the password itself) doesn't match it and
+      # fails auth with "wrong password type" — confirmed against the real
+      # db container, not assumed.
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "500"
+      DEFAULT_POOL_SIZE: "25"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # edoburu/pgbouncer listens on 5432 internally by default (not the
+      # pgbouncer-standard 6432) — confirmed against the running container's
+      # own startup log, not assumed.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${DATABASE_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  db:
+    image: postgres:17
+    container_name: ${APP_NAME}-db
+    # No host port published — Postgres is reachable only from app-network (R730 rule: databases stay private).
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  db_data:

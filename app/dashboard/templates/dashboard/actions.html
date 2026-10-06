@@ -1,0 +1,66 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Actions — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>AI Operations</div>
+    <h1>Actions</h1>
+    <p class="sub">Everything an agent has proposed or done. Read-only inspection — the one real
+      approve/reject control (message drafts) still lives only on
+      <a href="{% url 'dashboard:messaging' %}" style="color:var(--brand);">Messaging</a>; nothing here
+      executes on its own.</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Action log</h2>
+      <span class="hint">{{ total|intcomma }} matching, page {{ page }} of {{ total_pages }}</span>
+    </div>
+    <form method="get" class="date-range-form">
+      <label>Status
+        <select name="status" onchange="this.form.submit();">
+          <option value="">All</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="tbl-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr><th>When</th><th>CSP</th><th>Type</th><th>Description</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for a in action_rows %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ a.created_at|date:"d M, H:i" }}</td>
+            <td>{% if a.csp %}<a class="name-link" href="{% url 'dashboard:csp_detail' a.csp_id %}">{{ a.csp.name|default:a.csp_id }}</a><span class="code">{{ a.csp_id }}</span>{% else %}<span class="hint">Network-wide</span>{% endif %}</td>
+            <td>{{ a.get_action_type_display }}</td>
+            <td class="hint">{{ a.description|truncatechars:90 }}{% if a.draft_message %} <a href="{% url 'dashboard:messaging' %}" style="color:var(--brand);">(review draft)</a>{% endif %}</td>
+            <td>
+              {% include "dashboard/components/status_badge.html" with status=a.status %}
+              {% if a.status == "pending_approval" %}{% include "dashboard/components/trust_badge.html" with kind="pending_approval" %}{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">
+            {% include "dashboard/components/empty_state.html" with title="No agent actions yet" description="Proposed follow-ups, escalations, and review flags will appear here once the agent has run." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      <div class="pager-btns">
+        {% if page > 1 %}<a href="?page={{ page|add:"-1" }}{% if status_filter %}&status={{ status_filter }}{% endif %}"><button type="button">&larr; Prev</button></a>{% else %}<button type="button" disabled>&larr; Prev</button>{% endif %}
+        {% if page < total_pages %}<a href="?page={{ page|add:"1" }}{% if status_filter %}&status={{ status_filter }}{% endif %}"><button type="button">Next &rarr;</button></a>{% else %}<button type="button" disabled>Next &rarr;</button>{% endif %}
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

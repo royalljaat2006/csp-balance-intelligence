@@ -1,0 +1,195 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}CSP Directory — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Network-wide</div>
+    <h1>CSP Directory</h1>
+    <p class="sub">Browse every CSP known to the tracker, whether or not it has reported yet —
+      {{ total_csps|intcomma }} total. Same today-vs-yesterday comparison engine as Daily Comparison.</p>
+  </header>
+
+  <section class="panel" style="padding:12px 16px;">
+    <form method="get" class="date-range-form">
+      <label>Mode
+        <select name="mode">
+          <option value="overall" {% if mode == "overall" %}selected{% endif %}>Overall</option>
+          <option value="onus" {% if mode == "onus" %}selected{% endif %}>ONUS</option>
+        </select>
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  </section>
+
+  <section class="panel" id="directory-table">
+    <div class="panel-head">
+      <h2>All CSPs</h2>
+      <span class="hint" id="table-count"></span>
+    </div>
+    <div class="controls">
+      <input class="search" id="search" type="search" placeholder="Search by name, code, or mobile&hellip;" aria-label="Search CSPs">
+      <button class="chip" data-slab="ALL" aria-pressed="true">All slabs</button>
+      <button class="chip" data-slab="NIL" aria-pressed="false">NIL</button>
+      <button class="chip" data-slab="S1" aria-pressed="false">S1</button>
+      <button class="chip" data-slab="S2" aria-pressed="false">S2</button>
+      <button class="chip" data-slab="S3" aria-pressed="false">S3</button>
+      <button class="chip" data-slab="S4" aria-pressed="false">S4</button>
+      <button class="chip" data-reporting="ALL" aria-pressed="true">All</button>
+      <button class="chip" data-reporting="reporting">Reporting</button>
+      <button class="chip" data-reporting="not_reporting">Not reporting</button>
+      <button type="button" class="icon-btn" id="export-csv-btn" title="Export to CSV" aria-label="Export CSV" style="margin-left:auto;">&#8681;</button>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="name">CSP <span class="arrow">&darr;</span></th>
+            <th data-key="current_balance" class="num">Current balance <span class="arrow">&darr;</span></th>
+            <th data-key="previous_balance" class="num">Yesterday balance <span class="arrow">&darr;</span></th>
+            <th data-key="mtd_mab" class="num">Monthly average <span class="arrow">&darr;</span></th>
+            <th data-key="pct_change" class="num">Change % <span class="arrow">&darr;</span></th>
+            <th data-key="slab">Slab <span class="arrow">&darr;</span></th>
+            <th data-key="account_count" class="num">Accounts <span class="arrow">&darr;</span></th>
+            <th data-key="txn_count_today" class="num">Transactions <span class="arrow">&darr;</span></th>
+            <th data-key="reporting_status">Status <span class="arrow">&darr;</span></th>
+            <th data-key="last_sync">Last sync <span class="arrow">&darr;</span></th>
+          </tr>
+        </thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="pager-info"></span>
+      <div class="pager-btns"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button></div>
+    </div>
+  </section>
+
+</div>
+
+{{ rows|json_script:"directory-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const DIRECTORY_ROWS = JSON.parse(document.getElementById("directory-data").textContent);
+  const SLAB_CLASS = { NIL: "nil", S1: "s1", S2: "s2", S3: "s3", S4: "s4" };
+
+  function slabPill(slab) {
+    if (!slab) return "&mdash;";
+    return `<span class="pill ${SLAB_CLASS[slab] || ""}">${slab}</span>`;
+  }
+  function reportingBadge(status) {
+    return status === "reporting"
+      ? `<span class="status-badge fresh">Reporting</span>`
+      : `<span class="status-badge missing">Not reporting</span>`;
+  }
+  function changeCell(pct) {
+    if (pct == null) return "&mdash;";
+    const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
+    return `<span class="trend-tag ${cls}">${pct > 0 ? "+" : ""}${pct}%</span>`;
+  }
+
+  function initDirectoryTable(rows) {
+    const pageSize = 25;
+    const state = { q: "", slab: "ALL", reporting: "ALL", sortKey: "name", sortDir: 1, page: 0 };
+    const tbody = document.getElementById("tbl-body");
+    const countEl = document.getElementById("table-count");
+    const pagerInfo = document.getElementById("pager-info");
+    const prevBtn = document.getElementById("prev");
+    const nextBtn = document.getElementById("next");
+
+    function filtered() {
+      const q = state.q.trim().toLowerCase();
+      let out = rows.filter((c) => {
+        if (state.slab !== "ALL" && c.slab !== state.slab) return false;
+        if (state.reporting !== "ALL" && c.reporting_status !== state.reporting) return false;
+        if (!q) return true;
+        return (c.name || "").toLowerCase().includes(q) || c.csp_code.toLowerCase().includes(q) || (c.mobile || "").includes(q);
+      });
+      out.sort((a, b) => {
+        let av = a[state.sortKey], bv = b[state.sortKey];
+        if (av == null) av = state.sortDir === 1 ? Infinity : -Infinity;
+        if (bv == null) bv = state.sortDir === 1 ? Infinity : -Infinity;
+        if (typeof av === "string") return av.localeCompare(bv) * state.sortDir;
+        return (av - bv) * state.sortDir;
+      });
+      return out;
+    }
+
+    function render() {
+      const list = filtered();
+      countEl.textContent = list.length + " match" + (list.length === 1 ? "" : "es");
+      const start = state.page * pageSize;
+      const page = list.slice(start, start + pageSize);
+
+      tbody.innerHTML = page.map((c) => `
+        <tr>
+          <td><a class="name-link" href="/dashboard/csp/${c.csp_code}/">${c.name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
+          <td class="mono">${window.fmtINR(c.current_balance)}</td>
+          <td class="mono">${window.fmtINR(c.previous_balance)}</td>
+          <td class="mono">${window.fmtINR(c.mtd_mab)}</td>
+          <td class="mono">${changeCell(c.pct_change)}</td>
+          <td>${slabPill(c.slab)}</td>
+          <td class="mono">${window.fmtNum(c.account_count)}</td>
+          <td class="mono">${c.txn_count_today == null ? "&mdash;" : window.fmtNum(c.txn_count_today)}</td>
+          <td>${reportingBadge(c.reporting_status)}</td>
+          <td class="mono">${c.last_sync || "&mdash;"}</td>
+        </tr>`).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px;">No CSPs match this filter.</td></tr>`;
+
+      document.querySelectorAll("thead th[data-key]").forEach((th) => {
+        th.classList.toggle("sorted", th.dataset.key === state.sortKey);
+        const arrow = th.querySelector(".arrow");
+        if (arrow) arrow.textContent = th.dataset.key === state.sortKey ? (state.sortDir === 1 ? "↑" : "↓") : "↓";
+      });
+
+      const pages = Math.max(1, Math.ceil(list.length / pageSize));
+      pagerInfo.textContent = `Page ${state.page + 1} of ${pages}`;
+      prevBtn.disabled = state.page <= 0;
+      nextBtn.disabled = state.page >= pages - 1;
+    }
+
+    document.getElementById("search").addEventListener("input", (e) => { state.q = e.target.value; state.page = 0; render(); });
+    document.querySelectorAll(".chip[data-slab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip[data-slab]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+        btn.setAttribute("aria-pressed", "true");
+        state.slab = btn.dataset.slab; state.page = 0; render();
+      });
+    });
+    document.querySelectorAll(".chip[data-reporting]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip[data-reporting]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+        btn.setAttribute("aria-pressed", "true");
+        state.reporting = btn.dataset.reporting; state.page = 0; render();
+      });
+    });
+    document.querySelectorAll("thead th[data-key]").forEach((th) => {
+      th.addEventListener("click", () => {
+        if (state.sortKey === th.dataset.key) state.sortDir *= -1;
+        else { state.sortKey = th.dataset.key; state.sortDir = 1; }
+        render();
+      });
+    });
+    prevBtn.addEventListener("click", () => { state.page--; render(); });
+    nextBtn.addEventListener("click", () => { state.page++; render(); });
+
+    document.getElementById("export-csv-btn").addEventListener("click", () => {
+      window.exportRowsToCsv("csp-directory.csv", filtered(), [
+        {key: "csp_code", label: "CSP Code"}, {key: "name", label: "Name"},
+        {key: "current_balance", label: "Current Balance"}, {key: "previous_balance", label: "Yesterday Balance"},
+        {key: "mtd_mab", label: "Monthly Average"}, {key: "pct_change", label: "Change %"},
+        {key: "slab", label: "Slab"}, {key: "account_count", label: "Accounts"},
+        {key: "txn_count_today", label: "Transactions"}, {key: "reporting_status", label: "Status"},
+        {key: "last_sync", label: "Last Sync"},
+      ]);
+      window.toast("Directory exported.", {type: "success"});
+    });
+
+    render();
+  }
+
+  initDirectoryTable(DIRECTORY_ROWS);
+</script>
+{% endblock %}

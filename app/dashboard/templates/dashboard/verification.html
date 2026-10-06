@@ -1,0 +1,63 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Verification — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>AI Operations</div>
+    <h1>Verification</h1>
+    <p class="sub">The Verification Agent's independent re-check of every finding — re-derived from the
+      same canonical service call that produced it, never just re-asserted. This is what makes a
+      finding trustworthy enough to act on.</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Verification history</h2>
+      <span class="hint">{{ total|intcomma }} matching, page {{ page }} of {{ total_pages }}</span>
+    </div>
+    <form method="get" class="date-range-form">
+      <label>Result
+        <select name="result" onchange="this.form.submit();">
+          <option value="">All</option>
+          {% for value, label in result_choices %}
+          <option value="{{ value }}" {% if result_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="tbl-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr><th>When</th><th>CSP</th><th>Finding</th><th>Verifier</th><th>Result</th><th>Reasoning</th></tr>
+        </thead>
+        <tbody>
+          {% for v in verifications %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ v.verified_at|date:"d M, H:i" }}</td>
+            <td>{% if v.finding.csp %}<a class="name-link" href="{% url 'dashboard:csp_detail' v.finding.csp_id %}">{{ v.finding.csp.name|default:v.finding.csp_id }}</a><span class="code">{{ v.finding.csp_id }}</span>{% else %}<span class="hint">Network-wide</span>{% endif %}</td>
+            <td>{{ v.finding.finding_type }}</td>
+            <td class="mono">{{ v.verifier_agent }}</td>
+            <td>{% include "dashboard/components/status_badge.html" with status=v.result %}</td>
+            <td class="hint">{{ v.reasoning|default:"—"|truncatechars:80 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6">
+            {% include "dashboard/components/empty_state.html" with title="No verifications yet" description="Every agent finding is re-checked before it can drive an action — results will appear here once the agent has run." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      <div class="pager-btns">
+        {% if page > 1 %}<a href="?page={{ page|add:"-1" }}{% if result_filter %}&result={{ result_filter }}{% endif %}"><button type="button">&larr; Prev</button></a>{% else %}<button type="button" disabled>&larr; Prev</button>{% endif %}
+        {% if page < total_pages %}<a href="?page={{ page|add:"1" }}{% if result_filter %}&result={{ result_filter }}{% endif %}"><button type="button">Next &rarr;</button></a>{% else %}<button type="button" disabled>Next &rarr;</button>{% endif %}
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

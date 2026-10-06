@@ -1,0 +1,217 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ csp.name|default:csp.csp_code }} — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <div>
+    <a class="back-link" href="{% url 'dashboard:home' %}">&larr; All CSPs</a>
+    <div class="eyebrow" style="margin-top:10px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>{{ csp.csp_code }}</div>
+    <h1>{{ csp.name|default:csp.csp_code }}</h1>
+    <p class="sub">
+      {% if csp.mobile %}{{ csp.mobile }}{% endif %}{% if csp.email %} &middot; {{ csp.email }}{% endif %}
+      {% if not row %}<br><em>No monthly summary yet for {{ month }} — the calculation pipeline may not have run for this CSP this month.</em>{% endif %}
+    </p>
+  </div>
+
+  {% if row %}
+  <section class="panel">
+    <div class="panel-head"><h2>{{ month }} summary</h2>
+      <span class="pill {{ row.slab|lower }}">{{ row.slab }}</span>
+    </div>
+    <div class="kv-grid">
+      <div class="kv"><span class="k">Accounts</span><span class="v">{{ row.account_count }}</span></div>
+      <div class="kv"><span class="k">Avg balance / a/c</span><span class="v"><span data-fmt="inr" data-val="{{ row.mtd_mab }}"></span></span></div>
+      <div class="kv"><span class="k">Incentive rate</span><span class="v">{{ row.incentive_rate_pa }}% p.a.</span></div>
+      <div class="kv"><span class="k">Gap to minimum</span><span class="v"><span data-fmt="inr" data-val="{{ row.gap_to_min }}"></span></span></div>
+      <div class="kv"><span class="k">Gap to next slab</span><span class="v">{% if row.gap_to_next_slab is not None %}<span data-fmt="inr" data-val="{{ row.gap_to_next_slab }}"></span>{% else %}&mdash;{% endif %}</span></div>
+      <div class="kv"><span class="k">Deposit needed (total)</span><span class="v">{% if row.amount_to_deposit is not None %}<span data-fmt="cr" data-val="{{ row.amount_to_deposit }}"></span>{% else %}&mdash;{% endif %}</span></div>
+      <div class="kv"><span class="k">Projected month-end</span><span class="v">{% if row.projected_mab is not None %}<span data-fmt="inr" data-val="{{ row.projected_mab }}"></span>{% else %}&mdash;{% endif %}</span></div>
+      <div class="kv"><span class="k">Trend (7d)</span><span class="v">{{ row.trend_flag|default:"new"|capfirst }}</span></div>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Daily comparison</h2>
+      <span class="hint">{{ daily_comparison.current_date }} vs {{ daily_comparison.comparison_date|default:"—" }}</span>
+    </div>
+    <form method="get" style="margin-bottom:12px;">
+      <div class="mode-switch" role="group" aria-label="Comparison mode" style="display:inline-flex; width:fit-content;">
+        <button type="submit" name="mode" value="overall" class="{% if mode == "overall" %}active{% endif %}">Overall</button>
+        <button type="submit" name="mode" value="onus" class="{% if mode == "onus" %}active{% endif %}">ONUS</button>
+      </div>
+    </form>
+    {% include "dashboard/components/csp_comparison_summary.html" with daily_comparison=daily_comparison trend_intel=trend_intel only %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Data quality</h2></div>
+    <div class="kv-grid">
+      <div class="kv"><span class="k">Today's reading</span><span class="v">{% include "dashboard/components/status_badge.html" with status=daily_comparison.current_data_status %}</span></div>
+      <div class="kv"><span class="k">Comparison baseline</span><span class="v">{% include "dashboard/components/status_badge.html" with status=daily_comparison.comparison_data_status %}</span></div>
+      <div class="kv"><span class="k">Days with MTD data</span><span class="v">{{ slab_history|length }} of trailing 60</span></div>
+      <div class="kv"><span class="k">Source</span><span class="v">{{ current_balance.source|default:"—" }}</span></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Slab history</h2>
+      <span class="hint">MTD-so-far average, trailing 60 days</span>
+    </div>
+    <div id="slab-history-chart"></div>
+    {% if not slab_history %}
+    <p class="sub" style="margin-top:10px;">No daily snapshots on file yet for this CSP &mdash;
+      populated by <code>manage.py sync_daily_snapshots</code>.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Transaction activity</h2>
+      <span class="hint">ONUS-family transactions per day (PRD §7.2)</span>
+    </div>
+    <div id="activity-chart"></div>
+  </section>
+
+  {% if balance_series|length > 1 %}
+  <section class="panel">
+    <div class="panel-head"><h2>Balance history</h2></div>
+    <div id="balance-chart"></div>
+  </section>
+  {% else %}
+  <section class="panel">
+    <div class="panel-head"><h2>Balance history</h2></div>
+    <p class="sub">Only {{ balance_series|length }} daily snapshot recorded so far — a trend line will
+      appear here once the CALLING SHEET has been ingested for a few more days.</p>
+  </section>
+  {% endif %}
+
+  {% if account_growth_series|length > 1 %}
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Account growth</h2>
+      <span class="hint">
+        {% if latest_net_new is not None %}
+          {% if latest_net_new > 0 %}<span class="trend-tag up">+{{ latest_net_new }}</span> since previous reading
+          {% elif latest_net_new < 0 %}<span class="trend-tag down">{{ latest_net_new }}</span> since previous reading
+          {% else %}no change since previous reading{% endif %}
+        {% endif %}
+      </span>
+    </div>
+    <div id="account-growth-chart"></div>
+    <p class="sub">Net change in total accounts (opens minus closes) day over day — not a count of accounts
+      opened. Day-to-day gaps reflect days the CALLING SHEET wasn't ingested, not zero activity.</p>
+  </section>
+  {% else %}
+  <section class="panel">
+    <div class="panel-head"><h2>Account growth</h2></div>
+    <p class="sub">Only {{ account_growth_series|length }} daily account-count reading recorded so far — a
+      growth trend will appear here once the CALLING SHEET has been ingested for a few more days.</p>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Recent transactions</h2>
+      <span class="hint">{{ txn_total }} total on file</span>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>When</th><th>Type</th><th class="num">Amount</th><th>Direction</th></tr></thead>
+        <tbody>
+          {% for t in recent_txns %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ t.txn_datetime|date:"d M, H:i" }}</td>
+            <td>{{ t.txn_type }}</td>
+            <td class="mono"><span data-fmt="inr" data-val="{{ t.amount }}"></span></td>
+            <td>{{ t.direction }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">No transactions on file for this CSP yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Individual accounts</h2></div>
+    {% include "dashboard/components/empty_state.html" with title="Not available" description="Per-account balances and identifiers are not connected to this system yet — only this CSP's pooled/aggregate figures above are currently tracked. This is not an error; individual-account intelligence is a planned future capability." %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>AI findings &amp; actions</h2>
+      <span class="hint"><a href="{% url 'dashboard:agent_findings' %}" style="color:var(--brand);">All findings</a> &middot; <a href="{% url 'dashboard:actions' %}" style="color:var(--brand);">All actions</a></span>
+    </div>
+    <p class="sub">{% include "dashboard/components/trust_badge.html" with kind="ai_finding" %} — a specialist agent's claim about this CSP, shown with its verification outcome. Never treated as fact until verified.</p>
+    <div class="tbl-scroll" style="margin-top:6px;">
+      <table>
+        <thead><tr><th>When</th><th>Finding</th><th>Verification</th></tr></thead>
+        <tbody>
+          {% for f in agent_findings_for_csp %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ f.created_at|date:"d M, H:i" }}</td>
+            <td>{{ f.finding_type }} <span class="hint">({{ f.source_agent }})</span></td>
+            <td>{% include "dashboard/components/status_badge.html" with status=f.verification_status %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px;">No agent findings for this CSP yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="tbl-scroll" style="margin-top:14px;">
+      <table>
+        <thead><tr><th>When</th><th>Action</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for a in agent_actions_for_csp %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ a.created_at|date:"d M, H:i" }}</td>
+            <td>{{ a.get_action_type_display }} <span class="hint">{{ a.description|truncatechars:60 }}</span></td>
+            <td>{% include "dashboard/components/status_badge.html" with status=a.status %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px;">No agent actions for this CSP yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll('[data-fmt="inr"]').forEach(el => { el.textContent = window.fmtINR(+el.dataset.val); });
+  document.querySelectorAll('[data-fmt="cr"]').forEach(el => { el.textContent = window.fmtCr(+el.dataset.val); });
+
+  const activitySeries = {{ activity_series|safe }};
+  window.renderTrendChart(document.getElementById("activity-chart"), activitySeries, {
+    label: "Daily transactions", valueFormat: window.fmtNum,
+    emptyText: "No transaction activity recorded for this CSP yet.",
+  });
+
+  const slabHistorySeries = {{ slab_history_series|safe }};
+  window.renderTrendChart(document.getElementById("slab-history-chart"), slabHistorySeries, {
+    label: "MTD-so-far average", valueFormat: window.fmtINR,
+    emptyText: "No daily snapshots on file yet for this CSP.",
+  });
+
+  const balanceSeries = {{ balance_series|safe }};
+  if (balanceSeries.length > 1) {
+    window.renderTrendChart(document.getElementById("balance-chart"), balanceSeries, {
+      label: "Daily average balance", valueFormat: window.fmtINR,
+    });
+  }
+
+  const accountGrowthSeries = {{ account_growth_series|safe }};
+  if (accountGrowthSeries.length > 1) {
+    window.renderTrendChart(document.getElementById("account-growth-chart"), accountGrowthSeries, {
+      label: "Total accounts", valueFormat: window.fmtNum,
+    });
+  }
+</script>
+{% endblock %}

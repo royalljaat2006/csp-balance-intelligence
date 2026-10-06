@@ -1,0 +1,15 @@
+# Safe to commit — reads connection details from environment variables, no
+# secrets inline. Point DBT_PROFILES_DIR at this directory (the "dbt" service
+# step in cron does this) rather than using dbt's default ~/.dbt/.
+csp_balance_tracker:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('DATABASE_HOST', 'db') }}"
+      port: "{{ env_var('DATABASE_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DATABASE_USER') }}"
+      password: "{{ env_var('DATABASE_PASSWORD') }}"
+      dbname: "{{ env_var('DATABASE_NAME') }}"
+      schema: public
+      threads: 2

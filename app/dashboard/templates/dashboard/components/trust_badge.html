@@ -1,0 +1,18 @@
+{% comment %}
+TrustBadge — labels the NATURE of a piece of information (Phase 11 trust
+UX), distinct from StatusBadge (which labels a freshness/verification
+RESULT). One of exactly 5 fixed kinds — never invent a 6th ad hoc:
+  verified_data | calculated_metric | ai_finding | ai_recommendation | pending_approval
+Usage: {% include "dashboard/components/trust_badge.html" with kind="ai_finding" %}
+{% endcomment %}
+{% if kind == "verified_data" %}
+<span class="trust-badge verified_data" title="Read directly from PostgreSQL — the system of record">Verified data</span>
+{% elif kind == "calculated_metric" %}
+<span class="trust-badge calculated_metric" title="Derived by a canonical domain service from verified data">Calculated metric</span>
+{% elif kind == "ai_finding" %}
+<span class="trust-badge ai_finding" title="A specialist agent's claim — not yet, or not independently, confirmed">AI finding</span>
+{% elif kind == "ai_recommendation" %}
+<span class="trust-badge ai_recommendation" title="Nemotron-generated narration/suggestion — informational only">AI recommendation</span>
+{% elif kind == "pending_approval" %}
+<span class="trust-badge pending_approval" title="Requires human approval before anything happens">Pending approval</span>
+{% endif %}

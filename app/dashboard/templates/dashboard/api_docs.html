@@ -1,0 +1,75 @@
+{% extends "dashboard/base.html" %}
+{% block title %}API Documentation — Eko Operations{% endblock %}
+{% block extra_head %}
+<style>
+  .api-docs-frame-wrap{ max-width: 1180px; margin: 0 auto; }
+  .api-docs-frame-wrap iframe{
+    width: 100%; height: calc(100vh - 130px); min-height: 500px;
+    border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  }
+  .api-group-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px;}
+  .api-group-card{border:1px solid var(--line); border-radius:10px; padding:12px 14px;}
+  .api-group-card .name{font-weight:600; font-size:13.5px;}
+  .api-group-card .scope{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:2px;}
+  .copy-box{display:flex; align-items:center; gap:8px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:"IBM Plex Mono",monospace; font-size:12px; overflow-x:auto;}
+  .copy-box code{white-space:nowrap;}
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap stagger" style="gap:14px; max-width:1180px; margin-inline:auto;">
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Machine-readable</div>
+    <h1>API Documentation</h1>
+    <p class="sub">Live OpenAPI reference for <code>/api/v1</code> — the same interactive Swagger UI
+      an external consumer would use (search, expand/collapse, try-it-out, request/response
+      examples, status codes all built in), embedded here so it doesn't leave the dashboard.
+      Calling an endpoint from here still needs a real <code>X-API-Key</code> — your dashboard
+      login doesn't grant that; the two are deliberately separate credential boundaries.</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Authentication</h2><span class="hint">v1.0.0</span></div>
+    <p class="sub" style="margin-top:0;">Every business endpoint requires an <code>X-API-Key</code> header, scoped
+      per consumer (never a flat shared key). Issue one:</p>
+    <div class="copy-box">
+      <code id="create-key-cmd">docker compose exec web python manage.py create_api_key &lt;consumer-name&gt; --scopes csp:read,balance:read</code>
+      <button type="button" class="icon-btn" id="copy-cmd-btn" title="Copy" aria-label="Copy command" style="flex:none;">&#128203;</button>
+    </div>
+    <p class="sub" style="margin-bottom:0;">The raw key prints once — copy it immediately. See <code>docs/API-CONSUMERS.md</code> for the registry of who holds which key.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Endpoint groups</h2><span class="hint">grouped by scope</span></div>
+    <div class="api-group-grid">
+      <div class="api-group-card"><div class="name">CSPs</div><div class="scope">csp:read</div></div>
+      <div class="api-group-card"><div class="name">Balances</div><div class="scope">balance:read</div></div>
+      <div class="api-group-card"><div class="name">Incentives</div><div class="scope">incentive:read</div></div>
+      <div class="api-group-card"><div class="name">Projections</div><div class="scope">projection:read</div></div>
+      <div class="api-group-card"><div class="name">Transactions</div><div class="scope">transaction:read</div></div>
+      <div class="api-group-card"><div class="name">Comparisons</div><div class="scope">comparison:read</div></div>
+      <div class="api-group-card"><div class="name">Reports</div><div class="scope">report:read</div></div>
+      <div class="api-group-card"><div class="name">Health</div><div class="scope">no auth</div></div>
+    </div>
+    <p class="sub" style="margin-bottom:0;margin-top:10px;">Full request/response shapes, parameters, and status codes for every group are in the Swagger UI below — search it directly (&#8984;F in most browsers) rather than a separate search box here, so this page never drifts from the real OpenAPI schema.</p>
+  </section>
+</div>
+<div class="api-docs-frame-wrap">
+  <iframe src="/api/v1/docs" title="API documentation"></iframe>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+  const copyBtn = document.getElementById("copy-cmd-btn");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", async () => {
+      const text = document.getElementById("create-key-cmd").textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        window.toast("Command copied.", {type: "success"});
+      } catch (e) {
+        window.toast("Could not copy — select the text manually.", {type: "error"});
+      }
+    });
+  }
+</script>
+{% endblock %}

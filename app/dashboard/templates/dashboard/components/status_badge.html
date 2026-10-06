@@ -1,0 +1,9 @@
+{% comment %}
+StatusBadge — data-freshness / ingestion-status pill. `status` must be one
+of the canonical values csp.comparison.DataStatus / csp.services'
+get_data_freshness() already produce (fresh/delayed/stale/missing/
+processing/failed/partial) — this component only renders a status the
+domain layer decided, it never decides one itself.
+Usage: {% include "dashboard/components/status_badge.html" with status=freshness.overall_status %}
+{% endcomment %}
+<span class="status-badge {{ status }}">{{ label|default:status|capfirst }}</span>

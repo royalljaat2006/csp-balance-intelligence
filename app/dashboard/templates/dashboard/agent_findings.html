@@ -1,0 +1,63 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Agent Findings — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>AI Operations</div>
+    <h1>Agent Findings</h1>
+    <p class="sub">Every structured claim a specialist agent has handed off, with its verification outcome.
+      {% include "dashboard/components/trust_badge.html" with kind="ai_finding" %} until independently
+      re-checked — never treated as fact by another agent, or shown here, before then.</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Findings</h2>
+      <span class="hint">{{ total|intcomma }} matching, page {{ page }} of {{ total_pages }}</span>
+    </div>
+    <form method="get" class="date-range-form">
+      <label>Verification status
+        <select name="status" onchange="this.form.submit();">
+          <option value="">All</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="tbl-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr><th>When</th><th>CSP</th><th>Finding</th><th>Source agent</th><th>Source</th><th>Verification</th></tr>
+        </thead>
+        <tbody>
+          {% for f in findings %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ f.created_at|date:"d M, H:i" }}</td>
+            <td>{% if f.csp %}<a class="name-link" href="{% url 'dashboard:csp_detail' f.csp_id %}">{{ f.csp.name|default:f.csp_id }}</a><span class="code">{{ f.csp_id }}</span>{% else %}<span class="hint">Network-wide</span>{% endif %}</td>
+            <td>{{ f.finding_type }}</td>
+            <td class="mono">{{ f.source_agent }}</td>
+            <td class="hint">{{ f.source }}</td>
+            <td>{% include "dashboard/components/status_badge.html" with status=f.verification_status %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6">
+            {% include "dashboard/components/empty_state.html" with title="No agent findings yet" description="Findings appear here once the CSP Operations Agent has run — see Agent Monitoring or AI Operations to trigger a run." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      <div class="pager-btns">
+        {% if page > 1 %}<a href="?page={{ page|add:"-1" }}{% if status_filter %}&status={{ status_filter }}{% endif %}"><button type="button">&larr; Prev</button></a>{% else %}<button type="button" disabled>&larr; Prev</button>{% endif %}
+        {% if page < total_pages %}<a href="?page={{ page|add:"1" }}{% if status_filter %}&status={{ status_filter }}{% endif %}"><button type="button">Next &rarr;</button></a>{% else %}<button type="button" disabled>Next &rarr;</button>{% endif %}
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

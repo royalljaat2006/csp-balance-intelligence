@@ -1,0 +1,8 @@
+{% comment %}
+SectionHeader — the h2+hint row every .panel already opens with.
+Usage: {% include "dashboard/components/section_header.html" with title="Slab distribution" hint="539 CSPs" %}
+{% endcomment %}
+<div class="panel-head">
+  <h2>{{ title }}</h2>
+  {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}
+</div>

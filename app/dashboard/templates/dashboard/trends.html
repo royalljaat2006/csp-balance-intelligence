@@ -1,0 +1,283 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Trends — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Network-wide</div>
+    <h1>Trends</h1>
+    <p class="sub">Daily transaction activity across all {{ csp_with_data }} CSPs with a {{ month }} summary,
+      built from the real ONUS-transaction ledger (PRD §7.2) — {{ activity_days }} day{{ activity_days|pluralize }} in the selected range.</p>
+  </header>
+
+  {% if min_date and max_date %}
+  <section class="panel" style="padding:12px 16px;">
+    <form method="get" class="date-range-form">
+      <label>From <input type="date" name="from" value="{{ selected_from }}" min="{{ min_date }}" max="{{ max_date }}"></label>
+      <label>To <input type="date" name="to" value="{{ selected_to }}" min="{{ min_date }}" max="{{ max_date }}"></label>
+      <button type="submit">Apply</button>
+      <a href="?from={{ min_date }}&amp;to={{ max_date }}" class="quick-range">All time</a>
+      <span class="hint">data on file: {{ min_date }} to {{ max_date }}</span>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="panel" style="padding:12px 16px;">
+    <div class="panel-head" style="margin-bottom:8px;">
+      <h2 style="font-size:14px;">Today vs. yesterday</h2>
+      <span class="hint">{{ txn_count_comparison.current_date }} vs {{ txn_count_comparison.comparison_date }}</span>
+    </div>
+    <div class="kv-grid">
+      <div class="kv"><span class="k">Transactions today</span><span class="v">
+        {% if txn_count_comparison.current_value is not None %}{{ txn_count_comparison.current_value|floatformat:0 }}{% else %}&mdash;{% endif %}
+        {% if txn_count_comparison.trend == "GROWTH" %}<span class="trend-tag up">&#8599; +{{ txn_count_comparison.pct_change }}%</span>
+        {% elif txn_count_comparison.trend == "DECLINE" %}<span class="trend-tag down">&#8600; {{ txn_count_comparison.pct_change }}%</span>
+        {% elif txn_count_comparison.trend == "NO_CHANGE" %}<span class="trend-tag">no change</span>
+        {% else %}<span class="trend-tag">no data</span>{% endif %}
+      </span></div>
+      <div class="kv"><span class="k">Value moved today</span><span class="v">
+        {% if txn_amount_comparison.current_value is not None %}<span data-fmt="cr" data-val="{{ txn_amount_comparison.current_value }}"></span>{% else %}&mdash;{% endif %}
+        {% if txn_amount_comparison.trend == "GROWTH" %}<span class="trend-tag up">&#8599; +{{ txn_amount_comparison.pct_change }}%</span>
+        {% elif txn_amount_comparison.trend == "DECLINE" %}<span class="trend-tag down">&#8600; {{ txn_amount_comparison.pct_change }}%</span>
+        {% elif txn_amount_comparison.trend == "NO_CHANGE" %}<span class="trend-tag">no change</span>
+        {% else %}<span class="trend-tag">no data</span>{% endif %}
+      </span></div>
+    </div>
+  </section>
+
+  {% if not has_activity_data %}
+  <section class="panel">
+    <p class="sub" style="margin:0;">No transaction activity has been ingested yet — this page fills in once
+      <code>manage.py ingest_transactions</code> and <code>dbt run</code> have processed a transaction file.</p>
+  </section>
+  {% else %}
+
+  <div class="stats">
+    <button type="button" class="stat" data-kpi="txn-count">
+      <div class="label">Transactions</div>
+      <div class="value">{{ kpis.txn_count|intcomma }}</div>
+      <div class="foot">allow-listed, selected range</div>
+    </button>
+    <button type="button" class="stat" data-kpi="txn-amount">
+      <div class="label">Total value moved</div>
+      <div class="value" id="kpi-txn-amount"></div>
+      <div class="foot">withdrawals + deposits</div>
+    </button>
+    <button type="button" class="stat" data-kpi="txn-amount">
+      <div class="label">Withdrawals</div>
+      <div class="value" id="kpi-withdrawal-amount"></div>
+      <div class="foot">₹ out of the settlement pool</div>
+    </button>
+    <button type="button" class="stat" data-kpi="txn-amount">
+      <div class="label">Deposits</div>
+      <div class="value" id="kpi-deposit-amount"></div>
+      <div class="foot">₹ into the settlement pool</div>
+    </button>
+    <button type="button" class="stat{% if kpis.net_flow < 0 %} accent{% endif %}" data-kpi="net-flow">
+      <div class="label">Net pool flow</div>
+      <div class="value" id="kpi-net-flow"></div>
+      <div class="foot">withdrawals &minus; deposits</div>
+    </button>
+  </div>
+
+  <div class="panel-grid">
+    <section class="panel" id="chart-count-panel">
+      <div class="panel-head">
+        <h2>Transaction count</h2>
+        <span class="hint">withdrawals vs. deposits, per day</span>
+      </div>
+      <div id="chart-count-cmp"></div>
+    </section>
+
+    <section class="panel" id="chart-amount-panel">
+      <div class="panel-head">
+        <h2>Transaction value</h2>
+        <span class="hint">₹ moved, withdrawals vs. deposits, per day</span>
+      </div>
+      <div id="chart-amount-cmp"></div>
+    </section>
+
+    <section class="panel" id="chart-netflow-panel" style="grid-column:1 / -1;">
+      <div class="panel-head">
+        <h2>Net pool flow</h2>
+        <span class="hint">positive = cash flowing into the settlement pool</span>
+      </div>
+      <div id="chart-netflow"></div>
+    </section>
+
+    <section class="panel" style="grid-column:1 / -1;">
+      <div class="panel-head">
+        <h2>ONUS vs. Overall</h2>
+        <span class="hint">{{ kpis.onus_txn_count|intcomma }} of {{ kpis.txn_count|intcomma }} transactions are ONUS &mdash; both modes reuse the same allow-list (<code>ingestion/xlsx_validation.py</code>)</span>
+      </div>
+      <div id="chart-onus-overall"></div>
+    </section>
+  </div>
+
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>CSP heatmap</h2>
+      <span class="hint">{{ heatmap_current_date }} vs {{ heatmap_comparison_date|default:"—" }} &middot; {{ heatmap_rows|length }} CSPs &middot; hover a tile for detail</span>
+    </div>
+    <div id="csp-heatmap"></div>
+  </section>
+
+  <div class="panel-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Slab distribution</h2>
+        <span class="hint">{{ csp_with_data }} CSPs, {{ month }}</span>
+      </div>
+      <div id="donut-slab"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Balance trend, this month</h2>
+        <span class="hint">{{ month }}</span>
+      </div>
+      <div id="donut-trend"></div>
+      <p class="sub">Needs at least two weeks of daily CALLING SHEET snapshots per CSP &mdash; most CSPs will
+        read &ldquo;stable&rdquo; (no signal yet, not literally flat) until then.</p>
+    </section>
+
+    <section class="panel" style="grid-column:1 / -1;">
+      <div class="panel-head">
+        <h2>Account growth, network-wide</h2>
+        <span class="hint">
+          {% if latest_account_growth and latest_account_growth.net_new is not None %}
+            {% if latest_account_growth.net_new > 0 %}<span class="trend-tag up">+{{ latest_account_growth.net_new }}</span> since previous reading
+            {% elif latest_account_growth.net_new < 0 %}<span class="trend-tag down">{{ latest_account_growth.net_new }}</span> since previous reading
+            {% else %}no change since previous reading{% endif %}
+          {% endif %}
+        </span>
+      </div>
+      <div id="chart-account-growth"></div>
+      <p class="sub">Total accounts across every CSP reporting an account count that day &mdash; net change
+        (opens minus closes), not a count of accounts opened. Builds up as the CALLING SHEET is ingested
+        day over day.</p>
+    </section>
+  </div>
+
+</div>
+
+{{ heatmap_rows|json_script:"heatmap-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll('[data-fmt="cr"]').forEach(el => { el.textContent = window.fmtCr(+el.dataset.val); });
+
+  const heatmapRows = JSON.parse(document.getElementById("heatmap-data").textContent);
+  if (document.getElementById("csp-heatmap")) {
+    window.renderCspHeatmap(document.getElementById("csp-heatmap"), heatmapRows, {
+      valueFormat: window.fmtINR, emptyText: "No CSPs with a comparison reading yet.",
+    });
+  }
+
+  const withdrawalCountSeries = {{ withdrawal_count_series|safe }};
+  const depositCountSeries = {{ deposit_count_series|safe }};
+  const withdrawalAmountSeries = {{ withdrawal_amount_series|safe }};
+  const depositAmountSeries = {{ deposit_amount_series|safe }};
+  const netFlowSeries = {{ net_flow_series|safe }};
+  const overallTxnCountSeries = {{ overall_txn_count_series|safe }};
+  const onusTxnCountSeries = {{ onus_txn_count_series|safe }};
+  const kpis = {
+    txn_amount: {{ kpis.txn_amount|default:"0" }},
+    withdrawal_amount: {{ kpis.withdrawal_amount|default:"0" }},
+    deposit_amount: {{ kpis.deposit_amount|default:"0" }},
+    net_flow: {{ kpis.net_flow|default:"0" }},
+  };
+  const slabDistribution = {{ slab_distribution|safe }};
+  const trendCounts = {
+    improving: {{ trend_counts.improving|default:0 }},
+    stable: {{ trend_counts.stable|default:0 }},
+    declining: {{ trend_counts.declining|default:0 }},
+  };
+
+  const elTxnAmount = document.getElementById("kpi-txn-amount");
+  if (elTxnAmount) elTxnAmount.innerHTML = window.fmtCr(kpis.txn_amount);
+  const elWithdrawal = document.getElementById("kpi-withdrawal-amount");
+  if (elWithdrawal) elWithdrawal.innerHTML = window.fmtCr(kpis.withdrawal_amount);
+  const elDeposit = document.getElementById("kpi-deposit-amount");
+  if (elDeposit) elDeposit.innerHTML = window.fmtCr(kpis.deposit_amount);
+  const elNetFlow = document.getElementById("kpi-net-flow");
+  if (elNetFlow) elNetFlow.innerHTML = window.fmtCr(kpis.net_flow);
+
+  if (document.getElementById("chart-count-cmp")) {
+    window.renderMultiTrendChart(document.getElementById("chart-count-cmp"), [
+      {name: "Withdrawals", color: "var(--accent)", data: withdrawalCountSeries},
+      {name: "Deposits", color: "var(--good)", data: depositCountSeries},
+    ], {valueFormat: window.fmtNum, label: "Transaction count"});
+  }
+  if (document.getElementById("chart-amount-cmp")) {
+    window.renderMultiTrendChart(document.getElementById("chart-amount-cmp"), [
+      {name: "Withdrawals", color: "var(--accent)", data: withdrawalAmountSeries},
+      {name: "Deposits", color: "var(--good)", data: depositAmountSeries},
+    ], {valueFormat: window.fmtCr, label: "Transaction value"});
+  }
+  if (document.getElementById("chart-netflow")) {
+    window.renderTrendChart(document.getElementById("chart-netflow"), netFlowSeries, {valueFormat: window.fmtCr});
+  }
+  if (document.getElementById("chart-onus-overall")) {
+    window.renderMultiTrendChart(document.getElementById("chart-onus-overall"), [
+      {name: "Overall", color: "var(--brand)", data: overallTxnCountSeries},
+      {name: "ONUS", color: "var(--accent)", data: onusTxnCountSeries},
+    ], {valueFormat: window.fmtNum, label: "ONUS vs Overall transaction count"});
+  }
+  if (document.getElementById("donut-slab")) {
+    window.renderDonutChart(document.getElementById("donut-slab"), [
+      {label: "NIL", value: slabDistribution.NIL || 0, color: "var(--nil)"},
+      {label: "S1", value: slabDistribution.S1 || 0, color: "var(--s1)"},
+      {label: "S2", value: slabDistribution.S2 || 0, color: "var(--s2)"},
+      {label: "S3", value: slabDistribution.S3 || 0, color: "var(--s3)"},
+      {label: "S4", value: slabDistribution.S4 || 0, color: "var(--s4)"},
+    ], {valueFormat: window.fmtNum, centerLabel: "CSPs", label: "Slab distribution"});
+  }
+  if (document.getElementById("donut-trend")) {
+    window.renderDonutChart(document.getElementById("donut-trend"), [
+      {label: "Improving", value: trendCounts.improving, color: "var(--good)"},
+      {label: "Stable", value: trendCounts.stable, color: "var(--muted)"},
+      {label: "Declining", value: trendCounts.declining, color: "var(--nil)"},
+    ], {valueFormat: window.fmtNum, centerLabel: "CSPs", label: "Balance trend"});
+  }
+  const accountGrowthSeries = {{ account_growth_series|safe }};
+  if (document.getElementById("chart-account-growth")) {
+    window.renderTrendChart(document.getElementById("chart-account-growth"), accountGrowthSeries, {
+      valueFormat: window.fmtNum, label: "Total accounts",
+      emptyText: "No account-count readings on file yet.",
+    });
+  }
+
+  // KPI tiles above open a popup with their own chart instead of scrolling
+  // to the panel below — same series already computed for this page.
+  function chartModal(title, renderFn) {
+    const body = window.openModal(title);
+    const div = document.createElement("div");
+    body.appendChild(div);
+    renderFn(div);
+  }
+  const kpiTxnCount = document.querySelector('[data-kpi="txn-count"]');
+  if (kpiTxnCount) kpiTxnCount.addEventListener("click", () => {
+    chartModal("Transaction count", (div) => window.renderMultiTrendChart(div, [
+      {name: "Withdrawals", color: "var(--accent)", data: withdrawalCountSeries},
+      {name: "Deposits", color: "var(--good)", data: depositCountSeries},
+    ], {valueFormat: window.fmtNum, label: "Transaction count"}));
+  });
+  document.querySelectorAll('[data-kpi="txn-amount"]').forEach((btn) => btn.addEventListener("click", () => {
+    chartModal("Transaction value", (div) => window.renderMultiTrendChart(div, [
+      {name: "Withdrawals", color: "var(--accent)", data: withdrawalAmountSeries},
+      {name: "Deposits", color: "var(--good)", data: depositAmountSeries},
+    ], {valueFormat: window.fmtCr, label: "Transaction value"}));
+  }));
+  const kpiNetFlow = document.querySelector('[data-kpi="net-flow"]');
+  if (kpiNetFlow) kpiNetFlow.addEventListener("click", () => {
+    chartModal("Net pool flow", (div) => window.renderTrendChart(div, netFlowSeries, {
+      valueFormat: window.fmtCr, label: "Net pool flow",
+    }));
+  });
+</script>
+{% endblock %}

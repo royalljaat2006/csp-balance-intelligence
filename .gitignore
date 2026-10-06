@@ -1,0 +1,48 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+secrets/
+*.key.json
+*credentials*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.uv/
+
+# Local/dev DB and static
+*.sqlite3
+*.db
+staticfiles/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+
+# Local ingestion data — never real production files in git (Phase 10).
+# Directory skeleton is kept via .gitkeep; contents are not.
+data/incoming/*
+data/processed/*
+data/failed/*
+!data/incoming/.gitkeep
+!data/processed/.gitkeep
+!data/failed/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local-only dashboard preview — contains real CSP PII, never commit
+local-preview/

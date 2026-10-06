@@ -1,0 +1,27 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Sign in — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="login-shell">
+  <div class="login-card">
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Eko &middot; SBI Kiosk Banking</div>
+    <h1>CSP Balance Tracker</h1>
+    <p class="sub" style="margin-bottom:0;">Staff sign-in. Ask an administrator for an account if you don't have one.</p>
+    <form method="post">
+      {% csrf_token %}
+      {% if form.errors %}
+        <div class="form-error">Incorrect username or password.</div>
+      {% endif %}
+      <div class="field">
+        <label for="id_username">Username</label>
+        <input type="text" name="username" id="id_username" autofocus required>
+      </div>
+      <div class="field">
+        <label for="id_password">Password</label>
+        <input type="password" name="password" id="id_password" required>
+      </div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="btn-primary">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

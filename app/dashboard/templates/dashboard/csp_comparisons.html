@@ -1,0 +1,355 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Daily Comparison — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Network-wide</div>
+    <h1>CSP Daily Comparison</h1>
+    <p class="sub">Balance, transaction activity, and slab movement for every CSP between two dates —
+      {{ current_date }} vs {{ comparison_date|default:"no comparison date" }}, <code>{{ mode }}</code> mode.
+      Reuses the exact same comparison engine (<code>csp/comparison.py</code>) as the public API.</p>
+  </header>
+
+  <section class="panel" style="padding:12px 16px;">
+    <form method="get" class="date-range-form">
+      <label>Mode
+        <select name="mode">
+          <option value="overall" {% if mode == "overall" %}selected{% endif %}>Overall</option>
+          <option value="onus" {% if mode == "onus" %}selected{% endif %}>ONUS</option>
+        </select>
+      </label>
+      <label>Current date <input type="date" name="current_date" value="{{ current_date }}"></label>
+      <label>Compare to
+        <select name="comparison_type" id="comparison-type-select">
+          <option value="yesterday" {% if comparison_type == "yesterday" %}selected{% endif %}>Yesterday</option>
+          <option value="same_date_previous_month" {% if comparison_type == "same_date_previous_month" %}selected{% endif %}>Same date, previous month</option>
+          <option value="custom" {% if comparison_type == "custom" %}selected{% endif %}>Custom date</option>
+        </select>
+      </label>
+      <label id="custom-date-label" style="{% if comparison_type != "custom" %}display:none;{% endif %}">Custom date
+        <input type="date" name="comparison_date" value="{{ custom_comparison_date }}">
+      </label>
+      <button type="submit">Apply</button>
+      <span class="hint">resolved comparison date: {{ comparison_date|default:"—" }}</span>
+    </form>
+  </section>
+
+  <div class="stats cols-4">
+    <button type="button" class="stat" data-kpi="total">
+      <div class="label">CSPs compared</div>
+      <div class="value">{{ total_csps|intcomma }}</div>
+      <div class="foot">{{ mode }} mode</div>
+    </button>
+    <button type="button" class="stat" data-kpi="growth">
+      <div class="label">Growing</div>
+      <div class="value">{{ trend_counts.GROWTH|intcomma }}</div>
+      <div class="foot">balance up vs. comparison date</div>
+    </button>
+    <button type="button" class="stat accent" data-kpi="decline">
+      <div class="label">Declining</div>
+      <div class="value">{{ trend_counts.DECLINE|intcomma }}</div>
+      <div class="foot">balance down vs. comparison date</div>
+    </button>
+    <button type="button" class="stat" data-kpi="stable">
+      <div class="label">Stable</div>
+      <div class="value">{{ trend_counts.NO_CHANGE|intcomma }}</div>
+      <div class="foot">no change vs. comparison date</div>
+    </button>
+    <button type="button" class="stat" data-kpi="nodata">
+      <div class="label">No data</div>
+      <div class="value">{{ trend_counts.NO_DATA|intcomma }}</div>
+      <div class="foot">missing a reading either day — never counted as decline</div>
+    </button>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Avg network change</div>
+      <div class="value">{% if avg_network_change_pct is not None %}{{ avg_network_change_pct }}%{% else %}&mdash;{% endif %}</div>
+      <div class="foot">mean % change across compared CSPs</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Total balance change</div>
+      <div class="value" id="stat-total-balance-change">—</div>
+      <div class="foot">summed absolute change</div>
+    </div>
+    <div class="stat accent" style="cursor:default;">
+      <div class="label">Largest decline</div>
+      <div class="value" id="stat-largest-decline">—</div>
+      <div class="foot">single biggest drop</div>
+    </div>
+  </div>
+
+  <div class="panel-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Top growers</h2>
+        <span class="hint">by % change</span>
+      </div>
+      <div class="qw-list">
+        {% for c in top_growth %}
+        <a class="qw-item" href="{% url 'dashboard:csp_detail' c.csp_code %}">
+          <span class="qw-rank">{{ forloop.counter }}</span>
+          <span class="qw-main">
+            <span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span>
+            <span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span>
+          </span>
+          <span class="qw-amt"><span class="n" style="color:var(--good);">+{{ c.pct_change }}%</span><span class="l">change</span></span>
+        </a>
+        {% empty %}
+        <p class="sub">No growth to report for this date pair.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Top decliners</h2>
+        <span class="hint">by % change</span>
+      </div>
+      <div class="qw-list">
+        {% for c in top_decline %}
+        <a class="qw-item" href="{% url 'dashboard:csp_detail' c.csp_code %}">
+          <span class="qw-rank">{{ forloop.counter }}</span>
+          <span class="qw-main">
+            <span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span>
+            <span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span>
+          </span>
+          <span class="qw-amt"><span class="n" style="color:var(--nil);">{{ c.pct_change }}%</span><span class="l">change</span></span>
+        </a>
+        {% empty %}
+        <p class="sub">No declines to report for this date pair.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel" style="grid-column:1 / -1;">
+      <div class="panel-head">
+        <h2>At-risk CSPs</h2>
+        <span class="hint">{{ at_risk_flags|length }} flagged &mdash; every flag names its exact reason, never an opaque score</span>
+      </div>
+      <div class="qw-list">
+        {% for f in at_risk_flags %}
+        <a class="qw-item" href="{% url 'dashboard:csp_detail' f.csp_code %}">
+          <span class="qw-main">
+            <span class="qw-name">{{ f.csp_name|default:f.csp_code }}</span>
+            <span class="qw-code">{{ f.csp_code }} &middot; {{ f.reasons|join:"; " }}</span>
+          </span>
+        </a>
+        {% empty %}
+        <p class="sub">No CSPs currently flagged at-risk.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" id="all-comparisons">
+    <div class="panel-head">
+      <h2>All CSPs</h2>
+      <span class="hint" id="table-count"></span>
+    </div>
+    <div class="controls">
+      <input class="search" id="search" type="search" placeholder="Search by name or code&hellip;" aria-label="Search CSPs">
+      <button class="chip" data-trend="ALL" aria-pressed="true">All</button>
+      <button class="chip" data-trend="GROWTH" aria-pressed="false">Growth</button>
+      <button class="chip" data-trend="DECLINE" aria-pressed="false">Decline</button>
+      <button class="chip" data-trend="NO_CHANGE" aria-pressed="false">Stable</button>
+      <button class="chip" data-trend="NO_DATA" aria-pressed="false">No data</button>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="csp_name">CSP <span class="arrow">&darr;</span></th>
+            <th data-key="current_value" class="num">Current balance <span class="arrow">&darr;</span></th>
+            <th data-key="previous_value" class="num">Previous balance <span class="arrow">&darr;</span></th>
+            <th data-key="abs_change" class="num">Abs. change <span class="arrow">&darr;</span></th>
+            <th data-key="pct_change" class="num">Change % <span class="arrow">&darr;</span></th>
+            <th data-key="trend">Trend <span class="arrow">&darr;</span></th>
+            <th data-key="movement">Movement <span class="arrow">&darr;</span></th>
+            <th data-key="current_slab">Slab <span class="arrow">&darr;</span></th>
+            <th data-key="gap_to_next_slab" class="num">Gap to next slab <span class="arrow">&darr;</span></th>
+            <th data-key="current_data_status">Data status <span class="arrow">&darr;</span></th>
+          </tr>
+        </thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="pager-info"></span>
+      <div class="pager-btns"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button></div>
+    </div>
+  </section>
+
+</div>
+
+{{ rows|json_script:"comparison-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const COMPARISON_ROWS = JSON.parse(document.getElementById("comparison-data").textContent);
+  const SLAB_CLASS = { NIL: "nil", S1: "s1", S2: "s2", S3: "s3", S4: "s4" };
+
+  document.getElementById("stat-total-balance-change").textContent = window.fmtCr({{ total_balance_change|default_if_none:"null" }});
+  document.getElementById("stat-largest-decline").textContent = window.fmtINR({{ largest_decline|default_if_none:"null" }});
+
+  // Custom-date input only makes sense (and only gets submitted) when
+  // "Custom date" is the selected comparison_type.
+  const comparisonTypeSelect = document.getElementById("comparison-type-select");
+  const customDateLabel = document.getElementById("custom-date-label");
+  if (comparisonTypeSelect && customDateLabel) {
+    comparisonTypeSelect.addEventListener("change", () => {
+      customDateLabel.style.display = comparisonTypeSelect.value === "custom" ? "" : "none";
+    });
+  }
+
+  function trendTag(row) {
+    if (row.trend === "GROWTH") return `<span class="trend-tag up">&#8599; growth</span>`;
+    if (row.trend === "DECLINE") return `<span class="trend-tag down">&#8600; decline</span>`;
+    if (row.trend === "NO_CHANGE") return `<span class="trend-tag">stable</span>`;
+    return `<span class="trend-tag">no data</span>`;
+  }
+
+  function movementTag(row) {
+    const labels = {
+      STRONG_GROWTH: "strong growth", MODERATE_GROWTH: "moderate growth", STABLE: "stable",
+      MODERATE_DECLINE: "moderate decline", SHARP_DECLINE: "sharp decline", NO_DATA: "no data",
+    };
+    return `<span class="trend-tag${row.trend === "GROWTH" ? " up" : row.trend === "DECLINE" ? " down" : ""}">${labels[row.movement] || row.movement}</span>`;
+  }
+
+  function slabCell(row) {
+    if (!row.current_slab) return "&mdash;";
+    const arrow = row.slab_upgraded ? ` <span style="color:var(--good);">&#8593;</span>` : row.slab_downgraded ? ` <span style="color:var(--nil);">&#8595;</span>` : "";
+    return `<span class="pill ${SLAB_CLASS[row.current_slab] || ""}">${row.current_slab}</span>${arrow}`;
+  }
+
+  function dataStatusTag(status) {
+    if (status === "fresh") return `<span class="trend-tag up">fresh</span>`;
+    if (status === "no_data") return `<span class="trend-tag">no data</span>`;
+    return `<span class="trend-tag down">${status}</span>`;
+  }
+
+  // Comparison drawer — every field here is already loaded client-side
+  // (the same COMPARISON_ROWS JSON the table renders from), so opening it
+  // is instant, no second fetch. Shows the full comparison shape (incl.
+  // previous slab / slab movement, which the table itself doesn't have
+  // room for) plus a link through to the CSP's full profile for history.
+  function openComparisonDrawer(row) {
+    const body = window.openDrawer(row.csp_name || row.csp_code);
+    const slabMove = row.slab_upgraded
+      ? `<span class="trend-tag up">&#8593; ${row.previous_slab || "—"} &rarr; ${row.current_slab || "—"}</span>`
+      : row.slab_downgraded
+      ? `<span class="trend-tag down">&#8595; ${row.previous_slab || "—"} &rarr; ${row.current_slab || "—"}</span>`
+      : "No change";
+    body.innerHTML = `
+      <p class="hint" style="margin:-8px 0 16px;">${row.csp_code}</p>
+      <div class="kv-grid">
+        <div class="kv"><span class="k">Current balance</span><span class="v">${window.fmtINR(row.current_value)}</span></div>
+        <div class="kv"><span class="k">Previous balance</span><span class="v">${window.fmtINR(row.previous_value)}</span></div>
+        <div class="kv"><span class="k">Absolute change</span><span class="v">${row.abs_change == null ? "—" : (row.abs_change > 0 ? "+" : "") + window.fmtINR(row.abs_change)}</span></div>
+        <div class="kv"><span class="k">Percentage change</span><span class="v">${row.pct_change == null ? "—" : (row.pct_change > 0 ? "+" : "") + row.pct_change + "%"}</span></div>
+        <div class="kv"><span class="k">Trend</span><span class="v">${trendTag(row)}</span></div>
+        <div class="kv"><span class="k">Movement strength</span><span class="v">${movementTag(row)}</span></div>
+        <div class="kv"><span class="k">Current slab</span><span class="v">${slabCell(row)}</span></div>
+        <div class="kv"><span class="k">Previous slab</span><span class="v">${row.previous_slab || "—"}</span></div>
+        <div class="kv"><span class="k">Slab movement</span><span class="v">${slabMove}</span></div>
+        <div class="kv"><span class="k">Gap to next slab</span><span class="v">${row.gap_to_next_slab == null ? "—" : window.fmtINR(row.gap_to_next_slab)}</span></div>
+        <div class="kv"><span class="k">MTD avg so far</span><span class="v">${window.fmtINR(row.mtd_avg_so_far)}</span></div>
+        <div class="kv"><span class="k">Data status</span><span class="v">${dataStatusTag(row.current_data_status)}</span></div>
+      </div>
+      <a class="btn-primary" style="display:block; text-align:center; text-decoration:none; margin-top:20px;" href="/dashboard/csp/${row.csp_code}/">View full profile &rarr;</a>
+    `;
+  }
+
+  function initComparisonTable(rows) {
+    const pageSize = 20;
+    const state = { q: "", trend: "ALL", sortKey: "pct_change", sortDir: -1, page: 0 };
+
+    const tbody = document.getElementById("tbl-body");
+    const countEl = document.getElementById("table-count");
+    const pagerInfo = document.getElementById("pager-info");
+    const prevBtn = document.getElementById("prev");
+    const nextBtn = document.getElementById("next");
+
+    function filtered() {
+      const q = state.q.trim().toLowerCase();
+      let out = rows.filter((c) => {
+        if (state.trend !== "ALL" && c.trend !== state.trend) return false;
+        if (!q) return true;
+        return (c.csp_name || "").toLowerCase().includes(q) || c.csp_code.toLowerCase().includes(q);
+      });
+      out.sort((a, b) => {
+        let av = a[state.sortKey], bv = b[state.sortKey];
+        if (av == null) av = state.sortDir === 1 ? Infinity : -Infinity;
+        if (bv == null) bv = state.sortDir === 1 ? Infinity : -Infinity;
+        if (typeof av === "string") return av.localeCompare(bv) * state.sortDir;
+        return (av - bv) * state.sortDir;
+      });
+      return out;
+    }
+
+    function render() {
+      const list = filtered();
+      countEl.textContent = list.length + " match" + (list.length === 1 ? "" : "es");
+      const start = state.page * pageSize;
+      const page = list.slice(start, start + pageSize);
+
+      tbody.innerHTML = page.map((c) => `
+        <tr class="comparison-row" data-csp-code="${c.csp_code}" style="cursor:pointer;">
+          <td><a class="name-link" href="/dashboard/csp/${c.csp_code}/">${c.csp_name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
+          <td class="mono">${window.fmtINR(c.current_value)}</td>
+          <td class="mono">${window.fmtINR(c.previous_value)}</td>
+          <td class="mono">${c.abs_change == null ? "&mdash;" : (c.abs_change > 0 ? "+" : "") + window.fmtINR(c.abs_change)}</td>
+          <td class="mono">${c.pct_change == null ? "&mdash;" : (c.pct_change > 0 ? "+" : "") + c.pct_change + "%"}</td>
+          <td>${trendTag(c)}</td>
+          <td>${movementTag(c)}</td>
+          <td>${slabCell(c)}</td>
+          <td class="mono">${c.gap_to_next_slab == null ? "&mdash;" : window.fmtINR(c.gap_to_next_slab)}</td>
+          <td>${dataStatusTag(c.current_data_status)}</td>
+        </tr>`).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px;">No CSPs match this filter.</td></tr>`;
+
+      tbody.querySelectorAll(".comparison-row").forEach((tr) => {
+        tr.addEventListener("click", (e) => {
+          if (e.target.tagName === "A") return; // let the name link navigate normally
+          const row = rows.find((r) => r.csp_code === tr.dataset.cspCode);
+          if (row) openComparisonDrawer(row);
+        });
+      });
+
+      document.querySelectorAll("thead th[data-key]").forEach((th) => {
+        th.classList.toggle("sorted", th.dataset.key === state.sortKey);
+        const arrow = th.querySelector(".arrow");
+        if (arrow) arrow.textContent = th.dataset.key === state.sortKey ? (state.sortDir === 1 ? "↑" : "↓") : "↓";
+      });
+
+      const pages = Math.max(1, Math.ceil(list.length / pageSize));
+      pagerInfo.textContent = `Page ${state.page + 1} of ${pages}`;
+      prevBtn.disabled = state.page <= 0;
+      nextBtn.disabled = state.page >= pages - 1;
+    }
+
+    document.getElementById("search").addEventListener("input", (e) => { state.q = e.target.value; state.page = 0; render(); });
+    document.querySelectorAll(".chip[data-trend]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip[data-trend]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+        btn.setAttribute("aria-pressed", "true");
+        state.trend = btn.dataset.trend; state.page = 0; render();
+      });
+    });
+    document.querySelectorAll("thead th[data-key]").forEach((th) => {
+      th.addEventListener("click", () => {
+        if (state.sortKey === th.dataset.key) state.sortDir *= -1;
+        else { state.sortKey = th.dataset.key; state.sortDir = 1; }
+        render();
+      });
+    });
+    prevBtn.addEventListener("click", () => { state.page--; render(); });
+    nextBtn.addEventListener("click", () => { state.page++; render(); });
+
+    render();
+  }
+
+  initComparisonTable(COMPARISON_ROWS);
+</script>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% comment %}
+MovementBadge — STRONG_GROWTH/MODERATE_GROWTH/STABLE/MODERATE_DECLINE/
+SHARP_DECLINE/NO_DATA, as produced by csp.comparison.classify_movement().
+Never classifies anything itself.
+Usage: {% include "dashboard/components/movement_badge.html" with movement=result.movement %}
+{% endcomment %}
+{% if movement == "STRONG_GROWTH" %}<span class="movement-badge strong-growth">Strong growth</span>
+{% elif movement == "MODERATE_GROWTH" %}<span class="movement-badge moderate-growth">Moderate growth</span>
+{% elif movement == "STABLE" %}<span class="movement-badge stable">Stable</span>
+{% elif movement == "MODERATE_DECLINE" %}<span class="movement-badge moderate-decline">Moderate decline</span>
+{% elif movement == "SHARP_DECLINE" %}<span class="movement-badge strong-decline">Sharp decline</span>
+{% else %}<span class="movement-badge no-data">No data</span>{% endif %}

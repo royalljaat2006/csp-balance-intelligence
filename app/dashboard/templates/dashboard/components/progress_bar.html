@@ -1,0 +1,10 @@
+{% comment %}
+ProgressBar — a single fill bar, e.g. "how close is this CSP's MTD average
+to the next slab threshold." `pct` (0-100) and `slab` (for the fill color)
+are both computed upstream (csp.rules/csp.comparison) — this component
+only paints the number it's given, it never computes a gap or a percentage.
+Usage: {% include "dashboard/components/progress_bar.html" with pct=72 slab=row.slab %}
+{% endcomment %}
+<div class="progress-bar{% if slab %} {{ slab|lower }}{% endif %}">
+  <div class="fill" style="width:{{ pct|default:0 }}%"></div>
+</div>

@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: django
+    description: Tables owned and migrated by the Django app (app/csp/models.py) — dbt reads, never writes these.
+    schema: public
+    tables:
+      - name: csp
+        identifier: csp_csp
+      - name: daily_balance
+        identifier: csp_dailybalance
+      - name: transaction
+        identifier: csp_transaction

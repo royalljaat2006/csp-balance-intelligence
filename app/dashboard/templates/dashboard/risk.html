@@ -1,0 +1,61 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Risk — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>CSP Intelligence</div>
+    <h1>Risk</h1>
+    <p class="sub">CSPs flagged today vs yesterday — sharp decline, slab downgrade, or persistently near
+      the eligibility minimum. Every flag names its exact reason; nothing here is an opaque score.
+      {% include "dashboard/components/trust_badge.html" with kind="calculated_metric" %}</p>
+  </header>
+
+  <div class="stats cols-2">
+    <div class="stat" style="cursor:default;">
+      <div class="label">Flagged today</div>
+      <div class="value" data-count="{{ total_flagged }}">0</div>
+      <div class="foot">of {{ total_csps }} CSPs compared</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Mode</div>
+      <div class="value" style="font-size:22px;">{{ mode|capfirst }}</div>
+      <div class="foot"><a href="?mode=overall" style="color:var(--brand);">Overall</a> &middot; <a href="?mode=onus" style="color:var(--brand);">ONUS</a></div>
+    </div>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head"><h2>At-risk CSPs</h2></div>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>CSP</th><th>Reasons</th><th class="num">Balance</th><th>Movement</th><th>Slab</th></tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><a class="name-link" href="{% url 'dashboard:csp_detail' r.csp_code %}">{{ r.csp_name }}</a><span class="code">{{ r.csp_code }}</span></td>
+            <td>{% for reason in r.reasons %}<span class="status-badge stale" style="margin-right:4px;">{{ reason }}</span>{% endfor %}</td>
+            <td class="mono">{% if r.comparison.current_value is not None %}<span data-fmt="inr" data-val="{{ r.comparison.current_value }}"></span>{% else %}—{% endif %}</td>
+            <td>{% if r.comparison %}{% include "dashboard/components/movement_badge.html" with movement=r.comparison.movement %}{% endif %}</td>
+            <td>{% if r.comparison.current_slab %}{% include "dashboard/components/slab_badge.html" with slab=r.comparison.current_slab %}{% else %}—{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">
+            {% include "dashboard/components/empty_state.html" with title="No CSPs currently flagged" description="Nothing is showing a sharp decline, a slab downgrade, or a near-minimum balance today — check back after the next data refresh." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll('[data-fmt="inr"]').forEach(el => { el.textContent = window.fmtINR(+el.dataset.val); });
+  document.querySelectorAll(".stat .value[data-count]").forEach((el) => window.countUp(el, +el.dataset.count));
+</script>
+{% endblock %}

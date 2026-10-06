@@ -1,0 +1,25 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Admin — CSP Balance Tracker{% endblock %}
+{% block extra_head %}
+<style>
+  .api-docs-frame-wrap{ max-width: 1180px; margin: 0 auto; }
+  .api-docs-frame-wrap iframe{
+    width: 100%; height: calc(100vh - 130px); min-height: 500px;
+    border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="gap:14px;">
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Staff only</div>
+    <h1>Admin console</h1>
+    <p class="sub">Django's own data &amp; ingestion admin, embedded here so it doesn't leave the
+      dashboard. It runs under your same session — anything you could do at <code>/admin/</code>
+      directly, you can do here.</p>
+  </header>
+</div>
+<div class="api-docs-frame-wrap">
+  <iframe src="/admin/" title="Admin console"></iframe>
+</div>
+{% endblock %}

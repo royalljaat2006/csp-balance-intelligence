@@ -1,0 +1,18 @@
+{% comment %}
+EmptyState — a meaningful "why is this empty" panel, not a bare "No data."
+`variant="error"` reuses the exact same shape for an error condition
+(same visual weight — icon, title, description, optional action) rather
+than a separate ErrorState component, since the two are structurally
+identical.
+Args: title, description, action_url (optional), action_label (optional), variant (optional: "error")
+Usage:
+  {% include "dashboard/components/empty_state.html" with title="No transaction data yet" description="No transaction file has been processed today." %}
+{% endcomment %}
+<div class="empty-state{% if variant == "error" %} error{% endif %}">
+  <div class="empty-icon" aria-hidden="true">{% if variant == "error" %}&#9888;{% else %}&#128193;{% endif %}</div>
+  <div class="empty-title">{{ title }}</div>
+  <div class="empty-desc">{{ description }}</div>
+  {% if action_url %}
+  <a class="empty-action btn-primary" style="display:inline-block; width:auto; padding:8px 16px;" href="{{ action_url }}">{{ action_label|default:"Refresh" }}</a>
+  {% endif %}
+</div>

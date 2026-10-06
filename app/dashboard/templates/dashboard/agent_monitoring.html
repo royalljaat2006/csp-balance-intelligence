@@ -1,0 +1,190 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Agent Monitoring — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>CSP Operations Agent</div>
+    <h1>Agent Monitoring</h1>
+    <p class="sub">Whether the agentic layer itself is healthy, active, and effective &mdash; separate from
+      <a href="{% url 'dashboard:ai_operations' %}">AI Operations</a>, which shows what the agent produced. Every
+      number below is a real aggregate over agent execution records; a metric with no data yet reads &ldquo;No data&rdquo;,
+      never a guess.</p>
+  </header>
+
+  <div class="stats">
+    <div class="stat" style="cursor:default;">
+      <div class="label">Active agents</div>
+      <div class="value">{{ kpis.active_agents }}</div>
+      <div class="foot">distinct agent types that have run</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Runs today</div>
+      <div class="value">{{ kpis.runs_today }}</div>
+      <div class="foot">{{ kpis.successful_runs_today }} completed &middot; {{ kpis.failed_runs_today }} failed</div>
+    </div>
+    <div class="stat{% if kpis.success_rate_today is not None and kpis.success_rate_today < 80 %} accent{% endif %}" style="cursor:default;">
+      <div class="label">Success rate (today)</div>
+      <div class="value">{% if kpis.success_rate_today is not None %}{{ kpis.success_rate_today }}%{% else %}No data{% endif %}</div>
+      <div class="foot">&nbsp;</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Pending approvals</div>
+      <div class="value">{{ kpis.pending_approvals }}</div>
+      <div class="foot">awaiting human review</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Avg run time</div>
+      <div class="value">{% if kpis.avg_run_seconds is not None %}{{ kpis.avg_run_seconds }}s{% else %}No data{% endif %}</div>
+      <div class="foot">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="stats cols-4">
+    <div class="stat" style="cursor:default;">
+      <div class="label">Actions executed</div>
+      <div class="value">{{ kpis.actions_executed }}</div>
+      <div class="foot">&nbsp;</div>
+    </div>
+    <div class="stat{% if kpis.actions_failed %} accent{% endif %}" style="cursor:default;">
+      <div class="label">Actions failed</div>
+      <div class="value">{{ kpis.actions_failed }}</div>
+      <div class="foot">&nbsp;</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Verification success</div>
+      <div class="value">{% if kpis.verification_success_rate is not None %}{{ kpis.verification_success_rate }}%{% else %}No data{% endif %}</div>
+      <div class="foot">&nbsp;</div>
+    </div>
+    <div class="stat" style="cursor:default;">
+      <div class="label">Tool calls</div>
+      <div class="value">{{ kpis.tool_calls_total }}</div>
+      <div class="foot">{% if kpis.retry_count is not None %}{{ kpis.retry_count }} retries{% else %}retry tracking: No data{% endif %}</div>
+    </div>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Agent heatmap</h2>
+      <span class="hint">last 14 days &middot; click a cell for detail</span>
+    </div>
+    {% if heatmap %}
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            {% for cell in heatmap.0.cells %}<th class="num" style="font-size:10px;">{{ cell.date|slice:"5:" }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in heatmap %}
+          <tr>
+            <td style="text-align:left; white-space:nowrap;">{{ row.agent_name }}</td>
+            {% for cell in row.cells %}
+            <td style="padding:4px;">
+              <span class="heatmap-tile {{ cell.status }}" style="width:20px;height:20px;margin:0 auto;"
+                data-agent="{{ row.agent_name }}" data-date="{{ cell.date }}" data-total="{{ cell.total }}"
+                data-completed="{{ cell.completed }}" data-failed="{{ cell.failed }}" data-needs-data="{{ cell.needs_data }}"
+                data-actions-total="{{ cell.actions_total }}" data-actions-pending="{{ cell.actions_pending }}"
+                data-tool-calls="{{ cell.tool_calls_total }}" data-avg-run="{{ cell.avg_run_seconds|default_if_none:"" }}"
+                data-status="{{ cell.status }}"></span>
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="heatmap-legend">
+      <span><span class="sw" style="background:var(--good-soft);box-shadow:inset 0 0 0 1px var(--good);"></span>Healthy</span>
+      <span><span class="sw" style="background:var(--s1-soft);box-shadow:inset 0 0 0 1px var(--s1);"></span>Warning</span>
+      <span><span class="sw" style="background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent);"></span>Degraded</span>
+      <span><span class="sw" style="background:var(--nil-soft);box-shadow:inset 0 0 0 1px var(--nil);"></span>Failed</span>
+      <span><span class="sw" style="background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line-strong);"></span>No activity</span>
+    </div>
+    {% else %}
+    {% include "dashboard/components/empty_state.html" with title="No agent runs yet" description="Run the agent from AI Operations, or wait for the daily autopilot schedule." %}
+    {% endif %}
+  </section>
+
+  <div class="panel-grid">
+    <section class="panel">
+      <div class="panel-head"><h2>Tool usage</h2><span class="hint">all-time</span></div>
+      {% if tool_usage %}
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Failures</th></tr></thead>
+          <tbody>
+            {% for t in tool_usage %}
+            <tr><td>{{ t.tool_name }}</td><td class="mono">{{ t.calls }}</td><td class="mono">{{ t.failures }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="sub">No tool calls recorded yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Human approval monitoring</h2><span class="hint">message-draft actions</span></div>
+      <div class="kv-grid">
+        <div class="kv"><span class="k">Pending</span><span class="v">{{ approval_metrics.pending }}</span></div>
+        <div class="kv"><span class="k">Approved</span><span class="v">{{ approval_metrics.approved }}</span></div>
+        <div class="kv"><span class="k">Rejected</span><span class="v">{{ approval_metrics.rejected }}</span></div>
+        <div class="kv"><span class="k">Avg wait time</span><span class="v">{% if approval_metrics.avg_wait_seconds is not None %}{{ approval_metrics.avg_wait_seconds }}s{% else %}No data{% endif %}</span></div>
+      </div>
+      <p class="sub" style="margin-top:12px;margin-bottom:0;">Connects directly to the existing <a href="{% url 'dashboard:messaging' %}">Messaging</a> approval flow &mdash; no separate approval system.</p>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Failed runs</h2><span class="hint">{{ failed_runs|length }} shown</span></div>
+    {% if failed_runs %}
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Agent</th><th>Task</th><th>Failure reason</th></tr></thead>
+        <tbody>
+          {% for run in failed_runs %}
+          <tr>
+            <td class="mono">{{ run.started_at|date:"d M, H:i" }}</td>
+            <td>{{ run.agent_name }}</td>
+            <td>{{ run.task }}</td>
+            <td class="hint">{{ run.error_message|truncatechars:100 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="sub">No failed runs on record.</p>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll(".heatmap-tile[data-agent]").forEach((cell) => {
+    cell.style.cursor = "pointer";
+    cell.addEventListener("click", () => {
+      const d = cell.dataset;
+      const body = window.openDrawer(`${d.agent} — ${d.date}`);
+      body.innerHTML = `
+        <div class="kv-grid">
+          <div class="kv"><span class="k">Status</span><span class="v">${d.status.replace("_", " ")}</span></div>
+          <div class="kv"><span class="k">Runs</span><span class="v">${d.total}</span></div>
+          <div class="kv"><span class="k">Completed</span><span class="v">${d.completed}</span></div>
+          <div class="kv"><span class="k">Failed</span><span class="v">${d.failed}</span></div>
+          <div class="kv"><span class="k">Needs data</span><span class="v">${d.needsData}</span></div>
+          <div class="kv"><span class="k">Actions</span><span class="v">${d.actionsTotal}</span></div>
+          <div class="kv"><span class="k">Pending approvals</span><span class="v">${d.actionsPending}</span></div>
+          <div class="kv"><span class="k">Tool calls</span><span class="v">${d.toolCalls}</span></div>
+          <div class="kv"><span class="k">Avg runtime</span><span class="v">${d.avgRun ? d.avgRun + "s" : "No data"}</span></div>
+        </div>`;
+    });
+  });
+</script>
+{% endblock %}

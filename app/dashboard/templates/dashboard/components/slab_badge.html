@@ -1,0 +1,7 @@
+{% comment %}
+SlabBadge — the Rule 19 slab pill (NIL/S1-S4). `slab` comes straight from
+MonthlySummary.slab / DailyCspSnapshot.slab / CspComparisonOut.current_slab
+— never recomputed here.
+Usage: {% include "dashboard/components/slab_badge.html" with slab=row.slab %}
+{% endcomment %}
+{% if slab %}<span class="pill {{ slab|lower }}">{{ slab }}</span>{% else %}&mdash;{% endif %}

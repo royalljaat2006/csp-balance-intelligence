@@ -1,0 +1,26 @@
+{% comment %}
+AIInsightCard — the Nemotron-generated narrative body, extracted from
+home.html's "AI briefing" panel so a future AI Operations page can reuse
+the identical rendering (including the "not generated yet" and
+"NEMOTRON_API_KEY not configured" explanations, which are real facts about
+the system's state, not placeholder copy). Caller owns the panel/header —
+this is just the body, since different pages may want a different hint
+next to the header.
+Args: latest_insight (an autopilot.models.Insight or None), unreviewed_anomaly_count (int)
+Usage:
+  {% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight unreviewed_anomaly_count=unreviewed_anomaly_count only %}
+{% endcomment %}
+{% if latest_insight %}
+  <div style="margin-bottom:6px;">{% include "dashboard/components/trust_badge.html" with kind="ai_recommendation" %}</div>
+  <p style="font-weight:600; margin:0 0 6px;">{{ latest_insight.headline }}</p>
+  <p class="sub" style="margin-top:0;">{{ latest_insight.body }}</p>
+{% else %}
+  <p class="sub" style="margin:0;">No AI briefing generated yet &mdash; runs automatically once a day
+    once <code>NEMOTRON_API_KEY</code> is configured (see <code>manage.py generate_insights</code>).</p>
+{% endif %}
+{% if unreviewed_anomaly_count %}
+  <p class="sub" style="margin-top:10px; margin-bottom:0;">
+    <a href="/dashboard/admin-console/" style="color:var(--nil); font-weight:600;">{{ unreviewed_anomaly_count }} data anomal{{ unreviewed_anomaly_count|pluralize:"y,ies" }} flagged</a>
+    &mdash; review in Admin.
+  </p>
+{% endif %}

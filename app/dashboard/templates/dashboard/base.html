@@ -1,0 +1,153 @@
+{% load static %}<!doctype html>
+<html lang="en"{% if is_eko_mode %} data-theme="eko"{% endif %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CSP Balance Tracker{% endblock %}</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="{% static 'dashboard/dashboard.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  {% if user.is_authenticated %}
+  <div class="app-shell">
+    <div class="sidebar-scrim" id="sidebar-scrim"></div>
+    <aside class="sidebar" id="app-sidebar">
+      <div class="sidebar-brand">
+        <span class="dot"></span>
+        <span class="name">CSP Balance Tracker<small>{% if is_eko_mode %}Eko Operations{% else %}Balance Intelligence{% endif %}</small></span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-group-label">Overview</div>
+        <a href="{% url 'dashboard:home' %}" class="{% if request.resolver_match.url_name == 'home' %}active{% endif %}"><span class="ic">&#9635;</span><span class="lbl">Dashboard</span></a>
+
+        <div class="nav-group-label">CSP Intelligence</div>
+        <a href="{% url 'dashboard:csp_directory' %}" class="{% if request.resolver_match.url_name == 'csp_directory' %}active{% endif %}"><span class="ic">&#9776;</span><span class="lbl">CSP Directory</span></a>
+        <a href="{% url 'dashboard:csp_directory' %}" title="Open any CSP's 360° profile from the Directory"><span class="ic">&#9673;</span><span class="lbl">CSP 360&deg;</span></a>
+        <a href="{% url 'dashboard:balance_intelligence' %}" class="{% if request.resolver_match.url_name == 'balance_intelligence' %}active{% endif %}"><span class="ic">&#8365;</span><span class="lbl">Balance Intelligence</span></a>
+        <a href="{% url 'dashboard:csp_comparisons' %}" class="{% if request.resolver_match.url_name == 'csp_comparisons' %}active{% endif %}"><span class="ic">&#8646;</span><span class="lbl">Daily Comparison</span></a>
+        <a href="{% url 'dashboard:transactions' %}" class="{% if request.resolver_match.url_name == 'transactions' %}active{% endif %}"><span class="ic">&#8646;</span><span class="lbl">Transactions</span></a>
+        <a href="{% url 'dashboard:trends' %}" class="{% if request.resolver_match.url_name == 'trends' %}active{% endif %}"><span class="ic">&#8599;</span><span class="lbl">Trends &amp; Analytics</span></a>
+        {% if user.is_staff %}
+        <a href="{% url 'dashboard:risk' %}" class="{% if request.resolver_match.url_name == 'risk' %}active{% endif %}"><span class="ic">&#9888;</span><span class="lbl">Risk</span></a>
+
+        <div class="nav-group-label">Operations</div>
+        <a href="{% url 'dashboard:messaging' %}" class="{% if request.resolver_match.url_name == 'messaging' %}active{% endif %}"><span class="ic">&#9993;</span><span class="lbl">Messaging</span></a>
+        <a href="{% url 'dashboard:actions' %}" class="{% if request.resolver_match.url_name == 'actions' %}active{% endif %}"><span class="ic">&#9998;</span><span class="lbl">Actions</span></a>
+        <a href="{% url 'dashboard:messaging' %}" title="Approvals happen on Messaging today"><span class="ic">&#10003;</span><span class="lbl">Approvals</span></a>
+        <a href="{% url 'dashboard:verification' %}" class="{% if request.resolver_match.url_name == 'verification' %}active{% endif %}"><span class="ic">&#128269;</span><span class="lbl">Verification</span></a>
+
+        <div class="nav-group-label">AI Operations</div>
+        <a href="{% url 'dashboard:agent_findings' %}" class="{% if request.resolver_match.url_name == 'agent_findings' %}active{% endif %}"><span class="ic">&#9673;</span><span class="lbl">Agent Findings</span></a>
+        <a href="{% url 'dashboard:ai_operations' %}" class="{% if request.resolver_match.url_name == 'ai_operations' %}active{% endif %}"><span class="ic">&#10024;</span><span class="lbl">AI Recommendations</span></a>
+        <a href="{% url 'dashboard:agent_monitoring' %}" class="{% if request.resolver_match.url_name == 'agent_monitoring' %}active{% endif %}"><span class="ic">&#128202;</span><span class="lbl">Agent Monitoring</span></a>
+
+        <div class="nav-group-label">System</div>
+        <a href="{% url 'dashboard:system_health' %}" class="{% if request.resolver_match.url_name == 'system_health' %}active{% endif %}"><span class="ic">&#9881;</span><span class="lbl">System Health</span></a>
+        <a href="{% url 'dashboard:pipeline' %}" class="{% if request.resolver_match.url_name == 'pipeline' %}active{% endif %}"><span class="ic">&#8635;</span><span class="lbl">Data Pipeline</span></a>
+        <a href="{% url 'dashboard:api_docs' %}" class="{% if request.resolver_match.url_name == 'api_docs' %}active{% endif %}"><span class="ic">&#123;&#125;</span><span class="lbl">API Documentation</span></a>
+        <a href="{% url 'dashboard:admin_embed' %}" title="Full audit trail (IngestLog, agent actions, ...)"><span class="ic">&#128203;</span><span class="lbl">Audit</span></a>
+        <a href="{% url 'dashboard:admin_embed' %}" class="{% if request.resolver_match.url_name == 'admin_embed' %}active{% endif %}"><span class="ic">&#128274;</span><span class="lbl">Administration</span></a>
+        {% endif %}
+      </nav>
+      <div class="sidebar-foot">
+        <button type="button" class="sidebar-toggle" id="sidebar-collapse-btn" aria-label="Collapse navigation">&laquo;</button>
+      </div>
+    </aside>
+
+    <div class="shell-main">
+      <div class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="icon-btn" id="sidebar-mobile-toggle" aria-label="Open navigation">&#9776;</button>
+          {% block breadcrumbs %}{% endblock %}
+          <button type="button" class="topbar-search" data-cmdk-trigger aria-label="Search (Ctrl+K)">
+            <span class="ts-icon">&#9906;</span>
+            <span class="ts-placeholder">Search CSP, code, or anything&hellip;</span>
+            <span class="ts-kbd">&#8984;K</span>
+          </button>
+        </div>
+        <div class="topbar-right">
+          <span class="env-badge {{ env_badge|lower }}">{{ env_badge }}</span>
+          <span class="freshness-pill {{ freshness.overall_status }}" title="CALLING SHEET ingest freshness">
+            <span class="dot"></span>{{ freshness.overall_status|default:"missing"|capfirst }}{% if freshness.calling_sheet_last_success %} &middot; {{ freshness.calling_sheet_last_success|timesince }} ago{% endif %}
+          </span>
+          <button type="button" class="icon-btn" id="refresh-btn" title="Refresh this page" aria-label="Refresh">&#8635;</button>
+          <div class="mode-switch" role="group" aria-label="Dashboard mode">
+            <button type="button" data-mode="tracker" class="{% if not is_eko_mode %}active{% endif %}">Tracker</button>
+            <button type="button" data-mode="eko" class="{% if is_eko_mode %}active{% endif %}">Eko</button>
+          </div>
+          <div class="dropdown">
+            <button type="button" class="icon-btn" data-dropdown-trigger="notif-panel" aria-label="Notifications">
+              &#128276;{% if unreviewed_anomaly_count or freshness.overall_status != "fresh" %}<span class="notif-dot"></span>{% endif %}
+            </button>
+            <div class="dropdown-panel" id="notif-panel">
+              <div class="dropdown-head">Notifications</div>
+              {% if freshness.overall_status != "fresh" %}
+              <a class="dropdown-item" href="{% url 'dashboard:admin_embed' %}">&#9888;&nbsp;<span>CALLING SHEET ingest is {{ freshness.overall_status|default:"missing" }}{% if freshness.calling_sheet_last_success %} — last success {{ freshness.calling_sheet_last_success|timesince }} ago{% else %} — no successful run yet{% endif %}.</span></a>
+              {% endif %}
+              {% if unreviewed_anomaly_count %}
+              <a class="dropdown-item" href="{% url 'dashboard:admin_embed' %}">&#128269;&nbsp;<span>{{ unreviewed_anomaly_count }} data anomal{{ unreviewed_anomaly_count|pluralize:"y,ies" }} awaiting review.</span></a>
+              {% endif %}
+              {% if not unreviewed_anomaly_count and freshness.overall_status == "fresh" %}
+              <div class="dropdown-empty">No open notifications.</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="dropdown">
+            <button type="button" class="icon-btn" data-dropdown-trigger="user-panel" aria-label="User menu">{{ user.get_username|slice:":1"|upper }}</button>
+            <div class="dropdown-panel" id="user-panel">
+              <div class="dropdown-head">{{ user.get_username }}</div>
+              <form method="post" action="{% url 'dashboard:logout' %}" style="padding:10px 14px;">{% csrf_token %}<button type="submit" class="btn-reject" style="width:100%;">Log out</button></form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <main class="page-enter">
+  {% else %}
+  <main>
+  {% endif %}
+  {% block content %}{% endblock %}
+  {% if user.is_authenticated %}
+      </main>
+    </div>
+  </div>
+  {% else %}
+  </main>
+  {% endif %}
+
+  <script src="{% static 'dashboard/dashboard.js' %}"></script>
+  <script src="{% static 'dashboard/ui-kit.js' %}"></script>
+  {% if user.is_authenticated %}
+  <script>
+    window.initCommandPalette([
+      {label: "Dashboard", group: "Page", href: "{% url 'dashboard:home' %}"},
+      {label: "CSP Directory / CSP 360°", group: "Page", href: "{% url 'dashboard:csp_directory' %}"},
+      {label: "Balance Intelligence", group: "Page", href: "{% url 'dashboard:balance_intelligence' %}"},
+      {label: "Daily Comparison", group: "Page", href: "{% url 'dashboard:csp_comparisons' %}"},
+      {label: "Transactions", group: "Page", href: "{% url 'dashboard:transactions' %}"},
+      {label: "Trends & Analytics", group: "Page", href: "{% url 'dashboard:trends' %}"}{% if user.is_staff %},
+      {label: "Risk", group: "Page", href: "{% url 'dashboard:risk' %}"},
+      {label: "Messaging / Approvals", group: "Page", href: "{% url 'dashboard:messaging' %}"},
+      {label: "Actions", group: "Page", href: "{% url 'dashboard:actions' %}"},
+      {label: "Verification", group: "Page", href: "{% url 'dashboard:verification' %}"},
+      {label: "Agent Findings", group: "Page", href: "{% url 'dashboard:agent_findings' %}"},
+      {label: "AI Recommendations", group: "Page", href: "{% url 'dashboard:ai_operations' %}"},
+      {label: "Agent Monitoring", group: "Page", href: "{% url 'dashboard:agent_monitoring' %}"},
+      {label: "System Health", group: "Page", href: "{% url 'dashboard:system_health' %}"},
+      {label: "Data Pipeline (live)", group: "Page", href: "{% url 'dashboard:pipeline' %}"},
+      {label: "API Documentation", group: "Page", href: "{% url 'dashboard:api_docs' %}"},
+      {label: "Audit / Administration", group: "Page", href: "{% url 'dashboard:admin_embed' %}"}
+      {% endif %}
+    ]);
+    const refreshBtn = document.getElementById("refresh-btn");
+    if (refreshBtn) refreshBtn.addEventListener("click", () => {
+      refreshBtn.classList.add("spinning");
+      window.location.reload();
+    });
+  </script>
+  {% endif %}
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

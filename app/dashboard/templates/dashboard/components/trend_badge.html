@@ -1,0 +1,10 @@
+{% comment %}
+TrendBadge — GROWTH/DECLINE/NO_CHANGE/NO_DATA, as produced by
+csp.comparison.classify_trend(). `pct` (optional) is shown alongside the
+arrow when given. This component never classifies a trend itself.
+Usage: {% include "dashboard/components/trend_badge.html" with trend=result.trend pct=result.pct_change %}
+{% endcomment %}
+{% if trend == "GROWTH" %}<span class="trend-tag up">&#8599;{% if pct is not None %} +{{ pct }}%{% endif %}</span>
+{% elif trend == "DECLINE" %}<span class="trend-tag down">&#8600;{% if pct is not None %} {{ pct }}%{% endif %}</span>
+{% elif trend == "NO_CHANGE" %}<span class="trend-tag">no change</span>
+{% else %}<span class="trend-tag">no data</span>{% endif %}

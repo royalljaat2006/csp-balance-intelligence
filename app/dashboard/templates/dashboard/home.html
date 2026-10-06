@@ -1,0 +1,474 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}CSP Balance Intelligence — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Eko &middot; SBI Kiosk Banking Network</div>
+    <h1>CSP Balance Intelligence</h1>
+    <p class="sub">Network-wide visibility into CSP balances, incentive eligibility, growth, and operational
+      movement — <code>{{ month }}</code>, sourced from the live <code>Calling Sheet</code> and the transaction ledger.</p>
+  </header>
+
+  <div class="stats">
+    <button type="button" class="stat kpi-rich" data-kpi="csps-tracked">
+      <div class="stat-main">
+        <div class="stat-head">
+          <div class="label">CSPs tracked
+            <span class="info-tip"><span class="tip-icon">?</span><span class="tip-bubble">Every CSP known to the system, whether or not it has reported a balance this month.</span></span>
+          </div>
+          <div class="stat-icon icon-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"></circle><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"></path><circle cx="17" cy="8.5" r="2.2"></circle><path d="M15.5 14.2c2.5.5 4.5 2.6 4.5 5.8"></path></svg></div>
+        </div>
+        <div class="value" data-count="{{ overview.csp_total }}">0</div>
+        <div class="foot">{{ overview.csp_with_data }} reporting a balance this month</div>
+      </div>
+    </button>
+    <button type="button" class="stat kpi-rich" data-kpi="reporting-today">
+      <div class="stat-main">
+        <div class="stat-head">
+          <div class="label">Reporting today
+            <span class="info-tip"><span class="tip-icon">?</span><span class="tip-bubble">CSPs with a CALLING SHEET balance reading for today specifically (not just this month).</span></span>
+          </div>
+          <div class="stat-icon icon-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.5 2.5 5.5-6"></path></svg></div>
+        </div>
+        <div class="value" data-count="{{ reporting_today }}">0</div>
+        <div class="foot">of {{ overview.csp_total }} CSPs &middot; {% if reporting_coverage_pct is not None %}{{ reporting_coverage_pct }}%{% else %}&mdash;{% endif %} coverage</div>
+      </div>
+    </button>
+    <button type="button" class="stat kpi-rich" data-kpi="avg-balance">
+      <div class="stat-main">
+        <div class="stat-head">
+          <div class="label">Average balance
+            <span class="info-tip"><span class="tip-icon">?</span><span class="tip-bubble">Mean Monthly Average Balance across every CSP that has reported this month.</span></span>
+          </div>
+          <div class="stat-icon icon-green" style="font-size:15px;font-weight:700;">&#8377;</div>
+        </div>
+        <div class="value" id="stat-avg-mab">—</div>
+      </div>
+      <div class="stat-visual" id="avg-balance-spark"></div>
+    </button>
+    <button type="button" class="stat kpi-rich" data-kpi="total-balance">
+      <div class="stat-main">
+        <div class="stat-head">
+          <div class="label">Total balance</div>
+          <div class="stat-icon icon-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V10M12 19V5M19 19v-7"></path></svg></div>
+        </div>
+        <div class="value" id="stat-total-balance">—</div>
+        <div class="foot">held across those accounts</div>
+      </div>
+    </button>
+    <button type="button" class="stat kpi-rich" data-kpi="incentive-eligible">
+      <div class="stat-main">
+        <div class="stat-head">
+          <div class="label">Incentive eligible
+            <span class="info-tip"><span class="tip-icon">?</span><span class="tip-bubble">CSPs meeting Rule 19's minimum account-count threshold for this month.</span></span>
+          </div>
+          <div class="stat-icon icon-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg></div>
+        </div>
+        <div class="value" data-count="{{ overview.eligible_count }}">0</div>
+        <div class="foot">of {{ overview.csp_with_data }} reporting CSPs</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="panel-grid">
+    <section class="panel">
+      {% include "dashboard/components/section_header.html" with title="Network balance overview" hint="trailing 30 days, network-wide mean" %}
+      <div id="network-balance-chart"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Incentive slab distribution</h2>
+        <span class="hint">{{ overview.csp_with_data }} CSPs with a reported balance</span>
+      </div>
+      <div class="ladder-bar" id="ladder-bar"></div>
+      <div class="ladder-legend" id="ladder-legend"></div>
+    </section>
+  </div>
+
+  <div class="panel-head" style="margin-top:4px;">
+    <h2 style="font-size:15px;">Today vs. yesterday</h2>
+    <span class="hint"><a href="{% url 'dashboard:csp_comparisons' %}">Full daily comparison &rarr;</a></span>
+  </div>
+  <div class="stats cols-4">
+    <button type="button" class="stat" data-kpi="growing-today-2">
+      <div class="label">Growing</div>
+      <div class="value" data-count="{{ daily_trend_counts.GROWTH }}">0</div>
+      <div class="foot">balance up vs. yesterday</div>
+    </button>
+    <button type="button" class="stat accent" data-kpi="declining-today-2">
+      <div class="label">Declining</div>
+      <div class="value" data-count="{{ daily_trend_counts.DECLINE }}">0</div>
+      <div class="foot">balance down vs. yesterday</div>
+    </button>
+    <button type="button" class="stat" data-kpi="stable-today">
+      <div class="label">Stable</div>
+      <div class="value" data-count="{{ daily_trend_counts.NO_CHANGE }}">0</div>
+      <div class="foot">no change vs. yesterday</div>
+    </button>
+    <button type="button" class="stat" data-kpi="nodata-today">
+      <div class="label">No data</div>
+      <div class="value" data-count="{{ daily_trend_counts.NO_DATA }}">0</div>
+      <div class="foot">missing a reading either day &mdash; never counted as decline</div>
+    </button>
+  </div>
+
+  <section class="panel">
+    {% include "dashboard/components/section_header.html" with title="Network health" hint="live, computed from today's readings" %}
+    <div class="kv-grid">
+      <div class="kv"><span class="k">Reporting coverage</span><span class="v">{% if reporting_coverage_pct is not None %}{{ reporting_coverage_pct }}%{% else %}&mdash;{% endif %}</span></div>
+      <div class="kv"><span class="k">Missing data today</span><span class="v">{{ daily_trend_counts.NO_DATA }}</span></div>
+      <div class="kv"><span class="k">Below minimum</span><span class="v">{{ overview.in_nil_count }}</span></div>
+      <div class="kv"><span class="k">Near next slab</span><span class="v">{{ near_next_slab_count }}<span class="hint" style="display:block;font-size:10.5px;">within &#8377;{{ near_next_slab_threshold }}</span></span></div>
+      <div class="kv"><span class="k">Sharp decline today</span><span class="v">{{ significant_decline_count }}</span></div>
+    </div>
+  </section>
+
+  <div class="cols">
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <section class="panel">
+        <div class="panel-head"><h2>Quick wins</h2></div>
+        <p class="sub" style="margin-top:-6px;margin-bottom:10px;">Smallest deposit to reach the next slab &mdash; call these CSPs first.</p>
+        <div class="qw-list">
+          {% for c in quick_wins %}
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' c.csp_code %}">
+            <span class="qw-rank">{{ forloop.counter }}</span>
+            <span class="qw-main">
+              <span class="qw-name">{{ c.name|default:c.csp_code }}</span>
+              <span class="qw-code">{{ c.csp_code }} &middot; {{ c.slab }}</span>
+            </span>
+            <span class="qw-amt"><span class="n" data-amt="{{ c.amount_to_deposit }}"></span><span class="l">to deposit</span></span>
+          </a>
+          {% empty %}
+          <p class="sub">No CSPs currently within reach of the next slab.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel">
+        {% include "dashboard/components/section_header.html" with title="Top movers today" hint="by % change vs. yesterday" %}
+        <div class="modal-section-label" style="margin-top:0;">Growing</div>
+        <div class="qw-list">
+          {% for c in top_growth_today %}
+          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+            <span class="qw-rank">{{ forloop.counter }}</span>
+            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
+            <span class="qw-amt"><span class="n" style="color:var(--good);">+{{ c.pct_change }}%</span></span>
+          </a>
+          {% empty %}<p class="sub" style="margin:4px 0;">No growth to report today.</p>{% endfor %}
+        </div>
+        <div class="modal-section-label">Declining</div>
+        <div class="qw-list">
+          {% for c in top_decline_today %}
+          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+            <span class="qw-rank">{{ forloop.counter }}</span>
+            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
+            <span class="qw-amt"><span class="n" style="color:var(--nil);">{{ c.pct_change }}%</span></span>
+          </a>
+          {% empty %}<p class="sub" style="margin:4px 0;">No declines to report today.</p>{% endfor %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>AI briefing</h2><span class="hint">{{ month }} &middot; Nemotron</span></div>
+        {% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight unreviewed_anomaly_count=unreviewed_anomaly_count only %}
+      </section>
+
+      {% if priority_calls %}
+      <section class="panel">
+        <div class="panel-head"><h2>AI priority calls</h2></div>
+        <p class="sub" style="margin-top:-6px;margin-bottom:10px;">Nemotron-ranked over gap + trend + account growth together.</p>
+        <div class="qw-list">
+          {% for pc in priority_calls %}
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' pc.csp.csp_code %}">
+            <span class="qw-rank">{{ pc.rank }}</span>
+            <span class="qw-main">
+              <span class="qw-name">{{ pc.csp.name|default:pc.csp.csp_code }}</span>
+              <span class="qw-code">{{ pc.csp.csp_code }}</span>
+            </span>
+          </a>
+          <p class="sub" style="margin:-4px 0 6px; font-size:11.5px;">{{ pc.reason }}</p>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+    </div>
+
+    <section class="panel" id="all-csps">
+      <div class="panel-head">
+        <h2>All CSPs</h2>
+        <span class="hint" id="table-count"></span>
+      </div>
+      <div class="controls">
+        <input class="search" id="search" type="search" placeholder="Search by name, code, or mobile&hellip;" aria-label="Search CSPs">
+        <button class="chip" data-slab="ALL" aria-pressed="true">All</button>
+        <button class="chip" data-slab="NIL" aria-pressed="false">NIL</button>
+        <button class="chip" data-slab="S1" aria-pressed="false">S1</button>
+        <button class="chip" data-slab="S2" aria-pressed="false">S2</button>
+        <button class="chip" data-slab="S3" aria-pressed="false">S3</button>
+        <button class="chip" data-slab="S4" aria-pressed="false">S4</button>
+        <button type="button" class="icon-btn" id="export-csv-btn" title="Export visible CSPs to CSV" aria-label="Export CSV" style="margin-left:auto;">&#8681;</button>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-key="name">CSP <span class="arrow">&darr;</span></th>
+              <th data-key="account_count" class="num">Accounts <span class="arrow">&darr;</span></th>
+              <th data-key="net_new_accounts" class="num">Growth <span class="arrow">&darr;</span></th>
+              <th data-key="mtd_mab" class="num">Avg balance <span class="arrow">&darr;</span></th>
+              <th data-key="slab">Slab <span class="arrow">&darr;</span></th>
+              <th data-key="amount_to_deposit" class="num">To next slab <span class="arrow">&darr;</span></th>
+              <th data-key="trend_flag">Trend <span class="arrow">&darr;</span></th>
+            </tr>
+          </thead>
+          <tbody id="tbl-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="pager-info"></span>
+        <div class="pager-btns"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button></div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="page-footer">
+    <strong>Data provenance.</strong> CSP master + balances: live <code>Calling Sheet</code>, snapshotted daily.
+    Slab math is computed independently by the tracker's Rule&nbsp;19 engine (<code>csp/rules.py</code>) and
+    cross-checked against the sheet's own reference figures. See the <a href="{% url 'dashboard:trends' %}">Trends</a>
+    page for network-wide activity over time.
+  </footer>
+</div>
+
+{{ csp_rows|json_script:"csp-data" }}
+{{ top_growth_today|json_script:"top-growth-today-data" }}
+{{ top_decline_today|json_script:"top-decline-today-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const CSP_ROWS = JSON.parse(document.getElementById("csp-data").textContent);
+  const TOP_GROWTH_TODAY = JSON.parse(document.getElementById("top-growth-today-data").textContent);
+  const TOP_DECLINE_TODAY = JSON.parse(document.getElementById("top-decline-today-data").textContent);
+  const OVERVIEW = {
+    slab_distribution: {{ overview.slab_distribution|safe }},
+    total_balance: {{ total_balance }},
+    avg_mab: {{ overview.avg_mab|default_if_none:"null" }},
+  };
+  const NETWORK_BALANCE_SERIES = {{ network_balance_series|safe }};
+  const SLAB_META = {
+    NIL: {label:"NIL", range:"up to ₹2,500", rate:"No incentive", cls:"nil"},
+    S1:  {label:"S1",  range:"₹2,501–4,000", rate:"1.10% p.a.", cls:"s1"},
+    S2:  {label:"S2",  range:"₹4,001–6,000", rate:"1.20% p.a.", cls:"s2"},
+    S3:  {label:"S3",  range:"₹6,001–10,000", rate:"1.25% p.a.", cls:"s3"},
+    S4:  {label:"S4",  range:"above ₹10,000", rate:"1.30% p.a.", cls:"s4"},
+  };
+  const SLAB_ORDER = ["NIL","S1","S2","S3","S4"];
+
+  // KPI count-up (countUp itself no-ops to an instant jump under
+  // prefers-reduced-motion — see ui-kit.js).
+  document.querySelectorAll(".stat .value[data-count]").forEach((el) => {
+    window.countUp(el, +el.dataset.count);
+  });
+  document.getElementById("stat-total-balance").innerHTML = window.fmtCr(OVERVIEW.total_balance);
+  document.getElementById("stat-avg-mab").textContent = window.fmtINR(OVERVIEW.avg_mab);
+  if (document.getElementById("avg-balance-spark")) {
+    window.renderSparkline(
+      document.getElementById("avg-balance-spark"),
+      NETWORK_BALANCE_SERIES.slice(-14).map((d) => d.value),
+      {color: "var(--good)"},
+    );
+  }
+  window.renderTrendChart(document.getElementById("network-balance-chart"), NETWORK_BALANCE_SERIES, {
+    label: "Network average balance", valueFormat: window.fmtINR, color: "var(--good)",
+    emptyText: "No daily balance history on file yet.",
+  });
+
+  const total = SLAB_ORDER.reduce((a,k)=>a+(OVERVIEW.slab_distribution[k]||0),0);
+  document.getElementById("ladder-bar").innerHTML = SLAB_ORDER.map(k=>{
+    const n = OVERVIEW.slab_distribution[k]||0, pct = total ? (n/total*100) : 0;
+    return `<a class="ladder-seg ${SLAB_META[k].cls}" href="?slab=${k}#all-csps" style="width:${pct}%" title="${k}: ${n} CSPs">${pct>7?n:''}</a>`;
+  }).join("");
+  document.getElementById("ladder-legend").innerHTML = SLAB_ORDER.map(k=>{
+    const m = SLAB_META[k], n = OVERVIEW.slab_distribution[k]||0;
+    return `<a class="legend-item" href="?slab=${k}">
+      <div class="swatch-row"><span class="swatch" style="background:var(--${m.cls})"></span><span class="name">${m.label}</span></div>
+      <div class="range">${m.range}</div>
+      <div class="count">${n}</div>
+      <div class="rate">${m.rate}</div>
+    </a>`;
+  }).join("");
+
+  document.querySelectorAll(".qw-amt .n[data-amt]").forEach(el => { el.textContent = window.fmtCr(+el.dataset.amt); });
+
+  window.initCspTable(CSP_ROWS, {sortKey: "amount_to_deposit"});
+
+  document.getElementById("export-csv-btn").addEventListener("click", () => {
+    window.exportRowsToCsv("csp-overview.csv", CSP_ROWS, [
+      {key: "csp_code", label: "CSP Code"},
+      {key: "name", label: "Name"},
+      {key: "account_count", label: "Accounts"},
+      {key: "mtd_mab", label: "Avg Balance"},
+      {key: "slab", label: "Slab"},
+      {key: "amount_to_deposit", label: "To Next Slab"},
+      {key: "trend_flag", label: "Trend"},
+    ]);
+    window.toast("CSP list exported.", {type: "success"});
+  });
+
+  // Ladder segments/legend cards still filter+jump to the table below —
+  // that's a facet filter on an already-visible panel, not a KPI summary.
+  const urlSlab = new URLSearchParams(location.search).get("slab");
+  if (urlSlab) {
+    const chip = document.querySelector(`.chip[data-slab="${urlSlab}"]`);
+    if (chip) chip.click();
+  }
+
+  // KPI tiles above open a popup with their own relevant breakdown instead
+  // of scrolling to/filtering the big table — a quicker glance, no page jump.
+  function rankedListModal(title, rows, valueKey, valueFmt, opts) {
+    opts = opts || {};
+    const body = window.openModal(title);
+    const sorted = rows.filter(opts.filter || (() => true))
+      .slice().sort((a, b) => (b[valueKey] ?? -Infinity) - (a[valueKey] ?? -Infinity))
+      .slice(0, opts.limit || 10);
+    body.innerHTML = `<div class="modal-list">${
+      sorted.map((c, i) => `
+        <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+          <span class="modal-list-rank">${i + 1}</span>
+          <span class="modal-list-main">
+            <span class="modal-list-name">${c.name || c.csp_code}</span>
+            <span class="modal-list-code">${c.csp_code}${opts.subtext ? " · " + opts.subtext(c) : ""}</span>
+          </span>
+          <span class="modal-list-val">${valueFmt(c[valueKey])}</span>
+        </a>`).join("") || `<p class="sub" style="margin:0;">No CSPs match.</p>`
+    }</div>`;
+  }
+
+  function slabBreakdownModal(title, aggFn, fmt, opts) {
+    opts = opts || {};
+    const body = window.openModal(title);
+    const bySlab = {};
+    SLAB_ORDER.forEach((k) => { bySlab[k] = CSP_ROWS.filter((c) => c.slab === k); });
+    const values = {};
+    SLAB_ORDER.forEach((k) => { values[k] = aggFn(bySlab[k]); });
+    const grandTotal = opts.showPct === false ? null : SLAB_ORDER.reduce((a, k) => a + values[k], 0);
+    body.innerHTML = `<div class="modal-list">${SLAB_ORDER.map((k) => {
+      const m = SLAB_META[k];
+      const pct = grandTotal ? Math.round((values[k] / grandTotal) * 100) : null;
+      return `<a class="modal-list-item" href="?slab=${k}#all-csps">
+        <span class="swatch" style="background:var(--${m.cls});width:10px;height:10px;border-radius:3px;flex:none;"></span>
+        <span class="modal-list-main">
+          <span class="modal-list-name">${m.label}</span>
+          <span class="modal-list-code">${m.range} &middot; ${bySlab[k].length} CSP${bySlab[k].length === 1 ? "" : "s"}</span>
+        </span>
+        <span class="modal-list-val">${fmt(values[k])}${pct != null ? ` (${pct}%)` : ""}</span>
+      </a>`;
+    }).join("")}</div>`;
+  }
+
+  function combinedBreakdownModal(title, slabAggFn, perCspValueFn, fmt, opts) {
+    opts = opts || {};
+    const body = window.openModal(title);
+
+    const bySlab = {};
+    SLAB_ORDER.forEach((k) => { bySlab[k] = CSP_ROWS.filter((c) => c.slab === k); });
+    const slabValues = {};
+    SLAB_ORDER.forEach((k) => { slabValues[k] = slabAggFn(bySlab[k]); });
+    const grandTotal = opts.showPct === false ? null : SLAB_ORDER.reduce((a, k) => a + slabValues[k], 0);
+    const slabHtml = SLAB_ORDER.map((k) => {
+      const m = SLAB_META[k];
+      const pct = grandTotal ? Math.round((slabValues[k] / grandTotal) * 100) : null;
+      return `<a class="modal-list-item" href="?slab=${k}#all-csps">
+        <span class="swatch" style="background:var(--${m.cls});width:10px;height:10px;border-radius:3px;flex:none;"></span>
+        <span class="modal-list-main">
+          <span class="modal-list-name">${m.label}</span>
+          <span class="modal-list-code">${m.range} &middot; ${bySlab[k].length} CSP${bySlab[k].length === 1 ? "" : "s"}</span>
+        </span>
+        <span class="modal-list-val">${fmt(slabValues[k])}${pct != null ? ` (${pct}%)` : ""}</span>
+      </a>`;
+    }).join("");
+
+    const limit = opts.limit || 15;
+    const ranked = CSP_ROWS.slice().sort((a, b) => perCspValueFn(b) - perCspValueFn(a)).slice(0, limit);
+    const cspHtml = ranked.map((c, i) => `
+      <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+        <span class="modal-list-rank">${i + 1}</span>
+        <span class="modal-list-main">
+          <span class="modal-list-name">${c.name || c.csp_code}</span>
+          <span class="modal-list-code">${c.csp_code} &middot; ${c.slab}</span>
+        </span>
+        <span class="modal-list-val">${fmt(perCspValueFn(c))}</span>
+      </a>`).join("");
+
+    body.innerHTML = `
+      <div class="modal-section-label">By slab</div>
+      <div class="modal-list">${slabHtml}</div>
+      <div class="modal-section-label">By CSP &mdash; top ${ranked.length}</div>
+      <div class="modal-list">${cspHtml}</div>
+    `;
+  }
+
+  document.querySelector('[data-kpi="csps-tracked"]').addEventListener("click", () => {
+    slabBreakdownModal("Slab distribution", (rows) => rows.length, window.fmtNum);
+  });
+
+  document.querySelector('[data-kpi="total-balance"]').addEventListener("click", () => {
+    combinedBreakdownModal(
+      "Total balance",
+      (rows) => rows.reduce((a, c) => a + (c.mtd_mab || 0) * (c.account_count || 0), 0),
+      (c) => (c.mtd_mab || 0) * (c.account_count || 0),
+      window.fmtCr,
+    );
+  });
+
+  document.querySelector('[data-kpi="avg-balance"]').addEventListener("click", () => {
+    combinedBreakdownModal(
+      "Avg balance / a/c",
+      (rows) => (rows.length ? rows.reduce((a, c) => a + (c.mtd_mab || 0), 0) / rows.length : 0),
+      (c) => c.mtd_mab || 0,
+      window.fmtINR,
+      {showPct: false},
+    );
+  });
+
+  document.querySelector('[data-kpi="incentive-eligible"]').addEventListener("click", () => {
+    rankedListModal("Incentive-eligible CSPs", CSP_ROWS, "mtd_mab", window.fmtINR, {
+      filter: (c) => c.is_eligible,
+      limit: 1000,
+      subtext: (c) => c.slab,
+    });
+  });
+
+  // Today-vs-yesterday KPI tiles: growing/declining open a ranked list of
+  // that day's top movers (already computed server-side by
+  // csp.comparison.top_movers()); reporting/no-data/stable link straight to
+  // the full Daily Comparison tab rather than duplicating its table here.
+  function comparisonListModal(title, rows, color) {
+    const body = window.openModal(title);
+    body.innerHTML = `<div class="modal-list">${
+      rows.map((c, i) => `
+        <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+          <span class="modal-list-rank">${i + 1}</span>
+          <span class="modal-list-main">
+            <span class="modal-list-name">${c.csp_name || c.csp_code}</span>
+            <span class="modal-list-code">${c.csp_code} &middot; ${c.current_slab || "—"}</span>
+          </span>
+          <span class="modal-list-val" style="color:${color};">${c.pct_change > 0 ? "+" : ""}${c.pct_change}%</span>
+        </a>`).join("") || `<p class="sub" style="margin:0;">No CSPs match.</p>`
+    }</div>`;
+  }
+  document.querySelectorAll('[data-kpi="growing-today"], [data-kpi="growing-today-2"]').forEach((btn) => {
+    btn.addEventListener("click", () => comparisonListModal("Growing today", TOP_GROWTH_TODAY, "var(--good)"));
+  });
+  document.querySelectorAll('[data-kpi="declining-today"], [data-kpi="declining-today-2"]').forEach((btn) => {
+    btn.addEventListener("click", () => comparisonListModal("Declining today", TOP_DECLINE_TODAY, "var(--nil)"));
+  });
+  ["reporting-today", "stable-today", "nodata-today"].forEach((kpi) => {
+    const btn = document.querySelector(`[data-kpi="${kpi}"]`);
+    if (btn) btn.addEventListener("click", () => { window.location.href = "{% url 'dashboard:csp_comparisons' %}"; });
+  });
+</script>
+{% endblock %}

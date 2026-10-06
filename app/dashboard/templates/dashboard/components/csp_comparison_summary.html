@@ -1,0 +1,29 @@
+{% comment %}
+CspComparisonSummary — the "today vs yesterday + 7d/30d trend" panel body,
+extracted verbatim from csp_detail.html so a future comparison drawer can
+render the identical shape without a second copy of this markup.
+Args: daily_comparison (a csp.comparison.CspComparison), trend_intel (a csp.comparison.TrendIntelligence)
+Usage:
+  {% include "dashboard/components/csp_comparison_summary.html" with daily_comparison=daily_comparison trend_intel=trend_intel only %}
+{% endcomment %}
+<div class="kv-grid">
+  <div class="kv"><span class="k">Today's balance</span><span class="v">{% if daily_comparison.balance.current_value is not None %}<span data-fmt="inr" data-val="{{ daily_comparison.balance.current_value }}"></span>{% else %}&mdash;{% endif %}</span></div>
+  <div class="kv"><span class="k">Yesterday's balance</span><span class="v">{% if daily_comparison.balance.previous_value is not None %}<span data-fmt="inr" data-val="{{ daily_comparison.balance.previous_value }}"></span>{% else %}&mdash;{% endif %}</span></div>
+  <div class="kv"><span class="k">Change</span><span class="v">
+    {% include "dashboard/components/trend_badge.html" with trend=daily_comparison.balance.trend pct=daily_comparison.balance.pct_change only %}
+  </span></div>
+  <div class="kv"><span class="k">Movement</span><span class="v">{{ daily_comparison.balance.movement|default:"—" }}</span></div>
+  <div class="kv"><span class="k">Slab movement</span><span class="v">
+    {% if daily_comparison.slab_movement.upgraded %}<span class="trend-tag up">&#8593; {{ daily_comparison.previous_slab }} &rarr; {{ daily_comparison.current_slab }}</span>
+    {% elif daily_comparison.slab_movement.downgraded %}<span class="trend-tag down">&#8595; {{ daily_comparison.previous_slab }} &rarr; {{ daily_comparison.current_slab }}</span>
+    {% else %}no change{% endif %}
+  </span></div>
+  <div class="kv"><span class="k">Data freshness</span><span class="v">{{ daily_comparison.current_data_status }}</span></div>
+</div>
+<div class="kv-grid" style="margin-top:12px;">
+  <div class="kv"><span class="k">7-day avg</span><span class="v">{% if trend_intel.avg_7d is not None %}<span data-fmt="inr" data-val="{{ trend_intel.avg_7d }}"></span>{% else %}&mdash;{% endif %}</span></div>
+  <div class="kv"><span class="k">30-day avg</span><span class="v">{% if trend_intel.avg_30d is not None %}<span data-fmt="inr" data-val="{{ trend_intel.avg_30d }}"></span>{% else %}&mdash;{% endif %}</span></div>
+  <div class="kv"><span class="k">Growth streak</span><span class="v">{{ trend_intel.consecutive_growth_days }} day{{ trend_intel.consecutive_growth_days|pluralize }}</span></div>
+  <div class="kv"><span class="k">Decline streak</span><span class="v">{{ trend_intel.consecutive_decline_days }} day{{ trend_intel.consecutive_decline_days|pluralize }}</span></div>
+  <div class="kv"><span class="k">Trend reversal</span><span class="v">{{ trend_intel.trend_reversal|default:"NONE" }}</span></div>
+</div>

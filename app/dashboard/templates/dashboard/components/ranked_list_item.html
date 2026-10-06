@@ -1,0 +1,19 @@
+{% comment %}
+RankedListItem — one row of a ranked list (Quick Wins, Top Growers, Top
+Decliners, At-Risk). Already the same `.qw-item` markup copy-pasted across
+4 spots today (home.html's Quick Wins, csp_comparisons.html's three panels)
+— this extracts it to one place. `value_html` is pre-rendered by the
+caller (already-formatted currency/percentage) since formatting varies
+per list; this component only lays the row out.
+Args: rank (optional), href, name, code, subtext (optional), value_html (optional)
+Usage:
+  {% include "dashboard/components/ranked_list_item.html" with rank=forloop.counter href=... name=c.csp_name code=c.csp_code subtext=c.current_slab value_html=value_html %}
+{% endcomment %}
+<a class="qw-item" href="{{ href }}">
+  {% if rank %}<span class="qw-rank">{{ rank }}</span>{% endif %}
+  <span class="qw-main">
+    <span class="qw-name">{{ name }}</span>
+    <span class="qw-code">{{ code }}{% if subtext %} &middot; {{ subtext }}{% endif %}</span>
+  </span>
+  {% if value_html %}<span class="qw-amt">{{ value_html|safe }}</span>{% endif %}
+</a>
