@@ -47,24 +47,39 @@ if REDIS_URL:  # noqa: F405
         "SOCKET_CONNECT_TIMEOUT": 1,
         "SOCKET_TIMEOUT": 1,
     }
-    # Redis Sentinel HA (P1 fast-pass, 2026-09-21) — BLOCKED/scaffold only:
-    # this branch is real, working django-redis config for Sentinel, but it
-    # has NOT been run against an actual Sentinel deployment (none exists
-    # to test against in this environment — see the fast-pass report). Set
-    # REDIS_SENTINEL_HOSTS (e.g. "sentinel1:26379,sentinel2:26379") and
-    # REDIS_SENTINEL_MASTER_NAME to enable once a real Sentinel cluster is
-    # provisioned; verify against it before relying on this in production.
+    # Redis Sentinel HA (2026-10-06) — VERIFIED against a real 3-sentinel/
+    # 1-master/2-replica cluster (scripts/redis-sentinel-verify/), run from
+    # inside this project's own image so the exact installed django-redis/
+    # redis-py versions were exercised, not just "the config loads". That
+    # run caught two real bugs this comment used to describe as an
+    # untested guess: (1) LOCATION must be a URL whose *hostname* is the
+    # Sentinel master/service name (django_redis.pool.SentinelConnection
+    # Factory.get_connection_pool() reads it via url.hostname) — reusing
+    # the plain host:port REDIS_URL silently pointed it at the wrong
+    # name; (2) OPTIONS.CONNECTION_FACTORY must explicitly be
+    # "django_redis.pool.SentinelConnectionFactory" — without it,
+    # django-redis falls back to the plain (non-Sentinel) connection
+    # factory and fails with a TypeError. See scripts/redis-sentinel-
+    # verify/README.md for the exact commands used to prove this.
     _sentinel_hosts = env("REDIS_SENTINEL_HOSTS", default="")  # noqa: F405
     if _sentinel_hosts:
+        _sentinel_master_name = env("REDIS_SENTINEL_MASTER_NAME", default="mymaster")  # noqa: F405
         _cache_options["CLIENT_CLASS"] = "django_redis.client.SentinelClient"
+        _cache_options["CONNECTION_FACTORY"] = "django_redis.pool.SentinelConnectionFactory"
         _cache_options["SENTINELS"] = [
             tuple(h.rsplit(":", 1)) for h in _sentinel_hosts.split(",")
         ]
         _cache_options["CONNECTION_POOL_CLASS"] = "redis.sentinel.SentinelConnectionPool"
-        _cache_options["SENTINEL_KWARGS"] = {
-            "service_name": env("REDIS_SENTINEL_MASTER_NAME", default="mymaster")  # noqa: F405
+        _redis_location = f"redis://{_sentinel_master_name}/0"
+    else:
+        _redis_location = REDIS_URL  # noqa: F405
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": _redis_location,
+            "OPTIONS": _cache_options,
         }
-    CACHES = {"default": {"BACKEND": "django_redis.cache.RedisCache", "LOCATION": REDIS_URL, "OPTIONS": _cache_options}}  # noqa: F405,E501
+    }
     # Session reads no longer hit Postgres on every authenticated request;
     # cached_db still writes through to the DB and still works if Redis is
     # down (falls back to the DB-only session backend's behaviour), so this

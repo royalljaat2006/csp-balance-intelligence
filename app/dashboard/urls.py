@@ -32,6 +32,9 @@ urlpatterns = [
     path("agent-findings/", views.agent_findings, name="agent_findings"),
     path("verification/", views.verification, name="verification"),
     path("actions/", views.actions, name="actions"),
+    path("approvals/", views.approvals, name="approvals"),
+    path("ai-recommendations/", views.ai_recommendations, name="ai_recommendations"),
+    path("audit/", views.audit, name="audit"),
     path("csp/<str:csp_code>/", views.csp_detail, name="csp_detail"),
     path("csp/<str:csp_code>/activity.json", views.csp_activity_json, name="csp_activity_json"),
 ]

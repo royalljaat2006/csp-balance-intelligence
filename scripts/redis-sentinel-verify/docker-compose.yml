@@ -1,0 +1,49 @@
+# Throwaway Redis Sentinel cluster for verifying the HA config scaffold in
+# config/settings/production.py (REDIS_SENTINEL_HOSTS/REDIS_SENTINEL_MASTER_NAME)
+# against a REAL Sentinel deployment, not just "the config loads". Not part
+# of the main app stack — bring up, verify, tear down independently.
+services:
+  redis-master:
+    image: redis:7-alpine
+    command: redis-server --port 6379
+    networks: [sentinel-net]
+
+  redis-replica-1:
+    image: redis:7-alpine
+    command: redis-server --port 6379 --replicaof redis-master 6379
+    depends_on: [redis-master]
+    networks: [sentinel-net]
+
+  redis-replica-2:
+    image: redis:7-alpine
+    command: redis-server --port 6379 --replicaof redis-master 6379
+    depends_on: [redis-master]
+    networks: [sentinel-net]
+
+  sentinel-1:
+    image: redis:7-alpine
+    command: redis-sentinel /etc/sentinel.conf
+    volumes: ["./sentinel.conf:/etc/sentinel.conf"]
+    depends_on: [redis-master]
+    networks: [sentinel-net]
+    ports: ["127.0.0.1:26379:26379"]
+
+  sentinel-2:
+    image: redis:7-alpine
+    command: redis-sentinel /etc/sentinel.conf
+    volumes: ["./sentinel.conf:/etc/sentinel.conf"]
+    depends_on: [redis-master]
+    networks: [sentinel-net]
+    ports: ["127.0.0.1:26380:26379"]
+
+  sentinel-3:
+    image: redis:7-alpine
+    command: redis-sentinel /etc/sentinel.conf
+    volumes: ["./sentinel.conf:/etc/sentinel.conf"]
+    depends_on: [redis-master]
+    networks: [sentinel-net]
+    ports: ["127.0.0.1:26381:26379"]
+
+networks:
+  sentinel-net:
+    driver: bridge

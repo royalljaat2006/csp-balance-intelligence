@@ -1,0 +1,76 @@
+{% extends "dashboard/base.html" %}
+{% load humanize %}
+{% block title %}Audit — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>System</div>
+    <h1>Audit</h1>
+    <p class="sub">Every ingestion run, straight from <code>IngestLog</code> — the same real audit trail
+      System Health summarizes. Agent-side audit trails live on their own pages:
+      <a href="{% url 'dashboard:agent_findings' %}" style="color:var(--brand);">Agent Findings</a>,
+      <a href="{% url 'dashboard:actions' %}" style="color:var(--brand);">Actions</a>,
+      <a href="{% url 'dashboard:verification' %}" style="color:var(--brand);">Verification</a>.</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Ingestion log</h2>
+      <span class="hint">{{ total|intcomma }} matching, page {{ page }} of {{ total_pages }}</span>
+    </div>
+    <form method="get" class="date-range-form">
+      <label>Source
+        <select name="source" onchange="this.form.submit();">
+          <option value="">All</option>
+          {% for s in sources %}
+          <option value="{{ s }}" {% if source_filter == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Status
+        <select name="status" onchange="this.form.submit();">
+          <option value="">All</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="tbl-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr><th>Started</th><th>Source</th><th>File</th><th>Status</th><th class="num">Read</th><th class="num">Valid</th><th class="num">Rejected</th><th class="num">Upserted</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {% for log in rows %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ log.started_at|date:"d M, H:i" }}</td>
+            <td>{{ log.source }}</td>
+            <td>{{ log.file_name|default:log.external_ref|default:"—" }}</td>
+            <td>{% include "dashboard/components/status_badge.html" with status=log.status %}</td>
+            <td class="mono">{{ log.rows_read }}</td>
+            <td class="mono">{{ log.rows_valid }}</td>
+            <td class="mono">{{ log.rows_rejected }}</td>
+            <td class="mono">{{ log.rows_upserted }}</td>
+            <td class="hint">{{ log.error_summary|default:"—"|truncatechars:60 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="9">
+            {% include "dashboard/components/empty_state.html" with title="No ingestion runs recorded yet" description="Every calling-sheet/transaction/telegram ingest writes a row here once it runs." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      <div class="pager-btns">
+        {% if page > 1 %}<a href="?page={{ page|add:"-1" }}&source={{ source_filter }}&status={{ status_filter }}"><button type="button">&larr; Prev</button></a>{% else %}<button type="button" disabled>&larr; Prev</button>{% endif %}
+        {% if page < total_pages %}<a href="?page={{ page|add:"1" }}&source={{ source_filter }}&status={{ status_filter }}"><button type="button">Next &rarr;</button></a>{% else %}<button type="button" disabled>Next &rarr;</button>{% endif %}
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

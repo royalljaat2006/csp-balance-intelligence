@@ -1,0 +1,80 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Approvals — Eko Operations{% endblock %}
+{% block content %}
+<div class="wrap stagger">
+
+  <header>
+    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Operations</div>
+    <h1>Approvals</h1>
+    <p class="sub">Everything currently awaiting a human decision, in one queue.
+      {% include "dashboard/components/trust_badge.html" with kind="pending_approval" %}</p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Message drafts awaiting approval</h2>
+      <span class="hint">{{ pending_drafts|length }} pending &middot; same approve/reject as Messaging</span>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>CSP</th><th>Message</th><th>Channel</th><th>Drafted</th><th></th></tr></thead>
+        <tbody>
+          {% for m in pending_drafts %}
+          <tr>
+            <td><a class="name-link" href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">{{ m.csp.name|default:m.csp.csp_code }}</a><span class="code">{{ m.csp.csp_code }}</span></td>
+            <td style="text-align:left;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ m.text|truncatechars:70 }}</td>
+            <td>{{ m.get_channel_display }}</td>
+            <td class="mono">{{ m.generated_at|date:"d M, H:i" }}</td>
+            <td>
+              <div class="msg-actions">
+                <form method="post" style="display:inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="message_id" value="{{ m.id }}">
+                  <button type="submit" name="action" value="approve" class="btn-approve">Approve</button>
+                </form>
+                <form method="post" style="display:inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="message_id" value="{{ m.id }}">
+                  <button type="submit" name="action" value="reject" class="btn-reject">Reject</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">
+            {% include "dashboard/components/empty_state.html" with title="Nothing waiting on you" description="No message drafts are currently pending approval." %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Other agent actions awaiting approval</h2>
+      <span class="hint">read-only — see below</span>
+    </div>
+    <p class="sub" style="margin-top:-6px;">No approve/reject control exists yet for these action types
+      (follow-up task, escalation, review flag, investigation) — inspection only, for now.</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>When</th><th>CSP</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          {% for a in other_pending_actions %}
+          <tr>
+            <td class="mono" style="text-align:left;">{{ a.created_at|date:"d M, H:i" }}</td>
+            <td>{% if a.csp %}<a class="name-link" href="{% url 'dashboard:csp_detail' a.csp_id %}">{{ a.csp.name|default:a.csp_id }}</a><span class="code">{{ a.csp_id }}</span>{% else %}<span class="hint">Network-wide</span>{% endif %}</td>
+            <td>{{ a.get_action_type_display }}</td>
+            <td class="hint">{{ a.description|truncatechars:90 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">None pending.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

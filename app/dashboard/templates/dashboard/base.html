@@ -10,6 +10,7 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   {% if user.is_authenticated %}
   <div class="app-shell">
     <div class="sidebar-scrim" id="sidebar-scrim"></div>
@@ -35,19 +36,19 @@
         <div class="nav-group-label">Operations</div>
         <a href="{% url 'dashboard:messaging' %}" class="{% if request.resolver_match.url_name == 'messaging' %}active{% endif %}"><span class="ic">&#9993;</span><span class="lbl">Messaging</span></a>
         <a href="{% url 'dashboard:actions' %}" class="{% if request.resolver_match.url_name == 'actions' %}active{% endif %}"><span class="ic">&#9998;</span><span class="lbl">Actions</span></a>
-        <a href="{% url 'dashboard:messaging' %}" title="Approvals happen on Messaging today"><span class="ic">&#10003;</span><span class="lbl">Approvals</span></a>
+        <a href="{% url 'dashboard:approvals' %}" class="{% if request.resolver_match.url_name == 'approvals' %}active{% endif %}"><span class="ic">&#10003;</span><span class="lbl">Approvals</span></a>
         <a href="{% url 'dashboard:verification' %}" class="{% if request.resolver_match.url_name == 'verification' %}active{% endif %}"><span class="ic">&#128269;</span><span class="lbl">Verification</span></a>
 
         <div class="nav-group-label">AI Operations</div>
         <a href="{% url 'dashboard:agent_findings' %}" class="{% if request.resolver_match.url_name == 'agent_findings' %}active{% endif %}"><span class="ic">&#9673;</span><span class="lbl">Agent Findings</span></a>
-        <a href="{% url 'dashboard:ai_operations' %}" class="{% if request.resolver_match.url_name == 'ai_operations' %}active{% endif %}"><span class="ic">&#10024;</span><span class="lbl">AI Recommendations</span></a>
+        <a href="{% url 'dashboard:ai_recommendations' %}" class="{% if request.resolver_match.url_name == 'ai_recommendations' %}active{% endif %}"><span class="ic">&#10024;</span><span class="lbl">AI Recommendations</span></a>
         <a href="{% url 'dashboard:agent_monitoring' %}" class="{% if request.resolver_match.url_name == 'agent_monitoring' %}active{% endif %}"><span class="ic">&#128202;</span><span class="lbl">Agent Monitoring</span></a>
 
         <div class="nav-group-label">System</div>
         <a href="{% url 'dashboard:system_health' %}" class="{% if request.resolver_match.url_name == 'system_health' %}active{% endif %}"><span class="ic">&#9881;</span><span class="lbl">System Health</span></a>
         <a href="{% url 'dashboard:pipeline' %}" class="{% if request.resolver_match.url_name == 'pipeline' %}active{% endif %}"><span class="ic">&#8635;</span><span class="lbl">Data Pipeline</span></a>
         <a href="{% url 'dashboard:api_docs' %}" class="{% if request.resolver_match.url_name == 'api_docs' %}active{% endif %}"><span class="ic">&#123;&#125;</span><span class="lbl">API Documentation</span></a>
-        <a href="{% url 'dashboard:admin_embed' %}" title="Full audit trail (IngestLog, agent actions, ...)"><span class="ic">&#128203;</span><span class="lbl">Audit</span></a>
+        <a href="{% url 'dashboard:audit' %}" class="{% if request.resolver_match.url_name == 'audit' %}active{% endif %}"><span class="ic">&#128203;</span><span class="lbl">Audit</span></a>
         <a href="{% url 'dashboard:admin_embed' %}" class="{% if request.resolver_match.url_name == 'admin_embed' %}active{% endif %}"><span class="ic">&#128274;</span><span class="lbl">Administration</span></a>
         {% endif %}
       </nav>
@@ -104,9 +105,9 @@
         </div>
       </div>
 
-      <main class="page-enter">
+      <main class="page-enter" id="main-content">
   {% else %}
-  <main>
+  <main id="main-content">
   {% endif %}
   {% block content %}{% endblock %}
   {% if user.is_authenticated %}
@@ -129,16 +130,19 @@
       {label: "Transactions", group: "Page", href: "{% url 'dashboard:transactions' %}"},
       {label: "Trends & Analytics", group: "Page", href: "{% url 'dashboard:trends' %}"}{% if user.is_staff %},
       {label: "Risk", group: "Page", href: "{% url 'dashboard:risk' %}"},
-      {label: "Messaging / Approvals", group: "Page", href: "{% url 'dashboard:messaging' %}"},
+      {label: "Messaging", group: "Page", href: "{% url 'dashboard:messaging' %}"},
       {label: "Actions", group: "Page", href: "{% url 'dashboard:actions' %}"},
+      {label: "Approvals", group: "Page", href: "{% url 'dashboard:approvals' %}"},
       {label: "Verification", group: "Page", href: "{% url 'dashboard:verification' %}"},
       {label: "Agent Findings", group: "Page", href: "{% url 'dashboard:agent_findings' %}"},
-      {label: "AI Recommendations", group: "Page", href: "{% url 'dashboard:ai_operations' %}"},
+      {label: "AI Recommendations", group: "Page", href: "{% url 'dashboard:ai_recommendations' %}"},
+      {label: "AI Operations", group: "Page", href: "{% url 'dashboard:ai_operations' %}"},
       {label: "Agent Monitoring", group: "Page", href: "{% url 'dashboard:agent_monitoring' %}"},
       {label: "System Health", group: "Page", href: "{% url 'dashboard:system_health' %}"},
       {label: "Data Pipeline (live)", group: "Page", href: "{% url 'dashboard:pipeline' %}"},
       {label: "API Documentation", group: "Page", href: "{% url 'dashboard:api_docs' %}"},
-      {label: "Audit / Administration", group: "Page", href: "{% url 'dashboard:admin_embed' %}"}
+      {label: "Audit", group: "Page", href: "{% url 'dashboard:audit' %}"},
+      {label: "Administration", group: "Page", href: "{% url 'dashboard:admin_embed' %}"}
       {% endif %}
     ]);
     const refreshBtn = document.getElementById("refresh-btn");

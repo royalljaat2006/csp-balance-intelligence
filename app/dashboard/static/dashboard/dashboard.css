@@ -8,7 +8,11 @@
      secondary analytics (the S1-S4 ordinal ramp). Replaces the previous
      earthy teal/olive palette (2026-09-19 visual redesign). */
   --page:#f7f9fc; --surface:#ffffff; --surface-2:#f1f4f9;
-  --ink:#0f172a; --ink-2:#475569; --muted:#94a3b8; --line:#e7ebf1; --line-strong:#d6dce5;
+  --ink:#0f172a; --ink-2:#475569; --muted:#64748b; --line:#e7ebf1; --line-strong:#d6dce5;
+  /* --muted darkened from #94a3b8 (2026-10-06, WCAG AA accessibility pass):
+     the original value was ~2.6:1 against white — below the 4.5:1 minimum
+     for normal text, and this token is used 49 times across the app for
+     labels/hints. #64748b measures ~4.76:1, same visual role, now passing. */
   --brand:#2563eb; --brand-ink:#1d4ed8; --brand-soft:#eaf1fe;
   --accent:#d97706; --accent-soft:#fef3e2; --accent-ink:#b45309;
   --nil:#e11d48; --nil-soft:#fde8ed; --good:#16a34a; --good-soft:#e7f8ec;
@@ -109,6 +113,17 @@ code{font-family:"IBM Plex Mono", monospace;}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
   outline:2px solid var(--brand); outline-offset:2px; border-radius:4px;
 }
+
+/* ---- accessibility: skip-to-content link (WCAG 2.4.1, 2026-10-06) ----
+   Visually hidden until keyboard-focused — a sighted mouse user never
+   sees it, a keyboard/screen-reader user gets a way to jump past the
+   sidebar/topbar straight to the page's own content. */
+.skip-link{
+  position:absolute; left:-9999px; top:0; z-index:1000;
+  background:var(--brand); color:#fff; padding:10px 16px;
+  border-radius:0 0 8px 0; font-weight:600; font-size:14px;
+}
+.skip-link:focus{left:0;}
 
 /* ---- top nav ---- */
 .topnav{

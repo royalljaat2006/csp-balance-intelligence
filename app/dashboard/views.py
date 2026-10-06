@@ -586,6 +586,119 @@ def actions(request):
     )
 
 
+@login_required
+def approvals(request):
+    """Approvals — one consolidated queue of everything awaiting human
+    sign-off (2026-10-06 IA split, was: a link into Messaging). The ONLY
+    real approve/reject control in the system is DraftMessage's — reused
+    verbatim (same autopilot.services calls Messaging itself uses, so the
+    two surfaces can never enforce different rules). Other pending
+    AgentActions (review_flag/escalation/followup_task/investigation) are
+    shown read-only: no approve/reject mechanism exists for them anywhere
+    in this codebase, and this page does not invent one — that would be a
+    new, unreviewed capability, not a UI consolidation."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Approvals is restricted to staff accounts.")
+
+    if request.method == "POST":
+        message = get_object_or_404(DraftMessage, pk=request.POST.get("message_id"))
+        action = request.POST.get("action")
+        if action == "approve":
+            approve_draft_message(message, request.user)
+        elif action == "reject":
+            reject_draft_message(message, request.user)
+        return redirect(request.get_full_path())
+
+    pending_drafts = list(
+        DraftMessage.objects.filter(status=DraftMessage.Status.DRAFT)
+        .select_related("csp")
+        .order_by("-generated_at")
+    )
+    other_pending_actions = list(
+        AgentAction.objects.filter(status=AgentAction.Status.PENDING_APPROVAL)
+        .exclude(action_type=AgentAction.ActionType.MESSAGE_DRAFT)
+        .select_related("csp", "run")
+        .order_by("-created_at")
+    )
+    return render(
+        request,
+        "dashboard/approvals.html",
+        {
+            "pending_drafts": pending_drafts,
+            "other_pending_actions": other_pending_actions,
+        },
+    )
+
+
+@login_required
+def ai_recommendations(request):
+    """AI Recommendations — Nemotron's narrative outputs on their own page
+    (2026-10-06 IA split from the broader AI Operations landing, which
+    still shows the same data alongside the multi-agent task view — kept
+    there too, per "don't remove functionality without evidence"). Every
+    row here is real: Insight/PriorityCall/DraftMessage, never re-derived."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("AI Recommendations is restricted to staff accounts.")
+
+    month = services.current_month()
+    latest_insight = Insight.objects.filter(month=month).first()
+    priority_calls = list(
+        PriorityCall.objects.filter(month=month).select_related("csp").order_by("rank")[:20]
+    )
+    recent_drafts = list(
+        DraftMessage.objects.select_related("csp").order_by("-generated_at")[:20]
+    )
+    return render(
+        request,
+        "dashboard/ai_recommendations.html",
+        {
+            "month": month,
+            "latest_insight": latest_insight,
+            "priority_calls": priority_calls,
+            "recent_drafts": recent_drafts,
+        },
+    )
+
+
+@login_required
+def audit(request):
+    """Audit — the real ingestion audit trail as its own page (2026-10-06
+    IA split, was: a link into the Django admin). Straight read of
+    IngestLog, the exact table every ingestion command already writes to;
+    agent-side audit trails (findings/actions/verification) have their own
+    dedicated pages, linked below rather than duplicated here."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Audit is restricted to staff accounts.")
+
+    source_filter = request.GET.get("source", "")
+    status_filter = request.GET.get("status", "")
+    qs = IngestLog.objects.order_by("-started_at")
+    if source_filter:
+        qs = qs.filter(source=source_filter)
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    page, offset, page_size = _paginate(request)
+    total = qs.count()
+    rows = list(qs[offset : offset + page_size])
+
+    return render(
+        request,
+        "dashboard/audit.html",
+        {
+            "rows": rows,
+            "source_filter": source_filter,
+            "status_filter": status_filter,
+            "status_choices": IngestLog.Status.choices,
+            "sources": list(
+                IngestLog.objects.values_list("source", flat=True).distinct().order_by("source")
+            ),
+            "page": page,
+            "total_pages": max(1, -(-total // page_size)),
+            "total": total,
+        },
+    )
+
+
 def _csp_row(ms: MonthlySummary, growth_by_csp: dict[str, dict] | None = None) -> dict:
     csp = ms.csp
     accounts = csp.account_count or 0

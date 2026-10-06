@@ -33,10 +33,17 @@ potential impact. Expect an acknowledgement within 2 business days.
 
 ## Known issues (tracked, not hidden)
 
-- **Django 5.1.15 has 7 published CVEs** (PYSEC-2026-198/199/201/2090/2091/2092/3717) with fixes
-  only in the 5.2.15+/6.0.6+ lines, not backported to 5.1. Upgrading is a deliberate, separately
-  tested change (a Django minor/major bump can break ORM/admin/form behavior) — not done as part
-  of routine hardening. Track and schedule this upgrade explicitly.
+- **Resolved 2026-10-06**: Django upgraded 5.1.15 → 5.2.18 (the next LTS line), clearing all 7
+  previously-tracked CVEs (PYSEC-2026-198/199/201/2090/2091/2092/3717). Verified: full test suite
+  (499 passed, 3 skipped), `ruff`/`mypy` clean, `manage.py check`/`check --deploy`/migration-check
+  all clean, zero behavior change. Also bumped `urllib3` 2.7.0→2.8.0 and `oauthlib` 3.3.1→4.0.0
+  (4 CVEs found by a routine `pip-audit` re-run, unrelated to the Django bump) — `pip-audit` now
+  reports zero known vulnerabilities across the full locked dependency set.
+- **Resolved 2026-10-06**: Redis Sentinel HA config verified against a real 3-sentinel cluster
+  (`scripts/redis-sentinel-verify/`), not just "the Django config loads". That run found and fixed
+  two real bugs (wrong `LOCATION` format, missing `CONNECTION_FACTORY`) — see
+  `config/settings/production.py`'s comment and `scripts/redis-sentinel-verify/README.md` for
+  details and how to re-verify.
 - **HSTS / forced HTTPS redirect** are not yet enabled — deliberately, pending a real domain + TLS
   certificate on the production host (see `docs/DEPLOYMENT.md`). Enable
   `SECURE_HSTS_SECONDS`/`SECURE_SSL_REDIRECT` once those exist; enabling HSTS before TLS is
