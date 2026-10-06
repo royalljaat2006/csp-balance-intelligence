@@ -155,12 +155,6 @@ TIME_ZONE = "Asia/Kolkata"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STORAGES = {
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
-}
-
 # Subpath mounting (R730 deployment, 2026-10-06) — set only when this app is
 # reverse-proxied under a path prefix (e.g. https://host/csp-balance-intelligence/)
 # instead of at its own domain root. Empty by default: no behaviour change
@@ -171,6 +165,21 @@ STORAGES = {
 URL_PREFIX = env("URL_PREFIX", default="")
 if URL_PREFIX:
     FORCE_SCRIPT_NAME = URL_PREFIX
+
+# A relative STATIC_URL ("static/") only resolves correctly in the browser
+# from pages at exactly one path depth — it silently breaks on any deeper
+# page (e.g. /dashboard/csp/<code>/), since the browser resolves it against
+# the *current page's* URL, not the site root. Absolute + prefix-aware
+# fixes that for every page depth. whitenoise already auto-strips
+# FORCE_SCRIPT_NAME from its own internal match prefix (see
+# WhiteNoiseMiddleware.__init__), so it correctly matches the
+# proxy-stripped incoming request path either way — no further wiring
+# needed on that side.
+STATIC_URL = f"{URL_PREFIX}/static/" if URL_PREFIX else "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
