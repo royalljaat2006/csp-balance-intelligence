@@ -101,7 +101,7 @@
           {% for t in txn_rows %}
           <tr>
             <td class="mono" style="text-align:left;">{{ t.txn_datetime|date:"d M, H:i" }}</td>
-            <td><a class="name-link" href="/dashboard/csp/{{ t.csp_id }}/">{{ t.csp.name|default:t.csp_id }}</a><span class="code">{{ t.csp_id }}</span></td>
+            <td><a class="name-link" href="{% url 'dashboard:csp_detail' csp_code=t.csp_id %}">{{ t.csp.name|default:t.csp_id }}</a><span class="code">{{ t.csp_id }}</span></td>
             <td>{{ t.txn_type }}</td>
             <td class="mono"><span data-fmt="inr" data-val="{{ t.amount }}"></span></td>
             <td>{{ t.direction }}</td>

@@ -118,6 +118,14 @@
   </main>
   {% endif %}
 
+  <script>
+    // Subpath-safe: goes through Django's own reverse(), so it carries
+    // FORCE_SCRIPT_NAME (see config/settings/base.py URL_PREFIX) instead of
+    // the hardcoded "/dashboard/csp/" this used to be.
+    window.cspDetailUrl = function (code) {
+      return "{% url 'dashboard:csp_detail' csp_code='__CODE__' %}".replace("__CODE__", encodeURIComponent(code));
+    };
+  </script>
   <script src="{% static 'dashboard/dashboard.js' %}"></script>
   <script src="{% static 'dashboard/ui-kit.js' %}"></script>
   {% if user.is_authenticated %}

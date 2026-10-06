@@ -20,7 +20,7 @@ Usage:
 {% endif %}
 {% if unreviewed_anomaly_count %}
   <p class="sub" style="margin-top:10px; margin-bottom:0;">
-    <a href="/dashboard/admin-console/" style="color:var(--nil); font-weight:600;">{{ unreviewed_anomaly_count }} data anomal{{ unreviewed_anomaly_count|pluralize:"y,ies" }} flagged</a>
+    <a href="{% url 'dashboard:admin_embed' %}" style="color:var(--nil); font-weight:600;">{{ unreviewed_anomaly_count }} data anomal{{ unreviewed_anomaly_count|pluralize:"y,ies" }} flagged</a>
     &mdash; review in Admin.
   </p>
 {% endif %}

@@ -106,7 +106,7 @@
         {% include "dashboard/components/section_header.html" with title="Near next slab" hint=near_slab_hint %}
         <div class="qw-list">
           {% for c in near_next_slab %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab }}</span></span>
             <span class="qw-amt"><span class="n" data-inr="{{ c.gap_to_next_slab }}"></span><span class="l">to next slab</span></span>
           </a>
@@ -118,7 +118,7 @@
         {% include "dashboard/components/section_header.html" with title="Below minimum" hint="in NIL today" %}
         <div class="qw-list">
           {% for c in below_minimum %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
             <span class="qw-amt"><span class="n" data-inr="{{ c.current_value }}"></span></span>
           </a>
@@ -132,7 +132,7 @@
         {% include "dashboard/components/section_header.html" with title="Largest balance increases" hint="today vs. yesterday" %}
         <div class="qw-list">
           {% for c in largest_increases %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-rank">{{ forloop.counter }}</span>
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span></span>
             <span class="qw-amt"><span class="n" style="color:var(--good);" data-inr-signed="{{ c.abs_change }}"></span></span>
@@ -145,7 +145,7 @@
         {% include "dashboard/components/section_header.html" with title="Largest balance decreases" hint="today vs. yesterday" %}
         <div class="qw-list">
           {% for c in largest_decreases %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-rank">{{ forloop.counter }}</span>
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span></span>
             <span class="qw-amt"><span class="n" style="color:var(--nil);" data-inr-signed="{{ c.abs_change }}"></span></span>

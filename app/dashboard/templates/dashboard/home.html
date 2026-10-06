@@ -152,7 +152,7 @@
         <div class="modal-section-label" style="margin-top:0;">Growing</div>
         <div class="qw-list">
           {% for c in top_growth_today %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-rank">{{ forloop.counter }}</span>
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
             <span class="qw-amt"><span class="n" style="color:var(--good);">+{{ c.pct_change }}%</span></span>
@@ -162,7 +162,7 @@
         <div class="modal-section-label">Declining</div>
         <div class="qw-list">
           {% for c in top_decline_today %}
-          <a class="qw-item" href="/dashboard/csp/{{ c.csp_code }}/">
+          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
             <span class="qw-rank">{{ forloop.counter }}</span>
             <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
             <span class="qw-amt"><span class="n" style="color:var(--nil);">{{ c.pct_change }}%</span></span>
@@ -336,7 +336,7 @@
       .slice(0, opts.limit || 10);
     body.innerHTML = `<div class="modal-list">${
       sorted.map((c, i) => `
-        <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+        <a class="modal-list-item" href="${cspDetailUrl(c.csp_code)}">
           <span class="modal-list-rank">${i + 1}</span>
           <span class="modal-list-main">
             <span class="modal-list-name">${c.name || c.csp_code}</span>
@@ -394,7 +394,7 @@
     const limit = opts.limit || 15;
     const ranked = CSP_ROWS.slice().sort((a, b) => perCspValueFn(b) - perCspValueFn(a)).slice(0, limit);
     const cspHtml = ranked.map((c, i) => `
-      <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+      <a class="modal-list-item" href="${cspDetailUrl(c.csp_code)}">
         <span class="modal-list-rank">${i + 1}</span>
         <span class="modal-list-main">
           <span class="modal-list-name">${c.name || c.csp_code}</span>
@@ -450,7 +450,7 @@
     const body = window.openModal(title);
     body.innerHTML = `<div class="modal-list">${
       rows.map((c, i) => `
-        <a class="modal-list-item" href="/dashboard/csp/${c.csp_code}/">
+        <a class="modal-list-item" href="${cspDetailUrl(c.csp_code)}">
           <span class="modal-list-rank">${i + 1}</span>
           <span class="modal-list-main">
             <span class="modal-list-name">${c.csp_name || c.csp_code}</span>

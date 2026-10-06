@@ -258,7 +258,7 @@
         <div class="kv"><span class="k">MTD avg so far</span><span class="v">${window.fmtINR(row.mtd_avg_so_far)}</span></div>
         <div class="kv"><span class="k">Data status</span><span class="v">${dataStatusTag(row.current_data_status)}</span></div>
       </div>
-      <a class="btn-primary" style="display:block; text-align:center; text-decoration:none; margin-top:20px;" href="/dashboard/csp/${row.csp_code}/">View full profile &rarr;</a>
+      <a class="btn-primary" style="display:block; text-align:center; text-decoration:none; margin-top:20px;" href="${cspDetailUrl(row.csp_code)}">View full profile &rarr;</a>
     `;
   }
 
@@ -297,7 +297,7 @@
 
       tbody.innerHTML = page.map((c) => `
         <tr class="comparison-row" data-csp-code="${c.csp_code}" style="cursor:pointer;">
-          <td><a class="name-link" href="/dashboard/csp/${c.csp_code}/">${c.csp_name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
+          <td><a class="name-link" href="${cspDetailUrl(c.csp_code)}">${c.csp_name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
           <td class="mono">${window.fmtINR(c.current_value)}</td>
           <td class="mono">${window.fmtINR(c.previous_value)}</td>
           <td class="mono">${c.abs_change == null ? "&mdash;" : (c.abs_change > 0 ? "+" : "") + window.fmtINR(c.abs_change)}</td>

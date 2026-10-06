@@ -161,6 +161,17 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
+# Subpath mounting (R730 deployment, 2026-10-06) — set only when this app is
+# reverse-proxied under a path prefix (e.g. https://host/csp-balance-intelligence/)
+# instead of at its own domain root. Empty by default: no behaviour change
+# for local dev or any root-mounted deployment. When set, Django's own
+# reverse()/redirect()/{% url %} output (and the admin) automatically gain
+# the prefix; the proxy in front of this app must strip the prefix before
+# forwarding the request (same convention as this app's own PATH_INFO).
+URL_PREFIX = env("URL_PREFIX", default="")
+if URL_PREFIX:
+    FORCE_SCRIPT_NAME = URL_PREFIX
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Dashboard auth (Phase: "full web app") ---------------------------------

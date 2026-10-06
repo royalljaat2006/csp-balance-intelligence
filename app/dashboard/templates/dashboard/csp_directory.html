@@ -126,7 +126,7 @@
 
       tbody.innerHTML = page.map((c) => `
         <tr>
-          <td><a class="name-link" href="/dashboard/csp/${c.csp_code}/">${c.name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
+          <td><a class="name-link" href="${cspDetailUrl(c.csp_code)}">${c.name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
           <td class="mono">${window.fmtINR(c.current_balance)}</td>
           <td class="mono">${window.fmtINR(c.previous_balance)}</td>
           <td class="mono">${window.fmtINR(c.mtd_mab)}</td>
