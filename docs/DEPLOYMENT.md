@@ -122,6 +122,25 @@ Set `TRANSACTION_DATA_DIR_HOST=/opt/data/csp-balance-tracker` in `.env`; compose
 `/data` inside the `worker` container. The repository itself never contains production input
 files — only the empty `data/incoming|processed|failed/.gitkeep` skeleton, for local dev.
 
+### R730: syncing from the real transaction sheet (2026-10-06)
+
+On the R730, the real transaction data isn't dropped as discrete files — it's a continuously-updated
+monthly master workbook (e.g. `/home/shumit/sbikisok/Transaction Oct'26.xlsx`) owned by a different
+team. `scripts/sync_transaction_sheet.sh` bridges this: it only *reads* that file (never writes to
+the source directory) and copies the current month's workbook into this app's own `incoming/`, where
+the normal `ingest_transactions` job picks it up as usual. Re-syncing the whole file periodically and
+re-ingesting is safe — upserts are idempotent (see `tests/unit/test_transaction_ingest.py::test_reingesting_same_file_is_idempotent`).
+
+Run via cron on the host (not inside a container, so it has access to the source directory):
+
+```cron
+0 */4 * * * TRANSACTION_DATA_DIR_HOST=/opt/data/csp-balance-tracker /path/to/repo/scripts/sync_transaction_sheet.sh >> /var/log/csp-balance-tracker-txn-sync.log 2>&1
+```
+
+`TRANSACTION_SOURCE_DIR` (default `/home/shumit/sbikisok`) and `TRANSACTION_SYNC_RETENTION_DAYS`
+(default `14` — how long synced copies are kept in `processed/` before being pruned, since this
+re-syncs the same file repeatedly rather than receiving distinct uploads) are both overridable.
+
 ## Volumes
 
 | Volume | Mounted at | Purpose |
