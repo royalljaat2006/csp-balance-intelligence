@@ -124,6 +124,18 @@ def main():
             print(f"SKIP {path.name}: {exc}")
             continue
 
+        # Defensive: Csp.csp_code is varchar(32). One real archive file
+        # (2026-07-27) has its "CSP ID" column populated with free-text
+        # notification message content instead of codes for some rows --
+        # a column-shift specific to that one file, not a parsing bug.
+        # Real codes are ~8 chars; anything over the column limit is
+        # unambiguously garbage, so drop it rather than crash the whole
+        # backfill on one corrupted file.
+        garbage = [r for r in result.rows if len(r.csp_code) > 32]
+        if garbage:
+            print(f"  {path.name}: dropping {len(garbage)} row(s) with an invalid csp_code")
+            result.rows = [r for r in result.rows if len(r.csp_code) <= 32]
+
         # status="historical_only" keeps these out of "CSPs tracked" (see
         # csp/services.py's get_overview) -- they exist only to satisfy
         # DailyBalance's FK for a CSP seen in an old snapshot, not because
