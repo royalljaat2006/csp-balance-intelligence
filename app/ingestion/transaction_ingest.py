@@ -22,7 +22,7 @@ from pathlib import Path
 
 import openpyxl
 from common.cache import set_job_progress
-from csp.models import Csp, Transaction
+from csp.models import HISTORICAL_ONLY_STATUS, Csp, Transaction
 from django.db import transaction as db_transaction
 
 from .xlsx_validation import (
@@ -147,7 +147,7 @@ def ingest_workbook(
             # csp/services.get_overview). ingest_calling_sheet clears this
             # the moment a live poll actually sees the CSP.
             Csp.objects.bulk_create(
-                [Csp(csp_code=code, status="historical_only") for code in sorted(new_codes)],
+                [Csp(csp_code=code, status=HISTORICAL_ONLY_STATUS) for code in sorted(new_codes)],
                 ignore_conflicts=True,
             )
             result.new_csp_codes = new_codes

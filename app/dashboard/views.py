@@ -1076,7 +1076,7 @@ def csp_directory(request):
     summary_by_code = {s.csp_id: s for s in summaries}
 
     rows = []
-    for csp in Csp.objects.all():
+    for csp in Csp.objects.tracked():
         c = comparison_by_code.get(csp.csp_code)
         summary = summary_by_code.get(csp.csp_code)
         rows.append(

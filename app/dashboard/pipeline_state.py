@@ -346,7 +346,7 @@ def get_counters() -> dict:
             AgentAction.objects.filter(status=AgentAction.Status.PENDING_APPROVAL).count()
             + DraftMessage.objects.filter(status=DraftMessage.Status.DRAFT).count()
         ),
-        "total_csps": Csp.objects.count(),
+        "total_csps": Csp.objects.tracked().count(),
     }
 
 

@@ -60,7 +60,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 django.setup()
 
 import openpyxl  # noqa: E402
-from csp.models import Csp, DailyBalance  # noqa: E402
+from csp.models import HISTORICAL_ONLY_STATUS, Csp, DailyBalance  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from ingestion.calling_sheet_ingest import (  # noqa: E402
     CallingSheetValidationError,
@@ -144,7 +144,7 @@ def main():
         if new_codes:
             Csp.objects.bulk_create(
                 [
-                    Csp(csp_code=c, last_seen_date=file_date, status="historical_only")
+                    Csp(csp_code=c, last_seen_date=file_date, status=HISTORICAL_ONLY_STATUS)
                     for c in new_codes
                 ],
                 ignore_conflicts=True,

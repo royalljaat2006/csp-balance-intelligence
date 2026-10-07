@@ -19,8 +19,9 @@ import structlog
 from common.cache import bump_generation
 from django.core.management.base import BaseCommand
 from django.db import connection
+from django.db.models import Q
 
-from csp.models import Csp, MonthlySummary
+from csp.models import HISTORICAL_ONLY_STATUS, Csp, MonthlySummary
 from csp.projection import build_projection
 
 logger = structlog.get_logger("ingestion")
@@ -89,7 +90,7 @@ class Command(BaseCommand):
         # status="historical_only" keeps a stub created only to satisfy this
         # FK out of "CSPs tracked" (see csp/services.get_overview).
         Csp.objects.bulk_create(
-            [Csp(csp_code=r["csp_code"], status="historical_only") for r in rows],
+            [Csp(csp_code=r["csp_code"], status=HISTORICAL_ONLY_STATUS) for r in rows],
             ignore_conflicts=True,
         )
 
@@ -131,6 +132,35 @@ class Command(BaseCommand):
             batch_size=1000,
         )
 
-        bump_generation()  # new MonthlySummary rows -> invalidate cached Overview/Trends rollups
-        logger.info("finished", stage="PROJECTION", rows_synced=len(objs))
-        self.stdout.write(self.style.SUCCESS(f"Synced {len(objs)} monthly_summary row(s)."))
+        # A real sync, not just an upsert: a (csp, month) Django still has a
+        # row for but the dbt mart no longer does -- because its source
+        # DailyBalance data was removed (a historical backfill undone, bad
+        # data cleaned up, ...) and dbt has already been re-run -- must be
+        # deleted here too, or it lingers forever showing stale numbers for
+        # data that no longer exists anywhere upstream. Skipped entirely
+        # when the mart came back empty (see the early return above) so a
+        # transient dbt failure can never look like "everyone's gone" and
+        # wipe the whole table.
+        current_keys = {(r["csp_code"], r["month"]) for r in rows}
+        existing_keys = set(MonthlySummary.objects.values_list("csp_id", "month"))
+        stale_keys = existing_keys - current_keys
+        stale_deleted = 0
+        if stale_keys:
+            stale_filter = Q()
+            for csp_code, month in stale_keys:
+                stale_filter |= Q(csp_id=csp_code, month=month)
+            stale_deleted, _ = MonthlySummary.objects.filter(stale_filter).delete()
+            logger.info(
+                "stale_rows_removed", stage="PROJECTION", count=stale_deleted,
+                keys=sorted(stale_keys)[:20],  # cap -- this is a log line, not a dump
+            )
+
+        bump_generation()  # MonthlySummary changed -> invalidate cached Overview/Trends rollups
+        logger.info(
+            "finished", stage="PROJECTION", rows_synced=len(objs), stale_removed=stale_deleted
+        )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Synced {len(objs)} monthly_summary row(s), removed {stale_deleted} stale row(s)."
+            )
+        )

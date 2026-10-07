@@ -8,6 +8,25 @@ the scaffolding pass, not the ingestion/calculation implementation.
 
 from django.db import models
 
+#: Csp.status value for a bare stub created only to satisfy a foreign key
+#: (a historical Calling Sheet backfill, or a transaction/mart row
+#: referencing a code with no live Calling Sheet presence yet) -- never
+#: a CSP that's actually part of the current roster. ingest_calling_sheet's
+#: Csp upsert clears this the moment a live poll actually sees the CSP, so
+#: it's never sticky once a CSP is genuinely active again.
+HISTORICAL_ONLY_STATUS = "historical_only"
+
+
+class CspQuerySet(models.QuerySet):
+    def tracked(self):
+        """Every CSP actually part of the current roster -- i.e. everything
+        this app should display or compute anything for. Excludes a bare
+        stub (see HISTORICAL_ONLY_STATUS). Use this, not .all(), for every
+        CSP listing/count/bulk-comparison a person or dashboard sees --
+        .all() is for internal bookkeeping (e.g. resolving a known
+        csp_code) where the distinction doesn't apply."""
+        return self.exclude(status=HISTORICAL_ONLY_STATUS)
+
 
 class Csp(models.Model):
     """CSP master data, sourced from the CALLING SHEET (PRD §7.1)."""
@@ -24,6 +43,8 @@ class Csp(models.Model):
     first_seen_date = models.DateField(null=True, blank=True)
     last_seen_date = models.DateField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = CspQuerySet.as_manager()
 
     class Meta:
         ordering = ["csp_code"]

@@ -431,7 +431,7 @@ def bulk_compare_csps(
     """The dashboard-tab/API bulk version — one query per data source for
     ALL requested CSPs (not one query per CSP), avoiding N+1 across 539+
     CSPs. Falls back to per-CSP calls only if the caller needs a handful."""
-    csps = Csp.objects.all()
+    csps = Csp.objects.tracked()
     if csp_codes:
         csps = csps.filter(csp_code__in=csp_codes)
     all_codes = list(csps.values_list("csp_code", "name"))
@@ -992,7 +992,7 @@ def build_daily_snapshots_bulk(
     _daily_snapshot_fields() — not a second implementation."""
     month_start = business_date.replace(day=1)
 
-    csps = Csp.objects.all()
+    csps = Csp.objects.tracked()
     if csp_codes:
         csps = csps.filter(csp_code__in=csp_codes)
     csp_rows = list(csps.values_list("csp_code", "account_count"))
