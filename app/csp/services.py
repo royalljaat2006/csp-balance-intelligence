@@ -109,7 +109,13 @@ def get_overview(month: str | None = None) -> dict:
     for row in qs.values("slab").annotate(count=Count("csp_id")):
         slab_counts[row["slab"]] = row["count"]
 
-    total_csps = Csp.objects.count()
+    # Excludes CSPs that only exist as a historical-backfill stub (status=
+    # "historical_only", see ingestion/calling_sheet_ingest.py's note on
+    # Csp.status) -- a CSP code seen only in old Calling Sheet snapshots or
+    # referenced by a transaction but never present in a live poll. Counting
+    # those here would inflate "CSPs tracked" with network churn instead of
+    # reflecting the current roster, which is what this KPI is for.
+    total_csps = Csp.objects.exclude(status="historical_only").count()
     aggregates = qs.aggregate(with_data=Count("csp_id"), avg_mab=Avg("mtd_mab"))
     with_data = aggregates["with_data"]
     avg_mab = float(aggregates["avg_mab"]) if aggregates["avg_mab"] is not None else None
