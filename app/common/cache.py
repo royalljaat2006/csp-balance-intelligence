@@ -150,3 +150,46 @@ def is_locked(key: str) -> bool:
     known-state, never a fabricated "running" indicator."""
     lock_key = f"csp-tracker:lock:{key}"
     return _safe("peek_lock", lambda: cache.get(lock_key) is not None, False)
+
+
+# --- Live job progress (Phase: real-time agentic pipeline, 2026-10-07) -----
+# Separate from the lock mechanism above: a lock says a job is running, this
+# says how far through it is. Only a long-running, large-file job (currently
+# transaction ingestion) ever writes one — most jobs here finish in well
+# under a second and have nothing meaningful to report mid-flight, so the
+# live pipeline view correctly shows no progress bar for them rather than a
+# fabricated one. A short TTL (not "cleared on completion" alone) is the
+# real safety net: a worker that dies mid-job leaves no lingering stale
+# progress for longer than the TTL, even if its own cleanup never runs.
+_PROGRESS_TTL_SECONDS = 120
+
+
+def set_job_progress(key: str, *, processed: int, total: int | None) -> None:
+    """`total` is the real row count the source file itself reports (e.g.
+    openpyxl's sheet.max_row) — never estimated or guessed. None when the
+    caller genuinely doesn't know a total yet (never 0 standing in for
+    "unknown")."""
+    progress_key = f"csp-tracker:progress:{key}"
+    value = {"processed": processed, "total": total}
+    _safe(
+        "set_progress",
+        lambda: cache.set(progress_key, value, timeout=_PROGRESS_TTL_SECONDS),
+        None,
+    )
+
+
+def get_job_progress(key: str) -> dict | None:
+    """None (not a fabricated 0/0) when no progress has been reported, the
+    entry expired, or the cache backend is unreachable — the pipeline view
+    must render "no progress data" rather than a fake empty bar in any of
+    those cases."""
+    progress_key = f"csp-tracker:progress:{key}"
+    return _safe("get_progress", lambda: cache.get(progress_key), None)
+
+
+def clear_job_progress(key: str) -> None:
+    """Called as soon as the job it describes actually finishes — the TTL
+    above is only the crash safety net, not the normal clear path (same
+    relationship release_lock has to a lock's TTL)."""
+    progress_key = f"csp-tracker:progress:{key}"
+    _safe("clear_progress", lambda: cache.delete(progress_key), None)

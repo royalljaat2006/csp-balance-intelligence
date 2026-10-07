@@ -6,14 +6,15 @@
   "use strict";
 
   const NODE_KEYS = [
-    "calling_sheet", "transactions", "telegram", "postgres", "snapshots",
+    "calling_sheet", "transactions", "telegram", "postgres", "snapshots", "autopilot",
     "balance_agent", "transaction_agent", "risk_agent", "findings", "actions",
   ];
   const CONNECTOR_MAP = {
     calling_sheet: ["conn-cs-pg"], transactions: ["conn-tx-pg"], telegram: ["conn-tg-pg"],
-    postgres: ["conn-pg-snap"], snapshots: ["conn-snap-bal", "conn-snap-tx", "conn-snap-risk"],
+    postgres: ["conn-pg-snap"],
+    snapshots: ["conn-snap-bal", "conn-snap-tx", "conn-snap-risk"],
     balance_agent: ["conn-bal-find"], transaction_agent: ["conn-tx-find"], risk_agent: ["conn-risk-find"],
-    findings: ["conn-find-act"], actions: [],
+    findings: ["conn-find-act"], actions: [], autopilot: ["conn-pg-autopilot"],
   };
 
   let lastEventAt = null;
@@ -53,11 +54,14 @@
     const labels = {
       idle: "Idle", running: "Running", queued: "Queued", completed: "Completed",
       warning: "Warning", failed: "Failed", waiting_approval: "Waiting approval",
+      not_configured: "Not configured",
     };
     statusText.textContent = labels[node.status] || node.status;
 
     const parts = [];
-    if (node.status === "running" && node.last_run_at) {
+    if (node.status === "not_configured") {
+      parts.push("disabled — no credentials configured");
+    } else if (node.status === "running" && node.last_run_at) {
       parts.push("started " + fmtAgo(node.last_run_at));
     } else if (node.last_run_at) {
       parts.push("last run " + fmtAgo(node.last_run_at));
@@ -72,11 +76,47 @@
     if (node.error) parts.push("error: " + node.error);
     meta.textContent = parts.join(" · ");
 
+    // Real progress only — node.progress is null unless the backend
+    // actually reported a live {processed, total} pair for this exact run
+    // (see common/cache.set_job_progress / dashboard/pipeline_state.py).
+    let bar = el.querySelector(".pl-progress");
+    if (node.status === "running" && node.progress && node.progress.total) {
+      if (!bar) {
+        bar = document.createElement("div");
+        bar.className = "pl-progress";
+        bar.innerHTML = '<div class="pl-progress-fill"></div><div class="pl-progress-label"></div>';
+        el.appendChild(bar);
+      }
+      const pct = Math.min(100, Math.round((node.progress.processed / node.progress.total) * 100));
+      bar.querySelector(".pl-progress-fill").style.width = pct + "%";
+      bar.querySelector(".pl-progress-label").textContent =
+        node.progress.processed.toLocaleString() + " / " + node.progress.total.toLocaleString() + " (" + pct + "%)";
+    } else if (bar) {
+      bar.remove();
+    }
+
     (CONNECTOR_MAP[node.key] || []).forEach((connId) => {
       const conn = document.getElementById(connId);
       if (!conn) return;
       conn.classList.toggle("flowing", node.status === "running");
     });
+
+    if (node.key === "actions") applyApprovalBanner(node);
+  }
+
+  function applyApprovalBanner(node) {
+    const banner = document.getElementById("pl-approval-banner");
+    const diagram = document.getElementById("pipeline-diagram");
+    const pending = node.status === "waiting_approval" ? (node.records && node.records.pending_approval) : 0;
+    if (pending) {
+      document.getElementById("pl-approval-banner-text").textContent =
+        "Pipeline paused — " + pending + " action" + (pending === 1 ? "" : "s") + " waiting for approval";
+      banner.hidden = false;
+      diagram.classList.add("pl-paused");
+    } else {
+      banner.hidden = true;
+      diagram.classList.remove("pl-paused");
+    }
   }
 
   function applyCounters(counters) {
@@ -103,6 +143,10 @@
     ];
     if (op.status === "running") {
       rows.push(["Elapsed", (op.elapsed_seconds != null ? op.elapsed_seconds + "s" : "—")]);
+      if (op.progress && op.progress.total) {
+        const pct = Math.min(100, Math.round((op.progress.processed / op.progress.total) * 100));
+        rows.push(["Progress", op.progress.processed.toLocaleString() + " / " + op.progress.total.toLocaleString() + " (" + pct + "%)"]);
+      }
     } else {
       rows.push(["Duration", (op.duration_seconds != null ? op.duration_seconds + "s" : "—")]);
     }

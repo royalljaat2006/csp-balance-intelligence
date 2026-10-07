@@ -728,9 +728,47 @@ footer.page-footer{border-top:1px solid var(--line); padding-top:16px; margin-to
 .pl-node.status-warning .pl-dot{background:var(--accent);}
 .pl-node.status-failed{border-color:var(--nil);}
 .pl-node.status-failed .pl-dot{background:var(--nil);}
-.pl-node.status-waiting_approval .pl-dot{background:var(--accent);}
+.pl-node.status-waiting_approval{border-color:var(--accent); box-shadow:0 0 0 3px rgba(217,119,6,0.18);}
+.pl-node.status-waiting_approval .pl-dot{background:var(--accent); animation:pl-pulse-dot 1.4s ease-in-out infinite;}
+.pl-node.status-not_configured{opacity:.55;}
+.pl-node.status-not_configured .pl-dot{background:transparent; border:1.5px solid #5b6b8c;}
 @keyframes pl-pulse-dot{0%,100%{opacity:1;} 50%{opacity:.35;}}
 @keyframes pl-pulse-node{0%,100%{box-shadow:0 0 0 3px rgba(37,99,235,0.18);} 50%{box-shadow:0 0 0 6px rgba(37,99,235,0.08);}}
+
+/* Real moving particles — one per connector, riding the identical path via
+   native SVG animateMotion (always running, negligible cost for ~11 small
+   circles). Visibility alone is gated on the connector's real "flowing"
+   state, via the adjacent-sibling selector below, so a particle is only
+   ever seen while real data is actually moving on that edge. */
+.pl-particle{fill:var(--brand); opacity:0; transition:opacity .2s;}
+.pl-connector.flowing + .pl-particle{opacity:1;}
+.pl-particle-independent{fill:var(--accent);}
+
+/* The autopilot branch runs on its own independent schedule, not the main
+   ingestion/snapshot/agent sequence — dashed and muted so that's visually
+   honest rather than implying it's one more step in the same pipeline. */
+.pl-connector-independent{stroke-dasharray:3 5;}
+.pl-connector-independent.flowing{stroke:var(--accent);}
+.pl-node-independent{border-style:dashed;}
+
+/* Real progress only — rendered by pipeline.js solely when the backend
+   reports a live {processed, total} pair for the running job (see
+   common/cache.set_job_progress). No node shows this unless it's real. */
+.pl-progress{margin-top:6px; height:4px; border-radius:2px; background:#1c2942; overflow:hidden; position:relative;}
+.pl-progress-fill{height:100%; background:var(--brand); border-radius:2px; transition:width .4s ease;}
+.pl-progress-label{font-size:9.5px; color:#7c8aa5; margin-top:3px; font-variant-numeric:tabular-nums;}
+
+/* Pipeline-pause banner — shown only while the real "actions" node reports
+   status=waiting_approval with a real pending_approval count (see
+   dashboard/pipeline_state.py's _actions_node). */
+.pl-approval-banner{
+  display:flex; align-items:center; gap:10px; margin-bottom:12px; padding:10px 14px;
+  background:var(--accent-soft); border:1px solid var(--accent); border-radius:10px;
+  color:var(--accent); font-size:13px; font-weight:600;
+}
+.pl-approval-banner .pl-dot{width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pl-pulse-dot 1.4s ease-in-out infinite; flex:none;}
+.pl-approval-banner a{margin-left:auto; color:inherit; text-decoration:underline; font-weight:700; white-space:nowrap;}
+.pipeline-diagram.pl-paused{box-shadow:0 0 0 2px rgba(217,119,6,0.25); border-radius:12px;}
 
 .pipeline-timeline{display:flex; flex-direction:column; gap:2px; max-height:360px; overflow-y:auto;}
 .pipeline-timeline-row{display:flex; align-items:baseline; gap:10px; padding:6px 4px; border-bottom:1px solid var(--line); font-size:12.5px;}
@@ -738,7 +776,12 @@ footer.page-footer{border-top:1px solid var(--line); padding-top:16px; margin-to
 .pl-timeline-icon{color:var(--brand); flex:none;}
 
 @media (prefers-reduced-motion: reduce){
-  .pl-connector.flowing,.pl-node.status-running,.pl-node.status-running .pl-dot,.freshness-pill.lost .dot{animation:none;}
+  .pl-connector.flowing,.pl-node.status-running,.pl-node.status-running .pl-dot,.freshness-pill.lost .dot,
+  .pl-node.status-waiting_approval .pl-dot,.pl-approval-banner .pl-dot{animation:none;}
+  /* animateMotion is SMIL, not a CSS animation -- `animation:none` above
+     doesn't stop it. Hiding the particle is the real goal anyway (no
+     visible movement), so force opacity off instead of fighting SMIL. */
+  .pl-particle{opacity:0 !important;}
 }
 /* ---- verification-status / agent-action-status modifiers (Phase 11) ---- */
 .status-badge.verified,.status-badge.approved,.status-badge.executed,.status-badge.success{background:var(--good-soft); color:var(--good);}

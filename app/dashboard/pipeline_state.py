@@ -31,9 +31,17 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any
 
-from autopilot.models import AgentAction, AgentFinding, AgentRun, AgentVerification, DraftMessage
-from common.cache import is_locked
+from autopilot.models import (
+    AgentAction,
+    AgentFinding,
+    AgentRun,
+    AgentVerification,
+    DraftMessage,
+    Insight,
+)
+from common.cache import get_job_progress, is_locked
 from csp.models import Csp, DailyBalance, DailyCspSnapshot, IngestLog, Transaction
+from django.conf import settings
 from django.utils import timezone
 
 _INGEST_SOURCES = {
@@ -42,18 +50,32 @@ _INGEST_SOURCES = {
     "telegram": ("telegram", "watch:poll_telegram"),
 }
 _AGENT_NAMES = ("balance_agent", "transaction_agent", "risk_agent")
+# Settings whose absence means a source is disabled by configuration, not
+# merely quiet right now — see ingestion/calling_sheet_ingest.py's and
+# autopilot/nemotron_client.py's own "missing integration degrades, never
+# crashes" pattern. "not_configured" is a status this module reports
+# honestly rather than folding into "idle", which would look identical to
+# "configured, just hasn't run yet."
+_CONFIG_REQUIREMENTS = {
+    "telegram": "TELEGRAM_BOT_TOKEN",
+}
 
 
 @dataclass
 class NodeState:
     key: str
     label: str
-    status: str  # idle | running | queued | completed | warning | failed | waiting_approval
+    # idle | running | queued | completed | warning | failed | waiting_approval | not_configured
+    status: str
     last_run_at: str | None = None
     last_duration_seconds: float | None = None
     records: dict[str, int] = field(default_factory=dict)
     error: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    # {"processed": int, "total": int|None} — only ever set by a real
+    # common.cache.get_job_progress() read (see _ingest_node). None means
+    # "no real progress data", never a fabricated 0.
+    progress: dict[str, int | None] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -65,23 +87,33 @@ class NodeState:
             "records": self.records,
             "error": self.error,
             "detail": self.detail,
+            "progress": self.progress,
         }
 
 
 def _ingest_node(key: str, label: str) -> NodeState:
     source, lock_key = _INGEST_SOURCES[key]
+    required_setting = _CONFIG_REQUIREMENTS.get(key)
+    not_configured = required_setting is not None and not getattr(settings, required_setting, "")
+
     latest = IngestLog.objects.filter(source=source).order_by("-started_at").first()
     locked = is_locked(lock_key)
     if latest is None:
         if locked:
             return NodeState(key=key, label=label, status="running")
-        return NodeState(key=key, label=label, status="idle")
+        # "not_configured" only when there's genuinely no execution record to
+        # show — a real past IngestLog row (e.g. from before the token was
+        # removed) is a real signal and takes priority over the current
+        # config state, same as every other honesty rule in this module.
+        status = "not_configured" if not_configured else "idle"
+        return NodeState(key=key, label=label, status=status)
 
     finished_at = latest.finished_at
     if locked or finished_at is None:
         return NodeState(
             key=key, label=label, status="running", last_run_at=latest.started_at.isoformat(),
             detail={"started_at": latest.started_at.isoformat()},
+            progress=get_job_progress(f"ingest:{latest.id}"),
         )
 
     duration = (finished_at - latest.started_at).total_seconds()
@@ -164,6 +196,28 @@ def _agent_node(agent_name: str, label: str) -> NodeState:
     )
 
 
+def _autopilot_node() -> NodeState:
+    """Nemotron-backed narrative generation (Insight/PriorityCall/
+    AnomalyFlag/DraftMessage) — a separate subsystem from the three
+    CSP Operations agent nodes above, which reason over trusted-tool facts
+    independently of whether Nemotron is configured. "not_configured" is
+    reported explicitly rather than folding into "idle": this deployment
+    currently has no NEMOTRON_API_KEY, and showing "idle" would wrongly
+    suggest it's configured and just between runs."""
+    if not getattr(settings, "NEMOTRON_API_KEY", ""):
+        return NodeState(key="autopilot", label="AI Autopilot", status="not_configured")
+    if is_locked("watch:run_autopilot"):
+        return NodeState(key="autopilot", label="AI Autopilot", status="running")
+    latest = Insight.objects.order_by("-generated_at").first()
+    if latest is None:
+        return NodeState(key="autopilot", label="AI Autopilot", status="idle")
+    return NodeState(
+        key="autopilot", label="AI Autopilot", status="completed",
+        last_run_at=latest.generated_at.isoformat(),
+        detail={"model_used": latest.model_used, "month": latest.month},
+    )
+
+
 def _findings_node() -> NodeState:
     today = timezone.localdate()
     total_today = AgentFinding.objects.filter(created_at__date=today).count()
@@ -220,15 +274,21 @@ def get_snapshot() -> dict:
     snapshots = _snapshots_node()
     postgres = _postgres_node(ingest_nodes, snapshots)
     agent_nodes = [_agent_node(name, name.replace("_", " ").title()) for name in _AGENT_NAMES]
+    autopilot = _autopilot_node()
     findings = _findings_node()
     actions = _actions_node()
     verification = _verification_node()
 
-    nodes = ingest_nodes + [postgres, snapshots] + agent_nodes + [findings, actions, verification]
+    nodes = (
+        ingest_nodes
+        + [postgres, snapshots]
+        + agent_nodes
+        + [autopilot, findings, actions, verification]
+    )
     return {
         "nodes": [n.to_dict() for n in nodes],
         "counters": get_counters(),
-        "current_operation": get_current_operation(ingest_nodes + agent_nodes),
+        "current_operation": get_current_operation(ingest_nodes + agent_nodes + [autopilot]),
         "generated_at": timezone.now().isoformat(),
     }
 
@@ -252,6 +312,7 @@ def get_current_operation(nodes: list[NodeState] | None = None) -> dict | None:
         return {
             "node": node["label"], "status": "running", "started_at": node["last_run_at"],
             "elapsed_seconds": round(elapsed, 1) if elapsed else None, "records": node["records"],
+            "progress": node.get("progress"),
         }
     if completed:
         completed.sort(key=lambda n: n["last_run_at"], reverse=True)
@@ -268,6 +329,7 @@ def get_counters() -> dict:
     today = timezone.localdate()
     active_jobs = sum(1 for _, lock_key in _INGEST_SOURCES.values() if is_locked(lock_key))
     active_jobs += is_locked("watch:sync_daily_snapshots")
+    active_jobs += is_locked("watch:run_autopilot")
     active_jobs += AgentRun.objects.filter(status=AgentRun.Status.RUNNING).count()
     return {
         "csps_processed_today": DailyBalance.objects.filter(balance_date=today).count(),
@@ -307,16 +369,44 @@ def _queue_depth() -> int:
         return 0
 
 
+_WORKER_FOR_SOURCE = {
+    "calling_sheet": "worker-calling-sheet",
+    "transactions": "worker-ingestion",
+    "telegram": "worker-telegram",
+}
+
+
+def _event(
+    ts: dt.datetime, kind: str, text: str, event_id: str, **fields: Any
+) -> tuple[dt.datetime, dict]:
+    """One timeline entry. `text`/`message` are the same string, kept as
+    two keys for backward-compat with pipeline.js's existing `text` reads
+    alongside the field name the pipeline spec asks for. Every other field
+    defaults to None (never 0/""/a guess) so the frontend can tell "not
+    applicable to this event type" apart from a real zero."""
+    base = {
+        "event_id": event_id, "ts": ts.isoformat(), "kind": kind,
+        "text": text, "message": text,
+        "source": None, "job_id": None, "stage": None, "status": None,
+        "worker": None, "agent": None, "progress": None,
+        "records_total": None, "records_processed": None,
+        "error_count": None, "duration": None,
+    }
+    base.update(fields)
+    return (ts, base)
+
+
 def get_activity_timeline(limit: int = 30) -> list[dict]:
     """Recent real events, merged from existing tables — never a stored
     event log of its own. Each entry is one real row's real timestamp."""
     events: list[tuple[dt.datetime, dict]] = []
 
     for log in IngestLog.objects.order_by("-started_at")[:limit]:
-        events.append((
-            log.started_at,
-            {"ts": log.started_at.isoformat(), "kind": "ingestion_started",
-             "text": f"{log.source} ingestion started"},
+        worker = _WORKER_FOR_SOURCE.get(log.source)
+        events.append(_event(
+            log.started_at, "ingestion_started", f"{log.source} ingestion started",
+            f"ingestlog:{log.pk}:started",
+            source=log.source, job_id=log.pk, stage="INGESTION", status="started", worker=worker,
         ))
         if log.finished_at:
             ok = log.status not in (IngestLog.Status.FAILED, IngestLog.Status.INVALID_SOURCE)
@@ -326,53 +416,65 @@ def get_activity_timeline(limit: int = 30) -> list[dict]:
                 if ok
                 else f"{log.source} ingestion failed: {log.error_summary or 'see logs'}"
             )
-            events.append((
-                log.finished_at,
-                {"ts": log.finished_at.isoformat(),
-                 "kind": "ingestion_completed" if ok else "ingestion_failed", "text": text},
+            duration = (log.finished_at - log.started_at).total_seconds()
+            events.append(_event(
+                log.finished_at, "ingestion_completed" if ok else "ingestion_failed", text,
+                f"ingestlog:{log.pk}:finished",
+                source=log.source, job_id=log.pk, stage="INGESTION",
+                status=log.status, worker=worker,
+                records_total=log.rows_read, records_processed=log.rows_upserted,
+                error_count=log.rows_rejected, duration=round(duration, 1),
             ))
 
     for run in AgentRun.objects.order_by("-started_at")[:limit]:
         agent_label = run.agent_name.replace("_", " ").title()
-        events.append((
-            run.started_at,
-            {"ts": run.started_at.isoformat(), "kind": "agent_started",
-             "text": f"{agent_label} started"},
+        events.append(_event(
+            run.started_at, "agent_started", f"{agent_label} started",
+            f"agentrun:{run.pk}:started",
+            source="agent", job_id=run.pk, status="started", worker="agent-worker",
+            agent=run.agent_name,
         ))
         if run.finished_at:
             run_ok = run.status == AgentRun.Status.COMPLETED
-            events.append((
-                run.finished_at,
-                {"ts": run.finished_at.isoformat(),
-                 "kind": "agent_completed" if run_ok else "agent_failed",
-                 "text": f"{agent_label} {run.get_status_display().lower()}"},
+            duration = (run.finished_at - run.started_at).total_seconds()
+            events.append(_event(
+                run.finished_at, "agent_completed" if run_ok else "agent_failed",
+                f"{agent_label} {run.get_status_display().lower()}",
+                f"agentrun:{run.pk}:finished",
+                source="agent", job_id=run.pk, status=run.status, worker="agent-worker",
+                agent=run.agent_name, duration=round(duration, 1),
             ))
 
     for finding in AgentFinding.objects.select_related("csp").order_by("-created_at")[:limit]:
         finding_agent = finding.source_agent.replace("_", " ").title()
         finding_target = f" for {finding.csp_id}" if finding.csp_id else ""
-        events.append((
-            finding.created_at,
-            {"ts": finding.created_at.isoformat(), "kind": "agent_finding",
-             "text": f"{finding_agent} found {finding.finding_type}{finding_target}"},
+        events.append(_event(
+            finding.created_at, "agent_finding",
+            f"{finding_agent} found {finding.finding_type}{finding_target}",
+            f"agentfinding:{finding.pk}",
+            source="agent", job_id=finding.task_id, worker="agent-worker",
+            agent=finding.source_agent,
         ))
 
     for verification in AgentVerification.objects.order_by("-verified_at")[:limit]:
         result = verification.get_result_display().lower()
-        events.append((
-            verification.verified_at,
-            {"ts": verification.verified_at.isoformat(), "kind": "verification_completed",
-             "text": f"Verification {result} for finding #{verification.finding_id}"},
+        events.append(_event(
+            verification.verified_at, "verification_completed",
+            f"Verification {result} for finding #{verification.finding_id}",
+            f"agentverification:{verification.pk}",
+            source="agent", job_id=verification.finding_id, status=verification.result,
+            worker="agent-worker", agent="verification_agent",
         ))
 
     for action in AgentAction.objects.order_by("-created_at")[:limit]:
         pending = action.status == AgentAction.Status.PENDING_APPROVAL
         kind = "action_pending_approval" if pending else "action_created"
         target = action.csp_id or "network"
-        events.append((
-            action.created_at,
-            {"ts": action.created_at.isoformat(), "kind": kind,
-             "text": f"{action.get_action_type_display()} proposed for {target}"},
+        events.append(_event(
+            action.created_at, kind, f"{action.get_action_type_display()} proposed for {target}",
+            f"agentaction:{action.pk}",
+            source="agent", job_id=action.pk, status=action.status,
+            worker="agent-worker", agent="action_agent",
         ))
 
     events.sort(key=lambda e: e[0], reverse=True)

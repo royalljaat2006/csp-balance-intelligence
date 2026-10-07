@@ -14,7 +14,7 @@ from pathlib import Path
 
 import openpyxl
 import structlog
-from common.cache import bump_generation
+from common.cache import bump_generation, clear_job_progress
 from csp.models import IngestLog
 from django.utils import timezone
 
@@ -81,7 +81,11 @@ def ingest_transaction_file(
         return log
     wb.close()
 
-    result = ingest_workbook(file_path, header)
+    progress_key = f"ingest:{log.id}"
+    try:
+        result = ingest_workbook(file_path, header, progress_key=progress_key)
+    finally:
+        clear_job_progress(progress_key)
     job.info(
         "completed",
         stage="VALIDATION",

@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from autopilot.models import AgentFinding, AgentRun, AgentTask, AgentVerification
-from common.cache import release_lock, try_acquire_lock
+from autopilot.models import AgentFinding, AgentRun, AgentTask, AgentVerification, Insight
+from common.cache import clear_job_progress, release_lock, set_job_progress, try_acquire_lock
 from csp.models import Csp, DailyBalance, IngestLog
 from dashboard import pipeline_sse, pipeline_state
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.utils import timezone
 
 
@@ -255,3 +256,140 @@ def test_pipeline_page_renders_with_real_initial_snapshot(logged_in_client, csp)
     body = response.content.decode()
     assert "PIPELINE_INITIAL_SNAPSHOT" in body
     assert '"total_csps": 1' in body
+
+
+# ---- not_configured: a disabled source is distinct from a quiet one -----
+
+
+@pytest.mark.django_db
+@override_settings(TELEGRAM_BOT_TOKEN="")
+def test_telegram_node_is_not_configured_with_no_history():
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+    assert node["status"] == "not_configured"
+
+
+@pytest.mark.django_db
+@override_settings(TELEGRAM_BOT_TOKEN="")
+def test_telegram_node_prefers_a_real_history_row_over_not_configured():
+    """A real past execution (e.g. from before the token was removed) is a
+    real signal and must not be hidden behind the current config state."""
+    IngestLog.objects.create(
+        source="telegram", status=IngestLog.Status.SUCCESS, finished_at=timezone.now()
+    )
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+    assert node["status"] == "completed"
+
+
+@pytest.mark.django_db
+@override_settings(TELEGRAM_BOT_TOKEN="123:real-token-shape")
+def test_telegram_node_is_idle_not_not_configured_when_token_is_set():
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+    assert node["status"] == "idle"
+
+
+# ---- autopilot node: honest about Nemotron configuration -----------------
+
+
+@pytest.mark.django_db
+@override_settings(NEMOTRON_API_KEY="")
+def test_autopilot_node_is_not_configured_without_a_key():
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "autopilot")
+    assert node["status"] == "not_configured"
+
+
+@pytest.mark.django_db
+@override_settings(NEMOTRON_API_KEY="real-key-shape")
+def test_autopilot_node_is_idle_when_configured_but_never_run():
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "autopilot")
+    assert node["status"] == "idle"
+
+
+@pytest.mark.django_db
+@override_settings(NEMOTRON_API_KEY="real-key-shape")
+def test_autopilot_node_reports_a_real_completed_insight():
+    Insight.objects.create(
+        month="2026-10", headline="h", body="b", model_used="nvidia/nemotron-3-super-120b-a12b"
+    )
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "autopilot")
+    assert node["status"] == "completed"
+    assert node["detail"]["model_used"] == "nvidia/nemotron-3-super-120b-a12b"
+
+
+@pytest.mark.django_db
+@override_settings(NEMOTRON_API_KEY="real-key-shape")
+def test_autopilot_node_is_running_only_while_its_lock_is_held():
+    assert try_acquire_lock("watch:run_autopilot", ttl=60) is True
+    try:
+        node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "autopilot")
+        assert node["status"] == "running"
+    finally:
+        release_lock("watch:run_autopilot")
+
+
+# ---- real progress: only ever a genuine {processed, total} pair ----------
+
+
+@pytest.mark.django_db
+def test_ingest_node_has_no_progress_field_when_none_was_reported():
+    IngestLog.objects.create(source="transactions", status=IngestLog.Status.FAILED)  # in-flight
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "transactions")
+    assert node["status"] == "running"
+    assert node["progress"] is None
+
+
+@pytest.mark.django_db
+def test_ingest_node_surfaces_real_progress_while_running():
+    log = IngestLog.objects.create(source="transactions", status=IngestLog.Status.FAILED)
+    set_job_progress(f"ingest:{log.id}", processed=4000, total=18420)
+    try:
+        node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "transactions")
+        assert node["status"] == "running"
+        assert node["progress"] == {"processed": 4000, "total": 18420}
+    finally:
+        clear_job_progress(f"ingest:{log.id}")
+
+
+@pytest.mark.django_db
+def test_completed_ingest_node_does_not_carry_stale_progress():
+    log = IngestLog.objects.create(source="transactions", status=IngestLog.Status.FAILED)
+    set_job_progress(f"ingest:{log.id}", processed=18420, total=18420)
+    log.status = IngestLog.Status.SUCCESS
+    log.finished_at = timezone.now()
+    log.save()
+    clear_job_progress(f"ingest:{log.id}")  # the real code path always clears on finish
+
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "transactions")
+    assert node["status"] == "completed"
+    assert node["progress"] is None
+
+
+# ---- enriched timeline event fields ---------------------------------------
+
+
+@pytest.mark.django_db
+def test_timeline_events_carry_the_full_real_field_set():
+    log = IngestLog.objects.create(
+        source="transactions", status=IngestLog.Status.SUCCESS,
+        finished_at=timezone.now(), rows_read=100, rows_upserted=95, rows_rejected=5,
+    )
+    timeline = pipeline_state.get_activity_timeline()
+    finished = next(e for e in timeline if e["event_id"] == f"ingestlog:{log.pk}:finished")
+    assert finished["job_id"] == log.pk
+    assert finished["source"] == "transactions"
+    assert finished["worker"] == "worker-ingestion"
+    assert finished["records_total"] == 100
+    assert finished["records_processed"] == 95
+    assert finished["error_count"] == 5
+    assert finished["duration"] is not None
+    assert finished["message"] == finished["text"]
+
+
+@pytest.mark.django_db
+def test_timeline_fields_are_none_not_fabricated_when_not_applicable(csp):
+    task = AgentTask.objects.create(description="t")
+    AgentRun.objects.create(task_fk=task, agent_name="balance_agent", task="t")
+    timeline = pipeline_state.get_activity_timeline()
+    started = next(e for e in timeline if e["kind"] == "agent_started")
+    assert started["agent"] == "balance_agent"
+    assert started["stage"] is None  # no sub-stage tracking exists -- never guessed
+    assert started["records_total"] is None

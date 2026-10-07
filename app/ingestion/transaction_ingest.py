@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import openpyxl
+from common.cache import set_job_progress
 from csp.models import Csp, Transaction
 from django.db import transaction as db_transaction
 
@@ -33,6 +34,10 @@ from .xlsx_validation import (
 )
 
 BATCH_SIZE = 1000
+# How often (in rows) to write a progress update during a long parse pass.
+# Every row would just add Redis round-trips without the live view polling
+# anywhere near that fast (pipeline_sse.py reads it at most once per ~2s).
+PROGRESS_REPORT_EVERY = 2000
 
 _TRANSACTION_UPDATE_FIELDS = [
     "csp_id",
@@ -57,9 +62,20 @@ class IngestResult:
     new_csp_codes: set[str] = field(default_factory=set)
 
 
-def ingest_workbook(file_path: Path, header: list[str]) -> IngestResult:
+def ingest_workbook(
+    file_path: Path, header: list[str], *, progress_key: str | None = None
+) -> IngestResult:
     """`header` is the already-validated column list (validate_required_columns
-    has already run against it) — avoids re-reading row 1 here."""
+    has already run against it) — avoids re-reading row 1 here.
+
+    `progress_key`, when given, reports real row-by-row progress to
+    common.cache.set_job_progress every PROGRESS_REPORT_EVERY rows — the
+    live pipeline view's only source of real mid-ingestion progress (see
+    dashboard/pipeline_state.py). `total` is sheet.max_row (minus the
+    header row), the file's own real dimensions, never an estimate. Only
+    used here: it's the one ingestion path where a single file can run
+    tens of thousands of rows and "running, no further detail for several
+    minutes" would otherwise be the honest-but-unhelpful alternative."""
     result = IngestResult()
     col = {name: header.index(name) for name in header}
 
@@ -69,7 +85,10 @@ def ingest_workbook(file_path: Path, header: list[str]) -> IngestResult:
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     try:
         sheet = wb["Success"]
-        for row in sheet.iter_rows(min_row=2, values_only=True):
+        total_rows = max((sheet.max_row or 1) - 1, 0)
+        for i, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
+            if progress_key and i % PROGRESS_REPORT_EVERY == 0:
+                set_job_progress(progress_key, processed=i, total=total_rows)
             txn_type_raw = row[col["Type of Transaction"]]
             if txn_type_raw is None:
                 continue

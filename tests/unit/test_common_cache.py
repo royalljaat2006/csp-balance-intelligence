@@ -8,7 +8,14 @@ backend errors, generation-based invalidation, and the distributed lock.
 from unittest.mock import patch
 
 from common import cache as cache_module
-from common.cache import bump_generation, cache_aside, try_acquire_lock
+from common.cache import (
+    bump_generation,
+    cache_aside,
+    clear_job_progress,
+    get_job_progress,
+    set_job_progress,
+    try_acquire_lock,
+)
 
 
 def test_cache_aside_calls_fn_on_miss_and_returns_its_value():
@@ -119,3 +126,36 @@ def test_cache_aside_stampede_guard_only_one_concurrent_caller_computes():
 
     assert result == "computed"
     assert len(calls) == 1
+
+
+# ---- job progress (Phase: real-time agentic pipeline, 2026-10-07) --------
+
+
+def test_get_job_progress_is_none_when_nothing_reported():
+    assert get_job_progress("never-reported") is None
+
+
+def test_set_then_get_job_progress_round_trips_real_values():
+    set_job_progress("job-p1", processed=4000, total=18420)
+    assert get_job_progress("job-p1") == {"processed": 4000, "total": 18420}
+
+
+def test_set_job_progress_accepts_none_total_when_genuinely_unknown():
+    set_job_progress("job-p2", processed=10, total=None)
+    assert get_job_progress("job-p2") == {"processed": 10, "total": None}
+
+
+def test_clear_job_progress_removes_it():
+    set_job_progress("job-p3", processed=5, total=10)
+    clear_job_progress("job-p3")
+    assert get_job_progress("job-p3") is None
+
+
+def test_set_job_progress_fails_open_when_backend_unavailable():
+    with patch.object(cache_module.cache, "set", side_effect=ConnectionError("redis down")):
+        set_job_progress("job-p4", processed=1, total=2)  # must not raise
+
+
+def test_get_job_progress_fails_open_to_none_when_backend_unavailable():
+    with patch.object(cache_module.cache, "get", side_effect=ConnectionError("redis down")):
+        assert get_job_progress("job-p5") is None

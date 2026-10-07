@@ -36,19 +36,47 @@
 
   <section class="panel pipeline-diagram-panel">
     <div class="panel-head"><h2>Pipeline</h2><span class="hint" id="pl-generated-at"></span></div>
+    <div class="pl-approval-banner" id="pl-approval-banner" hidden>
+      <span class="pl-dot"></span>
+      <span id="pl-approval-banner-text"></span>
+      <a href="{% url 'dashboard:approvals' %}">Review &rarr;</a>
+    </div>
     <div class="pipeline-diagram" id="pipeline-diagram">
       <svg id="pipeline-svg" viewBox="0 0 1120 760" preserveAspectRatio="xMidYMin meet" aria-hidden="true">
+        <!-- Each connector is paired with a .pl-particle circle riding the
+             identical path via native SVG animateMotion. The motion itself
+             always runs (cheap for 11 small circles); only opacity is
+             gated on the connector's real "flowing" state (CSS sibling
+             selector below), so a particle is only ever visible while real
+             data is actually moving through that edge. -->
         <path id="conn-cs-pg" class="pl-connector" d="M180,70 L560,70 L560,190"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M180,70 L560,70 L560,190"/></circle>
         <path id="conn-tx-pg" class="pl-connector" d="M560,70 L560,190"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,70 L560,190"/></circle>
         <path id="conn-tg-pg" class="pl-connector" d="M940,70 L560,70 L560,190"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M940,70 L560,70 L560,190"/></circle>
         <path id="conn-pg-snap" class="pl-connector" d="M560,250 L560,330"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,250 L560,330"/></circle>
         <path id="conn-snap-bal" class="pl-connector" d="M560,390 L180,390 L180,470"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,390 L180,390 L180,470"/></circle>
         <path id="conn-snap-tx" class="pl-connector" d="M560,390 L560,470"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,390 L560,470"/></circle>
         <path id="conn-snap-risk" class="pl-connector" d="M560,390 L940,390 L940,470"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,390 L940,390 L940,470"/></circle>
         <path id="conn-bal-find" class="pl-connector" d="M180,530 L560,530 L560,610"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M180,530 L560,530 L560,610"/></circle>
         <path id="conn-tx-find" class="pl-connector" d="M560,530 L560,610"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,530 L560,610"/></circle>
         <path id="conn-risk-find" class="pl-connector" d="M940,530 L560,530 L560,610"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M940,530 L560,530 L560,610"/></circle>
         <path id="conn-find-act" class="pl-connector" d="M560,670 L560,700"/>
+        <circle class="pl-particle" r="4"><animateMotion dur="0.8s" repeatCount="indefinite" path="M560,670 L560,700"/></circle>
+        <!-- Autopilot reads Postgres on its own independent schedule (daily,
+             not driven by the ingestion/snapshot/agent flow) -- dashed and
+             routed clear of the main flow to show that honestly, not as a
+             step in the same sequence. -->
+        <path id="conn-pg-autopilot" class="pl-connector pl-connector-independent" d="M620,220 L940,220 L940,330"/>
+        <circle class="pl-particle pl-particle-independent" r="4"><animateMotion dur="1.8s" repeatCount="indefinite" path="M620,220 L940,220 L940,330"/></circle>
       </svg>
       <div class="pl-node" data-node="calling_sheet" style="left:20px; top:20px;">
         <div class="pl-node-label">Calling Sheet</div>
@@ -72,6 +100,11 @@
       </div>
       <div class="pl-node" data-node="snapshots" style="left:400px; top:330px;">
         <div class="pl-node-label">Daily Snapshots</div>
+        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
+        <div class="pl-node-meta"></div>
+      </div>
+      <div class="pl-node pl-node-independent" data-node="autopilot" style="left:780px; top:330px;" title="Runs on its own daily schedule, independent of the ingestion/snapshot/agent flow">
+        <div class="pl-node-label">AI Autopilot</div>
         <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
         <div class="pl-node-meta"></div>
       </div>
