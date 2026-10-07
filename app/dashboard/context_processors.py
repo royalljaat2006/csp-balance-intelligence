@@ -37,7 +37,13 @@ def _env_badge() -> str:
 
 
 def dashboard_shell(request):
-    if not request.path.startswith("/dashboard/"):
+    # path_info, not path: under a subpath deployment (URL_PREFIX /
+    # FORCE_SCRIPT_NAME, see config/settings/base.py), request.path includes
+    # the prefix (e.g. "/csp-balance-intelligence/dashboard/...") while
+    # path_info is always the prefix-stripped portion Django actually
+    # routed on -- the only one guaranteed to start with "/dashboard/"
+    # regardless of how the app is mounted.
+    if not request.path_info.startswith("/dashboard/"):
         return {}
 
     mode = request.COOKIES.get(MODE_COOKIE)

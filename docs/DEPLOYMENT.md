@@ -183,38 +183,44 @@ never runs migrations, avoiding a race between the two containers.)
 
 ## Ingestion / calculation commands
 
+Since the scalability foundation (2026-09-21), the single `worker` role is split into four
+independently-scalable services (see `compose.yml`'s `x-worker` anchor and each service's
+`WATCH_JOBS` env var) — there is no service literally named `worker` to `exec` into.
+
 | Command | Runs in | Trigger |
 |---|---|---|
-| `manage.py ingest_calling_sheet` | `web` or `worker` (either has DB access) | host cron, daily |
-| `manage.py watch_transactions` | `worker` (its main process) | continuous — the container's own command, not cron |
-| `manage.py ingest_transactions` | `worker` | called internally by `watch_transactions` each poll; can also be run once manually |
-| `manage.py sync_daily_snapshots` | `worker` | called internally by `watch_transactions` every 5 min (default); can also be run once manually with `--date` |
-| `manage.py poll_telegram` | `worker` | called internally by `watch_transactions` every 60s (default); no-op unless `TELEGRAM_BOT_TOKEN` is set |
-| `dbt run` / `dbt test` | `worker` (has dbt-core installed, same image) | host cron, daily, after ingestion |
-| `manage.py sync_monthly_summary` | `web` or `worker` | host cron, daily, right after `dbt run` |
+| `manage.py ingest_calling_sheet` | `worker-calling-sheet` (its own `watch_transactions` loop) | continuous, every 60s (`--calling-sheet-interval`) — not cron |
+| `manage.py watch_transactions` | every `worker-*` service (its main process) | continuous — each container's own command, running only the jobs in its `WATCH_JOBS` |
+| `manage.py ingest_transactions` | `worker-ingestion` (its own loop) | continuous, every 5 min (`--interval`, default); also triggered indirectly by `scripts/sync_transaction_sheet.sh` dropping a fresh file into `incoming/` |
+| `manage.py sync_daily_snapshots` | `worker-calling-sheet` (its own loop) | continuous, every 5 min (`--snapshot-interval`, default); can also be run once manually with `--date` |
+| `manage.py poll_telegram` | `worker-telegram` (its own loop) | continuous, every 60s (`--telegram-interval`, default); no-op unless `TELEGRAM_BOT_TOKEN` is set |
+| `scripts/sync_transaction_sheet.sh` | host cron (not a container) | every 20 min on the R730 — copies the live source workbook into `incoming/`, see "R730: syncing from the real transaction sheet" above |
+| `dbt run` / `dbt test` | any `worker-*` container (dbt-core is in the shared image) | host cron |
+| `manage.py sync_monthly_summary` | `web` or any `worker-*` | host cron, right after `dbt run` |
 
 Status: **every command in this table is implemented and verified against real data** (the live
-CALLING SHEET + the real August transaction file) — `ingest_calling_sheet` matches columns by
+CALLING SHEET + real multi-month transaction history) — `ingest_calling_sheet` matches columns by
 header text and parses Indian-formatted currency, `ingest_transactions` bulk-upserts idempotently,
 the dbt marts pass all 12 tests, and `sync_monthly_summary` writes the projected
 `csp_monthlysummary` rows the API reads. See docs/DATA-FLOW.md for the verified numbers.
 
 ## Scheduled jobs
 
+The R730 production deployment runs `dbt run` + `sync_monthly_summary` every 20 minutes, staggered
+a few minutes behind the transaction sync so each step has time to finish before the next depends
+on it (`worker-calling-sheet` is just the container chosen to `exec` into — any `worker-*` service
+works, since dbt-core and the Django app are in the same shared image):
+
 ```cron
-30 7 * * * docker compose -f /opt/projects/csp-balance-tracker/compose.yml exec -T web python manage.py ingest_calling_sheet
-45 7 * * * docker compose -f /opt/projects/csp-balance-tracker/compose.yml exec -T worker dbt run --project-dir /app/dbt --profiles-dir /app/dbt
-50 7 * * * docker compose -f /opt/projects/csp-balance-tracker/compose.yml exec -T worker dbt test --project-dir /app/dbt --profiles-dir /app/dbt
-55 7 * * * docker compose -f /opt/projects/csp-balance-tracker/compose.yml exec -T web python manage.py sync_monthly_summary
+*/20 * * * * TRANSACTION_DATA_DIR_HOST=/path/to/data /path/to/scripts/sync_transaction_sheet.sh >> /path/to/txn_sync.log 2>&1
+8,28,48 * * * * docker compose -f /path/to/compose.yml exec -T -w /app/dbt worker-calling-sheet dbt run --project-dir /app/dbt --profiles-dir /app/dbt >> /path/to/dbt_run.log 2>&1
+10,30,50 * * * * docker compose -f /path/to/compose.yml exec -T worker-calling-sheet python app/manage.py sync_monthly_summary >> /path/to/dbt_run.log 2>&1
 ```
 
-`dbt`'s connection env vars (`DATABASE_HOST=db`, etc.) need to reach the `worker` container the
-same way the app's do — pass them through `.env`/`environment:` in compose, or export them in the
-cron entry itself. Transaction ingestion, the CALLING SHEET poll, the daily snapshot rebuild, and
-the Telegram poll need no cron entry — they're all schedules inside the `worker` container's own
-long-running `watch_transactions` loop (default: transactions and snapshots every 5 minutes via
-`WATCH_INTERVAL_SECONDS`/`--snapshot-interval`, CALLING SHEET and Telegram every 60s via
-`--calling-sheet-interval`/`--telegram-interval`).
+`dbt`'s connection env vars (`DATABASE_HOST=db`, etc.) reach the container the same way the app's
+do — through `.env`, loaded automatically by `env_file:` in compose. `ingest_calling_sheet`,
+`ingest_transactions`, `sync_daily_snapshots`, and `poll_telegram` need no cron entry — they're all
+schedules inside their own `worker-*` container's long-running `watch_transactions` loop.
 
 ## Deployment commands
 

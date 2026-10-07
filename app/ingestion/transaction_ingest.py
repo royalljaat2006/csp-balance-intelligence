@@ -123,8 +123,13 @@ def ingest_workbook(file_path: Path, header: list[str]) -> IngestResult:
         existing = set(existing_qs)
         new_codes = csp_codes - existing
         if new_codes:
+            # status="historical_only" keeps a transaction-only stub (no
+            # Calling Sheet presence yet) out of "CSPs tracked" (see
+            # csp/services.get_overview). ingest_calling_sheet clears this
+            # the moment a live poll actually sees the CSP.
             Csp.objects.bulk_create(
-                [Csp(csp_code=code) for code in sorted(new_codes)], ignore_conflicts=True
+                [Csp(csp_code=code, status="historical_only") for code in sorted(new_codes)],
+                ignore_conflicts=True,
             )
             result.new_csp_codes = new_codes
 

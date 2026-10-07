@@ -86,7 +86,12 @@ class Command(BaseCommand):
         # Every csp_code the mart references must exist in Django's Csp table
         # (it always will if ingest_transactions/ingest_calling_sheet ran
         # first) — bulk_create(ignore_conflicts=True) is a no-op otherwise.
-        Csp.objects.bulk_create([Csp(csp_code=r["csp_code"]) for r in rows], ignore_conflicts=True)
+        # status="historical_only" keeps a stub created only to satisfy this
+        # FK out of "CSPs tracked" (see csp/services.get_overview).
+        Csp.objects.bulk_create(
+            [Csp(csp_code=r["csp_code"], status="historical_only") for r in rows],
+            ignore_conflicts=True,
+        )
 
         objs = []
         for r in rows:

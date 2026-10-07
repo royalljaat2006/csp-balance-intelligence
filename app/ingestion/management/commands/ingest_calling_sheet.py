@@ -29,7 +29,15 @@ from ingestion.calling_sheet_ingest import CallingSheetValidationError, parse_sh
 
 logger = structlog.get_logger("ingestion")
 
-_CSP_UPDATE_FIELDS = ["name", "email", "mobile", "account_count", "raw_attrs", "last_seen_date"]
+_CSP_UPDATE_FIELDS = [
+    "name",
+    "email",
+    "mobile",
+    "account_count",
+    "raw_attrs",
+    "last_seen_date",
+    "status",
+]
 _SHEETS_TIMEOUT_SECONDS = 30
 # Read-only fetch, safe to retry: bounded so a permanently-broken sheet
 # (bad credentials, deleted sheet) still fails within a few seconds rather
@@ -92,6 +100,12 @@ class Command(BaseCommand):
             csp_objs.append(
                 Csp(
                     csp_code=row.csp_code,
+                    # Appearing in a live poll means this CSP is genuinely
+                    # active again — clears any "historical_only" stub flag
+                    # (see ingestion/transaction_ingest.py,
+                    # sync_monthly_summary.py) so it's correctly counted in
+                    # "CSPs tracked" (csp/services.get_overview) from here on.
+                    status="",
                     name=row.name or (prev.name if prev else ""),
                     email=row.email or (prev.email if prev else ""),
                     mobile=row.mobile or (prev.mobile if prev else ""),
