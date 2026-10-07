@@ -1375,27 +1375,28 @@ def trends(request):
     ]
     latest_account_growth = account_growth[-1] if account_growth else None
 
-    # Today-vs-yesterday transaction comparison — independent of the date
-    # range selected above (that range can be historical). Reuses
-    # services.get_network_daily_trend() for the raw sums (the one
-    # canonical network-wide activity query) and comparison.ComparisonResult
-    # for the trend/movement classification (the one canonical comparison
-    # shape) — no new business logic, just composing the two.
-    today = dt.date.today()
-    yesterday = today - dt.timedelta(days=1)
+    # Today-vs-yesterday transaction comparison — anchored on the latest
+    # real date the transaction mart actually has (`bounds`, same anchor
+    # views.transactions() already uses for its own headline cards), not
+    # wall-clock today. The transaction workbook is downloaded/updated once
+    # a day and is a full day behind by the time it's ingested, so
+    # wall-clock "today" almost never has any real transaction row yet —
+    # this isn't a rolling live feed the way the Calling Sheet is.
+    txn_today = bounds[1] if bounds else dt.date.today()
+    txn_yesterday = txn_today - dt.timedelta(days=1)
     today_yesterday = {
         a["activity_date"]: a
-        for a in services.get_network_daily_trend(date_from=yesterday, date_to=today)
+        for a in services.get_network_daily_trend(date_from=txn_yesterday, date_to=txn_today)
     }
-    today_activity = today_yesterday.get(today)
-    yesterday_activity = today_yesterday.get(yesterday)
+    today_activity = today_yesterday.get(txn_today)
+    yesterday_activity = today_yesterday.get(txn_yesterday)
 
     def _network_metric_comparison(key):
         current = today_activity[key] if today_activity else None
         previous = yesterday_activity[key] if yesterday_activity else None
         return comparison.ComparisonResult(
-            today,
-            yesterday,
+            txn_today,
+            txn_yesterday,
             decimal.Decimal(str(current)) if current is not None else None,
             decimal.Decimal(str(previous)) if previous is not None else None,
         )
@@ -1403,9 +1404,11 @@ def trends(request):
     txn_count_comparison = _network_metric_comparison("txn_count")
     txn_amount_comparison = _network_metric_comparison("txn_amount")
 
-    # CSP heatmap — same canonical today-vs-yesterday overall comparison
-    # home()/csp_directory() already use; no new computation, just reused
-    # and flattened via the existing _comparison_row() helper.
+    # CSP heatmap — balance-based (comparison.bulk_compare_csps reads
+    # DailyBalance, which the Calling Sheet keeps genuinely live via a
+    # ~60s poll), so this one correctly uses real wall-clock today, same
+    # canonical comparison home()/csp_directory() already use.
+    today = dt.date.today()
     heatmap_comparison_date = comparison.resolve_comparison_date(today)
     heatmap_comparisons = comparison.bulk_compare_csps(
         today, heatmap_comparison_date, mode="overall"

@@ -333,6 +333,45 @@ def test_trends_page_transaction_comparison_no_data_without_mart(logged_in_clien
 
 
 @pytest.mark.django_db
+def test_trends_transaction_comparison_anchors_on_mart_not_wall_clock_today(logged_in_client, db):
+    """The transaction workbook is downloaded/updated once a day and is
+    already a full day behind by the time it's ingested -- wall-clock
+    "today" almost never has a real transaction row. The comparison must
+    anchor on the mart's own latest real date (same as views.transactions),
+    not dt.date.today(), or this widget reads NO_DATA every single day."""
+    from django.db import connection
+
+    _create_daily_activity_mart()
+    real_today = dt.date.today()
+    # Simulate the real 1-day ingestion lag: the mart's most recent rows are
+    # for (real_today - 1) and (real_today - 2), never for real_today itself.
+    mart_latest = real_today - dt.timedelta(days=1)
+    mart_prior = real_today - dt.timedelta(days=2)
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            """
+            insert into daily_activity
+                (csp_code, activity_date, txn_count, txn_amount, withdrawal_count,
+                 withdrawal_amount, deposit_count, deposit_amount, cash_in_pool,
+                 cash_out_pool, net_flow)
+            values (%s, %s, %s, %s, 0, 0, 0, 0, 0, 0, 0)
+            """,
+            [
+                ("1A850001", mart_prior.isoformat(), 10, 1000),
+                ("1A850001", mart_latest.isoformat(), 20, 2000),
+            ],
+        )
+
+    response = logged_in_client.get("/dashboard/trends/")
+    comparison_result = response.context["txn_count_comparison"]
+    assert comparison_result.current_value == decimal.Decimal("20")
+    assert comparison_result.previous_value == decimal.Decimal("10")
+    assert comparison_result.current_date == mart_latest
+    assert comparison_result.comparison_date == mart_prior
+    assert comparison_result.current_date != real_today
+
+
+@pytest.mark.django_db
 def test_trends_page_shows_network_account_growth(logged_in_client, csp_with_summary):
     from csp.models import DailyBalance
 
