@@ -66,10 +66,10 @@ select
     extract(day from (w.month_start + interval '1 month - 1 day'))::int as days_in_month,
     w.days_with_data,
     round(w.mtd_mab, 2) as mtd_mab,
-    {{ rule19_slab('w.mtd_mab') }} as slab,
-    {{ rule19_rate('w.mtd_mab') }} as incentive_rate_pa,
+    {{ rule19_slab('w.mtd_mab', 'c.account_count') }} as slab,
+    {{ rule19_rate('w.mtd_mab', 'c.account_count') }} as incentive_rate_pa,
     round({{ rule19_gap_to_min('w.mtd_mab') }}, 2) as gap_to_min,
-    round({{ rule19_gap_to_next_slab('w.mtd_mab') }}, 2) as gap_to_next_slab,
+    round({{ rule19_gap_to_next_slab('w.mtd_mab', 'c.account_count') }}, 2) as gap_to_next_slab,
     round(w.prev_month_mab, 2) as prev_month_mab,
     round(w.mtd_mab - w.prev_month_mab, 2) as mom_change_abs,
     case

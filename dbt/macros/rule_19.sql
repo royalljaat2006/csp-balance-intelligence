@@ -6,8 +6,17 @@
   so review both files together.
 #}
 
-{% macro rule19_slab(mab_column) %}
+{#
+  account_count_column gates all three on PRD §5.1's "Eligibility gate:
+  minimum 200 BSBD accounts" -- a CSP under that threshold (or with a
+  null/unreported count, same convention as csp/rules.py's is_eligible)
+  is NIL regardless of balance, not merely flagged separately. Mirrors
+  csp/rules.py's slab_for/gap_to_next_slab exactly -- keep both in sync.
+#}
+
+{% macro rule19_slab(mab_column, account_count_column) %}
     case
+        when coalesce({{ account_count_column }}, 0) < 200 then 'NIL'
         when {{ mab_column }} <= 2500 then 'NIL'
         when {{ mab_column }} <= 4000 then 'S1'
         when {{ mab_column }} <= 6000 then 'S2'
@@ -16,8 +25,9 @@
     end
 {% endmacro %}
 
-{% macro rule19_rate(mab_column) %}
+{% macro rule19_rate(mab_column, account_count_column) %}
     case
+        when coalesce({{ account_count_column }}, 0) < 200 then 0
         when {{ mab_column }} <= 2500 then 0
         when {{ mab_column }} <= 4000 then 1.10
         when {{ mab_column }} <= 6000 then 1.20
@@ -30,8 +40,14 @@
     greatest(2501 - {{ mab_column }}, 0)
 {% endmacro %}
 
-{% macro rule19_gap_to_next_slab(mab_column) %}
+{% macro rule19_gap_to_next_slab(mab_column, account_count_column) %}
     case
+        -- Ineligible -> same gap a genuine NIL CSP sees (balance needed to
+        -- clear the floor, floored at 0), not a gap computed from whatever
+        -- band their real MAB falls in -- that would contradict the NIL
+        -- slab they're actually shown.
+        when coalesce({{ account_count_column }}, 0) < 200
+            then greatest(2501 - {{ mab_column }}, 0)
         when {{ mab_column }} <= 2500 then 2501 - {{ mab_column }}
         when {{ mab_column }} <= 4000 then 4001 - {{ mab_column }}
         when {{ mab_column }} <= 6000 then 6001 - {{ mab_column }}

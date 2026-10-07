@@ -63,11 +63,21 @@ def test_project_incentive_annual_nil_slab_is_zero():
 
 
 def test_project_incentive_annual_computed_and_uncapped():
-    # slab S1 (2501-4000): rate 1.10%, cap 25000
-    result = project_incentive_annual(projected_mab=D("3000"), account_count=100)
-    expected = D("3000") * 100 * D("1.10") / D("100")  # = 330000 * 1.10% = 3300
+    # slab S1 (2501-4000): rate 1.10%, cap 25000. account_count=300 (>=200
+    # eligibility gate) so this tests the rate/total-balance math, not
+    # eligibility -- see test_project_incentive_annual_zero_when_ineligible
+    # for that.
+    result = project_incentive_annual(projected_mab=D("3000"), account_count=300)
+    expected = D("3000") * 300 * D("1.10") / D("100")  # = 900000 * 1.10% = 9900
     assert result == expected
     assert result < D("25000")  # under cap in this case
+
+
+def test_project_incentive_annual_zero_when_ineligible():
+    """PRD §5.1 eligibility gate: under 200 accounts is NIL/0% regardless of
+    how high the balance is -- not merely a separate is_eligible flag."""
+    result = project_incentive_annual(projected_mab=D("50000"), account_count=100)
+    assert result == D("0")
 
 
 def test_project_incentive_annual_capped():

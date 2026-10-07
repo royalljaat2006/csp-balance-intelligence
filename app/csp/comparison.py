@@ -916,12 +916,12 @@ def _daily_snapshot_fields(
     classification happens for a daily snapshot (same csp.rules functions
     MonthlySummary uses) — shared by the single-CSP and bulk builders below
     so there is exactly one implementation of this math, not two."""
-    slab = rules.slab_for(mtd_avg)
+    slab = rules.slab_for(mtd_avg, account_count=account_count)
     return {
         "slab": slab,
         "incentive_rate_pa": rules.incentive_rate_for(slab),
         "gap_to_min": rules.gap_to_min(mtd_avg),
-        "gap_to_next_slab": rules.gap_to_next_slab(mtd_avg),
+        "gap_to_next_slab": rules.gap_to_next_slab(mtd_avg, account_count=account_count),
         "is_eligible": rules.is_eligible(account_count),
         "data_status": classify_freshness(latest_balance_date, business_date),
     }

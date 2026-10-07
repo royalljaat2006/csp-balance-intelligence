@@ -66,7 +66,7 @@ def project_incentive_annual(
     until account_count is known for that CSP — never guessed."""
     if account_count is None:
         return None
-    slab = slab_for(projected_mab)
+    slab = slab_for(projected_mab, account_count=account_count)
     rate = incentive_rate_for(slab)
     if rate == 0:
         return decimal.Decimal("0")
@@ -96,7 +96,11 @@ def build_projection(
     )
     return {
         "projected_mab": projected_mab,
-        "projected_slab": slab_for(projected_mab) if projected_mab is not None else "",
+        "projected_slab": (
+            slab_for(projected_mab, account_count=account_count)
+            if projected_mab is not None
+            else ""
+        ),
         "projected_incentive_annual": (
             project_incentive_annual(projected_mab=projected_mab, account_count=account_count)
             if projected_mab is not None

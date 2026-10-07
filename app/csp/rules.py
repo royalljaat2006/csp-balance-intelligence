@@ -33,7 +33,16 @@ _BANDS: list[tuple[Decimal | None, str, Decimal, Decimal | None]] = [
 ELIGIBILITY_MIN_ACCOUNTS = 200
 
 
-def slab_for(mab: decimal.Decimal) -> str:
+def slab_for(mab: decimal.Decimal, *, account_count: int | None) -> str:
+    """PRD §5.1: "Eligibility gate: minimum 200 BSBD accounts" — a CSP under
+    that threshold is NIL regardless of balance, not merely flagged
+    separately via is_eligible. account_count=None is treated the same as
+    "known and under 200" (not eligible), matching is_eligible's own
+    existing convention for an unknown count — never optimistically
+    assumed eligible just because the Calling Sheet hasn't reported a
+    count yet."""
+    if not is_eligible(account_count):
+        return "NIL"
     for upper, slab, _rate, _cap in _BANDS:
         if upper is None or mab <= upper:
             return slab
@@ -58,8 +67,15 @@ def gap_to_min(mab: decimal.Decimal) -> decimal.Decimal:
     return max(MIN_BALANCE - mab, Decimal("0"))
 
 
-def gap_to_next_slab(mab: decimal.Decimal) -> decimal.Decimal | None:
-    """None if already in the top slab (nothing higher to reach)."""
+def gap_to_next_slab(mab: decimal.Decimal, *, account_count: int | None) -> decimal.Decimal | None:
+    """None if already in the top slab (nothing higher to reach). An
+    ineligible CSP (see slab_for) is shown the same gap a genuine NIL CSP
+    would see — balance needed to clear the ₹2,501 floor, floored at 0 —
+    rather than a gap computed from whatever balance band their real MAB
+    happens to fall in, which would contradict the NIL slab they're
+    actually shown."""
+    if not is_eligible(account_count):
+        return max(MIN_BALANCE - mab, Decimal("0"))
     for upper, _slab, _rate, _cap in _BANDS:
         if upper is not None and mab <= upper:
             return upper + 1 - mab
