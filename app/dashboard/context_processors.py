@@ -54,6 +54,13 @@ def dashboard_shell(request):
         "dashboard_mode": mode,
         "is_eko_mode": mode == "eko",
         "env_badge": _env_badge(),
+        # Prefix-aware links for embeds that point at routes outside
+        # /dashboard/ (Django admin, API docs) -- under a subpath deployment
+        # (URL_PREFIX / FORCE_SCRIPT_NAME, see config/settings/base.py) a
+        # hardcoded "/admin/" resolves to a DIFFERENT app's Nginx location
+        # block on the shared R730, not ours. Blank by default (root-mounted
+        # deployments), matching every other URL_PREFIX use in this project.
+        "url_prefix": getattr(settings, "URL_PREFIX", ""),
     }
     # The shell (sidebar/topbar) only renders for a logged-in user (see
     # base.html) — skip the freshness query entirely for the anonymous

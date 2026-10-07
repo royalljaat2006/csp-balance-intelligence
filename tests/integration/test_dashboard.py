@@ -10,6 +10,7 @@ import decimal
 import pytest
 from csp.models import Csp, MonthlySummary
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 
 
 @pytest.fixture
@@ -479,6 +480,26 @@ def test_admin_embed_renders_for_staff(logged_in_client):
     response = logged_in_client.get("/dashboard/admin-console/")
     assert response.status_code == 200
     assert 'src="/admin/"' in response.content.decode()
+
+
+@pytest.mark.django_db
+@override_settings(URL_PREFIX="/csp-balance-intelligence")
+def test_admin_embed_iframe_honors_url_prefix(logged_in_client):
+    """Under a subpath deployment, a bare "/admin/" iframe src is routed by
+    the outer Nginx to a DIFFERENT app's location block on the shared
+    server, not ours -- it must carry URL_PREFIX (see context_processors.
+    dashboard_shell) so the browser actually reaches our own app."""
+    response = logged_in_client.get("/dashboard/admin-console/")
+    assert response.status_code == 200
+    assert 'src="/csp-balance-intelligence/admin/"' in response.content.decode()
+
+
+@pytest.mark.django_db
+@override_settings(URL_PREFIX="/csp-balance-intelligence")
+def test_api_docs_iframe_honors_url_prefix(logged_in_client, db):
+    response = logged_in_client.get("/dashboard/api-docs/")
+    assert response.status_code == 200
+    assert 'src="/csp-balance-intelligence/api/v1/docs"' in response.content.decode()
 
 
 @pytest.mark.django_db
