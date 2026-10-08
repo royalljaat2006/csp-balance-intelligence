@@ -19,6 +19,7 @@ from typing import Literal
 
 from csp import comparison as cmp
 from csp import services
+from django.utils import timezone
 from ninja import Router
 
 from api.auth import RequireScope
@@ -104,7 +105,7 @@ def _resolve_dates(
     """The one place every comparison-related endpoint below turns its query
     params into an actual (current, comparison) date pair — via
     csp.comparison.resolve_comparison_date(), never re-derived per-endpoint."""
-    current = current_date or dt.date.today()
+    current = current_date or timezone.localdate()
     resolved_comparison = cmp.resolve_comparison_date(
         current,
         comparison_type=comparison_type,
@@ -157,7 +158,7 @@ def csp_trend(
     request: ApiRequest, csp_code: str, as_of_date: dt.date | None = None, lookback_days: int = 45
 ):
     services.get_csp_or_404(csp_code)
-    as_of = as_of_date or dt.date.today()
+    as_of = as_of_date or timezone.localdate()
     lookback_days = max(1, min(lookback_days, MAX_LOOKBACK_DAYS))
     result = cmp.get_trend_intelligence(csp_code, as_of, lookback_days=lookback_days)
     return DataEnvelope(
@@ -195,7 +196,7 @@ def csp_trend(
 )
 def csp_mtd_readiness(request: ApiRequest, csp_code: str, as_of_date: dt.date | None = None):
     services.get_csp_or_404(csp_code)
-    as_of = as_of_date or dt.date.today()
+    as_of = as_of_date or timezone.localdate()
     result = cmp.get_mtd_readiness(csp_code, as_of)
     current_mtd = result["current_mtd"]
     previous_mtd = result["previous_mtd"]

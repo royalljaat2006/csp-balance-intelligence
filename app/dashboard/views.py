@@ -39,6 +39,7 @@ from django.db import connection
 from django.db.models import Max, Min
 from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from . import pipeline_state
 from .pipeline_sse import stream_pipeline_events
@@ -465,7 +466,7 @@ def risk(request):
     mode = request.GET.get("mode", "overall")
     if mode not in ("overall", "onus"):
         mode = "overall"
-    today = dt.date.today()
+    today = timezone.localdate()
     yesterday = comparison.resolve_comparison_date(today)
     comparisons = comparison.bulk_compare_csps(today, yesterday, mode=mode)
     comparison_by_code = {c.csp_code: c for c in comparisons}
@@ -771,7 +772,7 @@ def csp_comparisons(request):
     if mode not in ("overall", "onus"):
         mode = "overall"
 
-    current_date = _parse_date(request.GET.get("current_date")) or dt.date.today()
+    current_date = _parse_date(request.GET.get("current_date")) or timezone.localdate()
 
     comparison_type = request.GET.get("comparison_type", comparison.COMPARISON_TYPE_YESTERDAY)
     if comparison_type not in (
@@ -864,7 +865,7 @@ def balance_intelligence(request):
         window_days = 30
 
     month = services.current_month()
-    today = dt.date.today()
+    today = timezone.localdate()
     yesterday = comparison.resolve_comparison_date(today)
     daily_comparisons = comparison.bulk_compare_csps(today, yesterday, mode=mode)
 
@@ -983,7 +984,7 @@ def home(request):
     # Today-vs-yesterday, network-wide — same comparison engine as the Daily
     # Comparison tab/API, one bulk_compare_csps() call (N+1-free across
     # every CSP), scoped down to what an Overview KPI strip needs.
-    today = dt.date.today()
+    today = timezone.localdate()
     yesterday = comparison.resolve_comparison_date(today)
     daily_comparisons = comparison.bulk_compare_csps(today, yesterday, mode="overall")
     daily_trend_counts = {"GROWTH": 0, "DECLINE": 0, "NO_CHANGE": 0, "NO_DATA": 0}
@@ -1067,7 +1068,7 @@ def csp_directory(request):
         mode = "overall"
 
     month = services.current_month()
-    today = dt.date.today()
+    today = timezone.localdate()
     yesterday = comparison.resolve_comparison_date(today)
     daily_comparisons = comparison.bulk_compare_csps(today, yesterday, mode=mode)
     comparison_by_code = {c.csp_code: c for c in daily_comparisons}
@@ -1138,7 +1139,7 @@ def csp_detail(request, csp_code: str):
     # dashboard tab is where a different date pair can be chosen). `mode`
     # is a query param so the same ONUS/Overall toggle used everywhere
     # else works here too — always visible, never silently assumed.
-    today = dt.date.today()
+    today = timezone.localdate()
     yesterday = comparison.resolve_comparison_date(today)
     daily_comparison = comparison.compare_csp_metrics(csp_code, today, yesterday, mode=mode)
     trend_intel = comparison.get_trend_intelligence(csp_code, today)
@@ -1214,7 +1215,7 @@ def transactions(request):
     complete day's real numbers; the template labels the actual date
     rather than hardcoding the word "today", so this is never a mislabel."""
     bounds = services.get_daily_activity_date_bounds()
-    latest_date = bounds[1] if bounds else dt.date.today()
+    latest_date = bounds[1] if bounds else timezone.localdate()
     previous_date = latest_date - dt.timedelta(days=1)
 
     activity_by_date = {
@@ -1274,10 +1275,10 @@ def transactions(request):
         {
             "today": latest_date,
             "yesterday": previous_date,
-            "is_wall_clock_today": latest_date == dt.date.today(),
+            "is_wall_clock_today": latest_date == timezone.localdate(),
             "type_distribution_hint": (
                 "today + yesterday, allow-listed types only"
-                if latest_date == dt.date.today()
+                if latest_date == timezone.localdate()
                 else f"{previous_date:%d %b} + {latest_date:%d %b}, allow-listed types only"
             ),
             "txn_count_today": _metric(today_activity, "txn_count"),
@@ -1382,7 +1383,7 @@ def trends(request):
     # a day and is a full day behind by the time it's ingested, so
     # wall-clock "today" almost never has any real transaction row yet —
     # this isn't a rolling live feed the way the Calling Sheet is.
-    txn_today = bounds[1] if bounds else dt.date.today()
+    txn_today = bounds[1] if bounds else timezone.localdate()
     txn_yesterday = txn_today - dt.timedelta(days=1)
     today_yesterday = {
         a["activity_date"]: a
@@ -1408,7 +1409,7 @@ def trends(request):
     # DailyBalance, which the Calling Sheet keeps genuinely live via a
     # ~60s poll), so this one correctly uses real wall-clock today, same
     # canonical comparison home()/csp_directory() already use.
-    today = dt.date.today()
+    today = timezone.localdate()
     heatmap_comparison_date = comparison.resolve_comparison_date(today)
     heatmap_comparisons = comparison.bulk_compare_csps(
         today, heatmap_comparison_date, mode="overall"

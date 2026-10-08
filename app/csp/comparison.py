@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from django.db import connection
 from django.db.models import Max, Q
 from django.db.utils import OperationalError, ProgrammingError
+from django.utils import timezone
 
 from . import rules
 from .models import Csp, DailyBalance, DailyCspSnapshot, MonthlySummary
@@ -893,7 +894,7 @@ def get_csp_slab_history(csp_code: str, *, days: int = 60) -> list[DailyCspSnaps
     the CSP profile's slab-history chart. Empty (not fabricated) for any
     date with no snapshot on file, same "NO_DATA over a fabricated
     number" rule as everywhere else in this module."""
-    since = dt.date.today() - dt.timedelta(days=days)
+    since = timezone.localdate() - dt.timedelta(days=days)
     return list(
         DailyCspSnapshot.objects.filter(csp_id=csp_code, business_date__gte=since).order_by(
             "business_date"

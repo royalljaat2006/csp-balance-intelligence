@@ -73,7 +73,7 @@ def get_network_snapshot(run: AgentRun | None = None) -> dict:
         month = current_month()
         overview = get_overview(month)
         freshness = get_data_freshness()
-        today = dt.date.today()
+        today = timezone.localdate()
         comparison_date = comparison.resolve_comparison_date(today)
         comparisons = comparison.bulk_compare_csps(today, comparison_date, mode="overall")
         trend_counts: dict[str, int] = {}
@@ -106,7 +106,7 @@ def get_top_movers(
     the same function Balance Intelligence uses. `direction` is "growth" or
     "decline"."""
     try:
-        today = dt.date.today()
+        today = timezone.localdate()
         comparison_date = comparison.resolve_comparison_date(today)
         comparisons = comparison.bulk_compare_csps(today, comparison_date, mode="overall")
         movers = comparison.top_movers(comparisons, direction=direction, limit=limit)
@@ -128,7 +128,7 @@ def get_at_risk_csps(*, limit: int = 10, run: AgentRun | None = None) -> list[di
     query) — the Verification Agent needs a real number to re-check
     against, not just the reason text."""
     try:
-        today = dt.date.today()
+        today = timezone.localdate()
         comparison_date = comparison.resolve_comparison_date(today)
         comparisons = comparison.bulk_compare_csps(today, comparison_date, mode="overall")
         by_code = {c.csp_code: c for c in comparisons}
@@ -161,7 +161,7 @@ def get_csp_context(csp_code: str, run: AgentRun | None = None) -> dict | None:
         if not Csp.objects.filter(pk=csp_code).exists():
             _log(run, "get_csp_context", False, f"{csp_code} not found")
             return None
-        today = dt.date.today()
+        today = timezone.localdate()
         comparison_date = comparison.resolve_comparison_date(today)
         c = comparison.compare_csp_metrics(csp_code, today, comparison_date, mode="overall")
         _log(run, "get_csp_context", True, csp_code)

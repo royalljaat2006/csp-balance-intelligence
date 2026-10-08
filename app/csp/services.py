@@ -17,6 +17,7 @@ from django.db import connection, transaction
 from django.db.models import Avg, Count, QuerySet, Sum
 from django.db.utils import OperationalError, ProgrammingError
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ingestion.xlsx_validation import ONUS_TXN_TYPES
 
 from .models import Csp, DailyBalance, IngestLog, MonthlySummary, Transaction
@@ -29,7 +30,11 @@ _INGEST_SOURCES = ["calling_sheet", "transactions", "telegram"]
 
 
 def current_month() -> str:
-    return dt.date.today().strftime("%Y-%m")
+    # localdate(), not dt.date.today() -- the Docker container's OS clock is
+    # UTC, while the live Calling Sheet (PRD §13) and everything it feeds
+    # operate in Asia/Kolkata. Raw UTC "today" lags IST by up to 5.5h, which
+    # on the 1st of the month briefly points this at the wrong month.
+    return timezone.localdate().strftime("%Y-%m")
 
 
 def get_data_freshness() -> dict:
@@ -122,7 +127,7 @@ def get_overview(month: str | None = None) -> dict:
 
     return {
         "month": month,
-        "as_of": dt.date.today(),
+        "as_of": timezone.localdate(),
         "csp_total": total_csps,
         "csp_with_data": with_data,
         "slab_distribution": slab_counts,

@@ -21,6 +21,7 @@ import datetime as dt
 
 import structlog
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from csp.comparison import build_daily_snapshots_bulk
 
@@ -45,7 +46,7 @@ class Command(BaseCommand):
             except ValueError as exc:
                 raise CommandError(f"--date must be YYYY-MM-DD, got {raw_date!r}") from exc
         else:
-            business_date = dt.date.today()
+            business_date = timezone.localdate()
 
         logger.info("started", stage="DAILY_SNAPSHOT", business_date=str(business_date))
 
