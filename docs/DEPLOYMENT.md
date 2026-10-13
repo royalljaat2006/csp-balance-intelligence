@@ -361,7 +361,9 @@ tables only, `bankflow` 0001-0005; no existing table changes), so stopping the n
    team and is mounted **read-only**. Either let the container user read
    `/home/kapil/login_automation/yonosbi-automation/downloads` (the owner grants it; do not change permissions
    yourself), or keep a read-only copy in `./data/bank_statements` with a cron on the host:
-   `rsync -rt --ignore-existing --include='*/' --include='statement_1556_*' --exclude='*' <src>/ ./data/bank_statements/`
+   `rsync -rt --prune-empty-dirs --include='*/' --include='statement_1556_*' --exclude='*' <src>/ ./data/bank_statements/`
+   (no `--ignore-existing`: today's statement is a day-to-date cut that grows during the day; the importer
+   recognises identical files by SHA-256 and adds only unseen rows from a longer cut.)
 3. Optional tuning (defaults shown in `.env.example`): `PMJDY_INTERVAL_SECONDS`, `ESTIMATE_INTERVAL_SECONDS`,
    `BASELINE_SNAPSHOT_AT`, `ALERT_*`.
 

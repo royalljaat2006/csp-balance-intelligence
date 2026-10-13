@@ -225,7 +225,7 @@ Safe to re-run: identical files are recognised by SHA-256 and overlapping export
 Do not schedule it, and do not enable the variant rule, without a separate decision.
 
 **No project image on the server yet?** Copy the files out with a read-only pull into this project's own
-folder and import elsewhere: `rsync -rt --ignore-existing "$D"/ /opt/projects/csp-balance-tracker/data/bank_statements/`
+folder and import elsewhere: `rsync -rt "$D"/ /opt/projects/csp-balance-tracker/data/bank_statements/`
 (the source is only read). Remember the files contain customer names/account numbers — keep access tight.
 
 ## Findings from the real history (local validation, 2026-10-12)
