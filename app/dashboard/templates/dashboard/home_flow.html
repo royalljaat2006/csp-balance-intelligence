@@ -1,0 +1,191 @@
+{% extends "dashboard/base.html" %}
+{% load static fmt %}
+{% block title %}Home — CSP Balance Tracker{% endblock %}
+{% block content %}
+{% with s=summary acc=summary.accounts fl=summary.flows ob=summary.observed_avg_balance es=summary.estimates %}
+<div class="wrap sm">
+
+  <header class="sm-head">
+    <div>
+      <h1>Home</h1>
+      <p class="sub">How the CSP network is doing &middot; {{ date_from|date:"d M" }} to {{ date_to|date:"d M Y" }}</p>
+    </div>
+    <div class="sm-range" role="group" aria-label="Time period">
+      {% for r in ranges %}<a class="chip" aria-pressed="{% if r == days %}true{% else %}false{% endif %}" href="?range={{ r }}">Last {{ r }} days</a>{% endfor %}
+    </div>
+  </header>
+
+  {% for n in notes %}<div class="sm-note {{ n.level }}" role="status">{{ n.text }}</div>{% endfor %}
+
+  <!-- ===== the four numbers that matter ===== -->
+  <section class="sm-cards" aria-label="Key numbers">
+    <article class="sm-card">
+      <div class="sm-label">Customer accounts</div>
+      <div class="sm-big">{{ acc.current_total|intc }}</div>
+      {% if s.new_accounts.available and s.new_accounts.mtd is not None %}
+      <div class="sm-sub up">{{ s.new_accounts.mtd|intc }} new customer accounts so far in {{ s.new_accounts.month_label }}</div>
+      <div class="sm-fine">{% if s.new_accounts.today %}{{ s.new_accounts.today|intc }} on the latest day{% endif %}{% if s.new_accounts.target %}{% if s.new_accounts.today %} &middot; {% endif %}month target {{ s.new_accounts.target|intc }}{% endif %}</div>
+      {% else %}
+      <div class="sm-sub {{ acc.growth|tone }}">
+        {% if acc.growth is not None %}{{ acc.growth|signed }} new in the last {{ days }} days{% if acc.growth_pct is not None %} ({{ acc.growth_pct|pct1 }}){% endif %}{% else %}No earlier count yet to show new accounts{% endif %}
+      </div>
+      {% endif %}
+    </article>
+
+    <article class="sm-card">
+      <div class="sm-label">Money received into the pool</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_credits|inr }}{% else %}&mdash;{% endif %}</div>
+      <div class="sm-sub flat">{% if fl.days_with_data %}Last {{ days }} days &middot; {{ fl.days_with_data }} of {{ fl.range_days }} days covered{% else %}No bank statements for this period{% endif %}</div>
+    </article>
+
+    <article class="sm-card">
+      <div class="sm-label">Money sent out of the pool</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_debits|inr }}{% else %}&mdash;{% endif %}</div>
+      <div class="sm-sub flat">{% if fl.days_with_data %}Last {{ days }} days &middot; {{ fl.days_with_data }} of {{ fl.range_days }} days covered{% else %}No bank statements for this period{% endif %}</div>
+    </article>
+
+    <article class="sm-card">
+      {% if es.network_estimate %}
+      <div class="sm-label">Our estimated average balance</div>
+      <div class="sm-big">{{ es.network_estimate.value|inr }}</div>
+      <div class="sm-sub flat">per account &middot; {{ estimator.words }}</div>
+      <div class="sm-fine">SBI-reported: {{ ob.network_per_account_avg|inr }} per account</div>
+      {% else %}
+      <div class="sm-label">SBI-reported average balance</div>
+      <div class="sm-big">{{ ob.network_per_account_avg|inr }}</div>
+      <div class="sm-sub flat">per account</div>
+      <div class="sm-fine"><span class="sm-pill wait">{{ ESTIMATE_UNAVAILABLE }}</span></div>
+      {% endif %}
+    </article>
+  </section>
+
+  {% if fl.days_with_data %}
+  <p class="sm-diff {{ fl.net_pool_flow|tone }}">
+    <strong>Money in minus money out: {{ fl.net_pool_flow|signed_inr }}</strong>
+    &mdash; {% if fl.net_pool_flow >= 0 %}more came in than went out{% else %}more went out than came in{% endif %}.
+  </p>
+  {% endif %}
+
+  <!-- ===== plain summary + needs attention ===== -->
+  <div class="sm-two">
+    <section class="sm-panel" aria-labelledby="sum-h">
+      <h2 id="sum-h">Today in short</h2>
+      <ul class="sm-lines">{% for line in summary_lines %}<li>{{ line }}</li>{% endfor %}</ul>
+    </section>
+
+    <section class="sm-panel" aria-labelledby="att-h">
+      <div class="sm-panel-head"><h2 id="att-h">Needs attention{% if attention_total %} <span class="sm-count">{{ attention_total }}</span>{% endif %}</h2>
+        <a href="{% url 'dashboard:needs_attention' %}?range={{ days }}">See all</a></div>
+      {% if attention_cards %}
+      <ul class="sm-attn">
+        {% for c in attention_cards %}
+        <li class="{{ c.severity }}">
+          <div class="sm-attn-top"><span class="sm-pill sev-{{ c.severity }}">{{ c.severity_label }}</span>
+            <strong>{{ c.title }}</strong></div>
+          {% if c.csp_code %}<a class="sm-who" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">{{ c.name|default:c.csp_code }}</a>{% endif %}
+          <p>{{ c.meaning }}</p>
+          <p class="sm-do"><strong>What to do:</strong> {{ c.action }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="sm-empty">Nothing needs attention right now.</p>{% endif %}
+    </section>
+  </div>
+
+  <!-- ===== trend ===== -->
+  <section class="sm-panel" id="trend" aria-labelledby="trend-h">
+    <div class="sm-panel-head"><h2 id="trend-h">Trend</h2>
+      <div class="fh-tabs" role="tablist">
+        <button class="chip" role="tab" data-view="money" aria-pressed="true">Money in and out</button>
+        <button class="chip" role="tab" data-view="accounts" aria-pressed="false">Customer accounts</button>
+      </div></div>
+    <div id="fh-chart" class="fh-chart" role="img" aria-label="Trend chart"></div>
+    <div id="fh-chart-legend" class="fh-legend"></div>
+  </section>
+
+  <!-- ===== CSP table ===== -->
+  <section class="sm-panel" id="my-csps" aria-labelledby="csp-h">
+    <div class="sm-panel-head"><h2 id="csp-h">Your CSPs <span class="sm-count">{{ total }}</span></h2></div>
+    <form class="sm-filters" method="get" action="#my-csps">
+      <input type="hidden" name="range" value="{{ days }}">
+      <input type="search" name="q" value="{{ q }}" placeholder="Search by name or code" aria-label="Search CSPs">
+      <select name="show" aria-label="Which CSPs"><option value="all"{% if show == "all" %} selected{% endif %}>All CSPs</option><option value="attention"{% if show == "attention" %} selected{% endif %}>Needs attention only</option></select>
+      <select name="sort" aria-label="Sort by">{% for k, label in sort_choices %}<option value="{{ k }}"{% if k == sort %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+      <button class="sm-btn" type="submit">Show</button>
+    </form>
+    <div class="tbl-scroll sm-tablewrap"><table class="sm-table">
+      <thead><tr>
+        <th>CSP</th><th class="num">Customer accounts</th><th class="num">Money in</th><th class="num">Money out</th>
+        <th class="num">Money in minus money out</th><th class="num">SBI-reported average balance</th>
+        <th class="num" title="{{ ESTIMATE_UNAVAILABLE }} for CSPs shown as 'Not available yet'">Our estimated average balance</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr>
+        <td data-label="CSP"><a href="{% url 'dashboard:csp_detail' csp_code=r.csp_code %}" class="sm-csp"><strong>{{ r.name|default:r.csp_code }}</strong><span>{{ r.csp_code }}</span></a></td>
+        <td class="num" data-label="Customer accounts">{% if r.current_count is None %}&mdash;{% else %}{{ r.current_count|intc }}{% endif %}<div class="sm-fine {% if r.pmjdy_mtd is not None %}up{% else %}{{ r.count_change|tone }}{% endif %}">{% if r.pmjdy_mtd is not None %}{{ r.pmjdy_mtd|intc }} new this month{% elif r.count_change is not None %}{{ r.count_change|signed }} new{% else %}no earlier count{% endif %}</div></td>
+        <td class="num" data-label="Money in">{% if r.credits is None %}<span class="sm-mute">no data</span>{% else %}{{ r.credits|inr }}{% endif %}</td>
+        <td class="num" data-label="Money out">{% if r.debits is None %}<span class="sm-mute">no data</span>{% else %}{{ r.debits|inr }}{% endif %}</td>
+        <td class="num {{ r.net_flow|tone }}" data-label="Money in minus money out">{{ r.net_flow|signed_inr }}</td>
+        <td class="num" data-label="SBI-reported average balance">{{ r.observed_avg|inr }}</td>
+        <td class="num" data-label="Our estimated average balance">{% if r.est.show %}{{ r.est.value|inr }}<div class="sm-fine">{{ r.est.label }}</div>{% else %}<span class="sm-mute" title="{{ ESTIMATE_UNAVAILABLE }}">Not available yet</span>{% endif %}</td>
+        <td data-label="Status"><span class="sm-pill {% if r.status_key == 'ok' %}ok{% else %}attn{% endif %}" title="{{ r.status_text }}">{% if r.status_key == 'ok' %}OK{% else %}Needs attention{% endif %}</span>{% if r.status_key != 'ok' %}<div class="sm-fine">{{ r.status_text }}</div>{% endif %}</td>
+      </tr>
+      {% empty %}<tr><td colspan="8" class="sm-empty">No CSPs match.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <div class="sm-pager"><span class="sm-mute">Page {{ page }} of {{ total_pages }}</span>
+      <span>{% if page > 1 %}<a class="chip" href="?range={{ days }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'-1' }}#my-csps">&larr; Previous</a>{% endif %}
+      {% if page < total_pages %}<a class="chip" href="?range={{ days }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'1' }}#my-csps">Next &rarr;</a>{% endif %}</span></div>
+  </section>
+
+  <!-- ===== everything technical lives here ===== -->
+  <details class="sm-advanced" id="advanced">
+    <summary>Advanced details <span class="sm-mute">data sources, how reliable the estimates are, heat map, incentive summary</span></summary>
+
+    <div class="sm-adv-block">
+      <h3>Where the numbers come from</h3>
+      <table class="sm-mini"><thead><tr><th>Information</th><th>Last updated</th><th>State</th></tr></thead><tbody>
+        {% for src in sources %}<tr><td>{{ src.name }}</td><td>{{ src.when }}</td><td><span class="fh-src {{ src.state }}"><i></i>{{ src.state }}</span></td></tr>{% endfor %}
+      </tbody></table>
+      <p class="sm-mute">{{ fl.attribution|capfirst }} for CSP figures. Transactions that cannot be matched to a CSP are left out, never guessed.
+        {{ acc.source }} is used for customer accounts.</p>
+    </div>
+
+    <div class="sm-adv-block" id="validation">
+      <h3>How reliable are our estimates?</h3>
+      <p><span class="status-badge {{ estimator.badge }}">{{ estimator.words }}</span> {{ estimator.detail }}</p>
+      <ul class="sm-mute">
+        <li>SBI-reported averages are the only confirmed numbers. An estimate is shown as a number only once it has been checked against past SBI updates.</li>
+        <li>Method in use: <strong>{{ estimator.selected_method }}</strong>. Last checked: {% if estimator.run_at %}{{ estimator.run_at|date:"d M Y H:i" }}{% else %}never{% endif %}.</li>
+      </ul>
+      {% if methods %}<table class="sm-mini"><thead><tr><th>Way of estimating tested</th><th>Result</th></tr></thead><tbody>
+        {% for m in methods %}<tr><td>{{ m.name }}</td><td><span class="status-badge {{ m.badge }}">{{ m.words }}</span></td></tr>{% endfor %}
+      </tbody></table>{% endif %}
+      {% if request.user.is_staff %}<p><a href="{% url 'dashboard:bank_flow' %}">Technical validation details</a></p>{% endif %}
+    </div>
+
+    <div class="sm-adv-block" id="heatmap">
+      <h3>Heat map of all CSPs</h3>
+      <select id="fh-heat-metric" aria-label="What to colour by">
+        <option value="growth_pct">New customer accounts</option><option value="net_flow">Money in minus money out</option>
+        <option value="fresh">How recent the account count is</option><option value="delta">Estimated change (checked estimates only)</option></select>
+      <div id="fh-heat" class="fh-heat" role="list"></div>
+      <div id="fh-heat-legend" class="sm-mute"></div>
+    </div>
+
+    <div class="sm-adv-block" id="incentive-summary">
+      <h3>Incentive summary <span class="sm-mute">{{ month }}</span></h3>
+      <div class="sm-slabs">{% for c in slab_cards %}<div class="sm-slab"><span>{{ c.code }}</span><strong>{{ c.n }}</strong></div>{% endfor %}</div>
+      <p class="sm-mute">{{ es.below_200_account_gate }} CSP{{ es.below_200_account_gate|pluralize }} below the 200-account minimum.
+        Full detail: <a href="{% url 'dashboard:balance_intelligence' %}">Balance Intelligence</a> &middot; <a href="{% url 'dashboard:overview_classic' %}">Classic overview</a></p>
+    </div>
+  </details>
+</div>
+{{ chart|json_script:"fh-chart-data" }}
+{{ heat|json_script:"fh-heat-data" }}
+{% endwith %}
+{% endblock %}
+{% block extra_scripts %}
+<script src="{% static 'dashboard/home_flow.js' %}"></script>
+{% endblock %}

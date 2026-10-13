@@ -75,7 +75,7 @@ def test_root_redirects_to_dashboard(client):
 
 @pytest.mark.django_db
 def test_home_renders_with_real_seeded_data(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     assert response.status_code == 200
     body = response.content.decode()
     assert "Test CSP" in body
@@ -103,7 +103,7 @@ def test_home_shows_today_vs_yesterday_kpis(logged_in_client, csp_with_summary):
         daily_avg_balance=decimal.Decimal("3500"), source=DailyBalance.Source.CALLING_SHEET,
     )
 
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     assert response.status_code == 200
     body = response.content.decode()
     assert "Today vs. yesterday" in body
@@ -115,7 +115,7 @@ def test_home_shows_today_vs_yesterday_kpis(logged_in_client, csp_with_summary):
 
 @pytest.mark.django_db
 def test_home_today_vs_yesterday_kpis_with_no_balance_data(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     assert response.status_code == 200
     assert response.context["reporting_today"] == 0
     assert response.context["daily_trend_counts"]["NO_DATA"] == 1
@@ -123,7 +123,7 @@ def test_home_today_vs_yesterday_kpis_with_no_balance_data(logged_in_client, csp
 
 @pytest.mark.django_db
 def test_home_shows_ai_briefing_placeholder_without_insight(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     body = response.content.decode()
     assert "AI briefing" in body
     assert "No AI briefing generated yet" in body
@@ -143,7 +143,7 @@ def test_home_shows_latest_insight_and_priority_calls(logged_in_client, csp_with
         signals_used={"slab": "S1", "gap": 1000.0},
     )
 
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     body = response.content.decode()
     assert "Balances holding steady" in body
     assert "Nothing notable this week." in body
@@ -159,7 +159,7 @@ def test_home_shows_unreviewed_anomaly_count(logged_in_client, csp_with_summary)
     log = IngestLog.objects.create(source="calling_sheet")
     AnomalyFlag.objects.create(ingest_log=log, description="Odd jump", severity="high")
 
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     assert "1 data anomaly flagged" in response.content.decode()
 
 
@@ -178,7 +178,7 @@ def test_home_shows_per_csp_account_growth(logged_in_client, csp_with_summary):
         source=DailyBalance.Source.CALLING_SHEET,
     )
 
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     body = response.content.decode()
     assert 'data-key="net_new_accounts"' in body  # sortable table header
     assert '"net_new_accounts": 12' in body  # embedded via json_script
@@ -186,7 +186,7 @@ def test_home_shows_per_csp_account_growth(logged_in_client, csp_with_summary):
 
 @pytest.mark.django_db
 def test_home_account_growth_null_without_history(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/")
+    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
     assert '"net_new_accounts": null' in response.content.decode()
 
 
@@ -600,23 +600,22 @@ def test_messaging_approve_forbidden_for_non_staff(viewer_client, csp_with_summa
 
 @pytest.mark.django_db
 def test_nav_hides_staff_only_links_for_viewer(viewer_client, csp_with_summary):
-    response = viewer_client.get("/dashboard/")
-    body = response.content.decode()
-    assert "Overview" in body
-    assert "Trends" in body
-    assert 'dashboard:api_docs' not in body
-    assert ">API Documentation<" not in body
-    assert ">Admin<" not in body
-    assert ">Messaging<" not in body
+    # Primary navigation is five short items; the secondary tools live on the More page.
+    home = viewer_client.get("/dashboard/").content.decode()
+    assert "Home" in home and "My CSPs" in home and "Money Movement" in home
+    body = viewer_client.get("/dashboard/more/").content.decode()
+    assert "Trends" in body and "Classic overview" in body
+    assert "<strong>API Documentation</strong>" not in body
+    assert "<strong>Administration</strong>" not in body
+    assert "<strong>Messaging</strong>" not in body
 
 
 @pytest.mark.django_db
 def test_nav_shows_staff_only_links_for_staff(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/")
-    body = response.content.decode()
-    assert ">API Documentation<" in body
-    assert ">Administration<" in body
-    assert ">Messaging<" in body
+    body = logged_in_client.get("/dashboard/more/").content.decode()
+    assert "<strong>API Documentation</strong>" in body
+    assert "<strong>Administration</strong>" in body
+    assert "<strong>Messaging</strong>" in body
 
 
 @pytest.mark.django_db

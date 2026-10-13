@@ -29,19 +29,23 @@ from autopilot.models import (
 )
 from autopilot.services import approve_draft_message, reject_draft_message
 from autopilot.tasks import enqueue_agent_run
+from bankflow import estimates as bankflow_estimates
+from bankflow import flows as bankflow_flows
+from bankflow import intelligence as bankflow_intelligence
+from bankflow import services as bankflow_services
 from common.cache import cache_aside
 from csp import comparison, services
-from csp.models import Csp, DailyBalance, IngestLog, MonthlySummary
+from csp.models import HISTORICAL_ONLY_STATUS, Csp, DailyBalance, IngestLog, MonthlySummary
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
 from django.db import connection
-from django.db.models import Max, Min
+from django.db.models import Count, Max, Min
 from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from . import pipeline_state
+from . import pipeline_state, plain
 from .pipeline_sse import stream_pipeline_events
 
 
@@ -956,7 +960,7 @@ def balance_intelligence(request):
 
 
 @login_required
-def home(request):
+def overview_classic(request):
     month = request.GET.get("month") or services.current_month()
     overview = cache_aside(f"overview:{month}", ttl=30, fn=lambda: services.get_overview(month))
     summaries, _ = services.list_monthly_summaries(month=month, limit=100000)
@@ -1462,3 +1466,266 @@ def csp_activity_json(request, csp_code: str):
         activity = activity[-60:]
     payload = [{"date": str(a["activity_date"]), "txn_count": a["txn_count"]} for a in activity]
     return JsonResponse({"activity": payload})
+
+
+_BANKFLOW_BADGE = {
+    "VALIDATION_PASSED": "fresh",
+    "INSUFFICIENT_EVIDENCE": "delayed",
+    "EVALUATION_FAILED": "failed",
+    "NOT_EVALUATED": "missing",
+    "RECONCILED": "fresh",
+    "PARTIAL": "partial",
+    "FAILED": "failed",
+}
+
+
+@login_required
+def bank_flow(request):
+    """Bank-Flow Validation -- SBI pool-account statement ingestion, CSP-code
+    match quality, transaction-flow features and the honest, held-out
+    evaluation of whether flows predict the Calling Sheet Avg Balance.
+
+    Staff-only and strictly read-only. Nothing on this page is an actual
+    balance: predicted values are labelled predictions, and evaluation status
+    is whatever the evaluation decided (NOT EVALUATED / INSUFFICIENT EVIDENCE /
+    EVALUATION FAILED / VALIDATION PASSED) -- never inferred here."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Bank-Flow Validation is restricted to staff accounts.")
+
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    mode = request.GET.get("mode", bankflow_flows.MODE_EXACT)
+    if mode not in bankflow_flows.MODES:
+        mode = bankflow_flows.MODE_EXACT
+    definition = request.GET.get("definition", bankflow_flows.DEFAULT_DEFINITION)
+    if definition not in bankflow_flows.FLOW_DEFINITIONS:
+        definition = bankflow_flows.DEFAULT_DEFINITION
+    page, offset, page_size = _paginate(request)
+
+    rows, total = bankflow_services.csp_flow_table(
+        date_from=date_from, date_to=date_to, mode=mode, definition=definition,
+        limit=page_size, offset=offset,
+    )
+    ingestion = bankflow_services.ingestion_summary()
+    latest = ingestion["latest_statement"]
+    if latest:
+        latest["badge"] = _BANKFLOW_BADGE.get(latest["reconciliation"], "missing")
+    evaluations = bankflow_services.evaluation_overview()
+    for ev in evaluations:
+        ev["badge"] = _BANKFLOW_BADGE.get(ev["status"], "missing")
+        ev["is_association"] = ev["config"].get("horizon_days") == 0
+
+    return render(
+        request,
+        "dashboard/bank_flow.html",
+        {
+            "ingestion": ingestion,
+            "quality": bankflow_services.quality_flags(),
+            "quarantined": bankflow_services.quarantined_files(),
+            "coverage": bankflow_services.coverage_report(),
+            "resolution": bankflow_services.code_resolution_stats(),
+            "unresolved": bankflow_services.unresolved_by_day(),
+            "target": bankflow_services.target_overview(),
+            "estimate_overview": bankflow_estimates.estimate_overview(),
+            "estimate_rows": bankflow_estimates.estimate_rows(limit=25)[0],
+            "evaluations": evaluations,
+            "rows": rows,
+            "mode": mode,
+            "modes": bankflow_flows.MODES,
+            "definition": definition,
+            "definitions": sorted(bankflow_flows.FLOW_DEFINITIONS),
+            "date_from": date_from,
+            "date_to": date_to,
+            "page": page,
+            "total": total,
+            "total_pages": max(1, -(-total // page_size)),
+        },
+    )
+
+
+_RANGES = (7, 30, 90)
+_BADGE = {
+    "VALIDATED": "fresh", "PROVISIONAL": "partial", "INSUFFICIENT_EVIDENCE": "delayed",
+    "UNAVAILABLE": "missing", "NOT_COMPUTED": "missing", "NOT_RUN": "missing",
+    "NOT_SUPPORTED": "failed",
+}
+_SORT_CHOICES = {  # friendly name -> (label, intelligence.SORTS key)
+    "new_accounts": ("Most new accounts", "count_change"),
+    "money_in": ("Most money in", "credits"),
+    "money_out": ("Most money out", "debits"),
+    "difference": ("Money in minus money out", "net_flow"),
+    "name": ("Name (A-Z)", "name"),
+}
+_METHOD_NAMES = {
+    "growth_only": "New accounts alone",
+    "flow_only": "Money movement alone",
+    "growth_and_flow": "New accounts and money movement together",
+}
+_SOURCE_NAMES = {
+    "pmjdy": "New PMJDY accounts",
+    "calling_sheet": "SBI-reported balances",
+    "transactions": "Bank statements",
+    "estimates": "Our estimates",
+}
+
+
+def _days_param(request) -> int:
+    try:
+        days = int(request.GET.get("range", 30))
+    except ValueError:
+        return 30
+    return days if days in _RANGES else 30
+
+
+def _cached(prefix: str, days: int, fn):
+    return cache_aside(f"{prefix}:{days}", ttl=30, fn=fn)
+
+
+def _chart_payload(movement: dict) -> dict:
+    keep = ("date", "pool_credits", "pool_debits", "net_pool_flow", "txn_count", "flow_status",
+            "total_accounts", "account_growth", "observed_avg_balance",
+            "estimated_avg_balance")
+    return bankflow_intelligence.plain({
+        "series": [{k: p[k] for k in keep} for p in movement["series"]],
+        "account_source": movement["account_source"],
+    })
+
+
+def _attention_counts(exc: dict) -> tuple[int, int]:
+    items = exc["items"]
+    return (
+        sum(1 for i in items if i["severity"] in ("high", "medium")),
+        sum(1 for i in items if i["severity"] == "high"),
+    )
+
+
+@login_required
+def home(request):
+    """Simple home for a non-technical operations manager: customer accounts, money in, money
+    out, the estimate only when it is defensible, a plain summary, what needs attention, a trend
+    and a searchable CSP list. Technical detail lives under 'Advanced details'. All numbers come
+    from bankflow.intelligence (the same functions the API uses); this view adds wording only."""
+    days = _days_param(request)
+    date_from, date_to = bankflow_intelligence.resolve_range(days)
+    summary = _cached("fh:summary", days,
+                      lambda: bankflow_intelligence.dashboard_summary(date_from, date_to))
+    movement = _cached("fh:movement", days,
+                       lambda: bankflow_intelligence.network_movement(date_from, date_to))
+    exc = _cached("fh:exceptions", days,
+                  lambda: bankflow_intelligence.exceptions(date_from, date_to, limit=200))
+    attention_total, high = _attention_counts(exc)
+    cards = [plain.friendly_exception(i, days) for i in exc["items"]]
+
+    q = request.GET.get("q", "")[:64]
+    show = request.GET.get("show", "all")
+    show = show if show in ("all", "attention") else "all"
+    sort = request.GET.get("sort", "new_accounts")
+    sort = sort if sort in _SORT_CHOICES else "new_accounts"
+    order_default = "asc" if sort == "name" else "desc"
+    descending = request.GET.get("order", order_default) == "desc"
+    page, offset, page_size = _paginate(request, page_size=15)
+    all_rows, _t, _m = bankflow_intelligence.csp_growth(
+        date_from, date_to, search=q, sort=_SORT_CHOICES[sort][1], descending=descending,
+        limit=10000, offset=0,
+    )
+    for r in all_rows:
+        r["status_key"], r["status_text"] = plain.csp_status(r)
+        r["est"] = plain.estimate_cell(r)
+    if show == "attention":
+        all_rows = [r for r in all_rows if any(f["severity"] != "low" for f in r["flags"])]
+    total = len(all_rows)
+    rows = all_rows[offset: offset + page_size]
+
+    estimator = dict(summary["estimates"]["estimator"])
+    estimator["badge"] = _BADGE.get(estimator["status"], "missing")
+    estimator["words"] = plain.STATUS_WORDS.get(estimator["status"], plain.ESTIMATE_UNAVAILABLE)
+    hypothesis = bankflow_estimates.hypothesis_overview()
+    methods = [
+        {"name": _METHOD_NAMES.get(k, k),
+         "words": plain.STATUS_WORDS.get(v["status"], v["status"]),
+         "badge": _BADGE.get(v["status"], "missing")}
+        for k, v in ((hypothesis.get("metrics") or {}).get("comparison", {}).get("methods", {}))
+        .items()
+    ]
+    month = services.current_month()
+    slabs = dict(
+        MonthlySummary.objects.filter(month=month)
+        .exclude(csp__status=HISTORICAL_ONLY_STATUS)
+        .values_list("slab").annotate(n=Count("id"))
+    )
+    fr = summary["freshness"]
+    sources = [
+        {"name": _SOURCE_NAMES[k], "state": fr[k]["state"],
+         "when": (f"{fr[k]['age_hours']} hours ago" if fr[k].get("age_hours") is not None
+                  else "never")}
+        for k in ("pmjdy", "calling_sheet", "transactions", "estimates")
+    ]
+    heat = bankflow_intelligence.plain([
+        {"code": r["csp_code"], "name": r["name"], "growth_pct": r["growth_pct"],
+         "net_flow": r["net_flow"], "fresh": r["count_freshness"],
+         "delta": r["estimated_delta"], "status": r["estimate_status"]}
+        for r in all_rows[:600]
+    ])
+    return render(request, "dashboard/home_flow.html", {
+        "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
+        "summary": summary,
+        "summary_lines": plain.daily_summary(summary, attention_total, high, days),
+        "notes": plain.data_notes(summary),
+        "attention_cards": cards[:5], "attention_total": attention_total, "attention_high": high,
+        "chart": _chart_payload(movement), "heat": heat,
+        "rows": rows, "total": total, "page": page,
+        "total_pages": max(1, -(-total // page_size)),
+        "q": q, "show": show, "sort": sort, "order": "desc" if descending else "asc",
+        "sort_choices": [(k, v[0]) for k, v in _SORT_CHOICES.items()],
+        "estimator": estimator, "methods": methods, "sources": sources, "slabs": slabs,
+        "slab_cards": [{"code": c, "n": slabs.get(c, 0)} for c in ("NIL", "S1", "S2", "S3", "S4")],
+        "month": month, "ESTIMATE_UNAVAILABLE": plain.ESTIMATE_UNAVAILABLE,
+    })
+
+
+@login_required
+def money_movement(request):
+    """Money in, money out and the difference, day by day -- the plain version of the flow data."""
+    days = _days_param(request)
+    date_from, date_to = bankflow_intelligence.resolve_range(days)
+    summary = _cached("mm:summary", days,
+                      lambda: bankflow_intelligence.dashboard_summary(date_from, date_to))
+    movement = _cached("mm:movement", days,
+                       lambda: bankflow_intelligence.network_movement(date_from, date_to))
+    return render(request, "dashboard/money_movement.html", {
+        "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
+        "summary": summary, "notes": plain.data_notes(summary),
+        "day_rows": list(reversed(movement["series"])),
+        "chart": _chart_payload(movement), "movement_notes": movement["notes"],
+    })
+
+
+@login_required
+def needs_attention(request):
+    """Everything that should be looked at, in plain words, most urgent first."""
+    days = _days_param(request)
+    date_from, date_to = bankflow_intelligence.resolve_range(days)
+    exc = _cached("na:exceptions", days,
+                  lambda: bankflow_intelligence.exceptions(date_from, date_to, limit=500))
+    all_cards = [plain.friendly_exception(i, days) for i in exc["items"]]
+    titles = {c["type"]: c["title"] for c in all_cards}
+    kind = request.GET.get("type", "")
+    cards = [c for c in all_cards if c["type"] == kind] if kind in titles else all_cards
+    page, offset, page_size = _paginate(request, page_size=25)
+    return render(request, "dashboard/needs_attention.html", {
+        "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
+        "cards": cards[offset: offset + page_size], "total": len(cards), "page": page,
+        "total_pages": max(1, -(-len(cards) // page_size)),
+        "kind": kind if kind in titles else "",
+        "type_choices": sorted(titles.items(), key=lambda kv: kv[1]),
+        "high": sum(1 for c in all_cards if c["severity"] == "high"),
+        "medium": sum(1 for c in all_cards if c["severity"] == "medium"),
+    })
+
+
+@login_required
+def more(request):
+    from . import navigation
+
+    return render(request, "dashboard/more.html",
+                  {"groups": navigation.more_groups(request.user.is_staff)})

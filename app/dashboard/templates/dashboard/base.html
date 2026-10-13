@@ -1,5 +1,5 @@
 {% load static %}<!doctype html>
-<html lang="en"{% if is_eko_mode %} data-theme="eko"{% endif %}>
+<html lang="en" data-theme="{% if is_eko_mode %}eko{% else %}light{% endif %}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,38 +19,14 @@
         <span class="dot"></span>
         <span class="name">CSP Balance Tracker<small>{% if is_eko_mode %}Eko Operations{% else %}Balance Intelligence{% endif %}</small></span>
       </div>
-      <nav class="sidebar-nav">
-        <div class="nav-group-label">Overview</div>
-        <a href="{% url 'dashboard:home' %}" class="{% if request.resolver_match.url_name == 'home' %}active{% endif %}"><span class="ic">&#9635;</span><span class="lbl">Dashboard</span></a>
-
-        <div class="nav-group-label">CSP Intelligence</div>
-        <a href="{% url 'dashboard:csp_directory' %}" class="{% if request.resolver_match.url_name == 'csp_directory' %}active{% endif %}"><span class="ic">&#9776;</span><span class="lbl">CSP Directory</span></a>
-        <a href="{% url 'dashboard:csp_directory' %}" title="Open any CSP's 360° profile from the Directory"><span class="ic">&#9673;</span><span class="lbl">CSP 360&deg;</span></a>
-        <a href="{% url 'dashboard:balance_intelligence' %}" class="{% if request.resolver_match.url_name == 'balance_intelligence' %}active{% endif %}"><span class="ic">&#8365;</span><span class="lbl">Balance Intelligence</span></a>
-        <a href="{% url 'dashboard:csp_comparisons' %}" class="{% if request.resolver_match.url_name == 'csp_comparisons' %}active{% endif %}"><span class="ic">&#8646;</span><span class="lbl">Daily Comparison</span></a>
-        <a href="{% url 'dashboard:transactions' %}" class="{% if request.resolver_match.url_name == 'transactions' %}active{% endif %}"><span class="ic">&#8646;</span><span class="lbl">Transactions</span></a>
-        <a href="{% url 'dashboard:trends' %}" class="{% if request.resolver_match.url_name == 'trends' %}active{% endif %}"><span class="ic">&#8599;</span><span class="lbl">Trends &amp; Analytics</span></a>
-        {% if user.is_staff %}
-        <a href="{% url 'dashboard:risk' %}" class="{% if request.resolver_match.url_name == 'risk' %}active{% endif %}"><span class="ic">&#9888;</span><span class="lbl">Risk</span></a>
-
-        <div class="nav-group-label">Operations</div>
-        <a href="{% url 'dashboard:messaging' %}" class="{% if request.resolver_match.url_name == 'messaging' %}active{% endif %}"><span class="ic">&#9993;</span><span class="lbl">Messaging</span></a>
-        <a href="{% url 'dashboard:actions' %}" class="{% if request.resolver_match.url_name == 'actions' %}active{% endif %}"><span class="ic">&#9998;</span><span class="lbl">Actions</span></a>
-        <a href="{% url 'dashboard:approvals' %}" class="{% if request.resolver_match.url_name == 'approvals' %}active{% endif %}"><span class="ic">&#10003;</span><span class="lbl">Approvals</span></a>
-        <a href="{% url 'dashboard:verification' %}" class="{% if request.resolver_match.url_name == 'verification' %}active{% endif %}"><span class="ic">&#128269;</span><span class="lbl">Verification</span></a>
-
-        <div class="nav-group-label">AI Operations</div>
-        <a href="{% url 'dashboard:agent_findings' %}" class="{% if request.resolver_match.url_name == 'agent_findings' %}active{% endif %}"><span class="ic">&#9673;</span><span class="lbl">Agent Findings</span></a>
-        <a href="{% url 'dashboard:ai_recommendations' %}" class="{% if request.resolver_match.url_name == 'ai_recommendations' %}active{% endif %}"><span class="ic">&#10024;</span><span class="lbl">AI Recommendations</span></a>
-        <a href="{% url 'dashboard:agent_monitoring' %}" class="{% if request.resolver_match.url_name == 'agent_monitoring' %}active{% endif %}"><span class="ic">&#128202;</span><span class="lbl">Agent Monitoring</span></a>
-
-        <div class="nav-group-label">System</div>
-        <a href="{% url 'dashboard:system_health' %}" class="{% if request.resolver_match.url_name == 'system_health' %}active{% endif %}"><span class="ic">&#9881;</span><span class="lbl">System Health</span></a>
-        <a href="{% url 'dashboard:pipeline' %}" class="{% if request.resolver_match.url_name == 'pipeline' %}active{% endif %}"><span class="ic">&#8635;</span><span class="lbl">Data Pipeline</span></a>
-        <a href="{% url 'dashboard:api_docs' %}" class="{% if request.resolver_match.url_name == 'api_docs' %}active{% endif %}"><span class="ic">&#123;&#125;</span><span class="lbl">API Documentation</span></a>
-        <a href="{% url 'dashboard:audit' %}" class="{% if request.resolver_match.url_name == 'audit' %}active{% endif %}"><span class="ic">&#128203;</span><span class="lbl">Audit</span></a>
-        <a href="{% url 'dashboard:admin_embed' %}" class="{% if request.resolver_match.url_name == 'admin_embed' %}active{% endif %}"><span class="ic">&#128274;</span><span class="lbl">Administration</span></a>
-        {% endif %}
+      <nav class="sidebar-nav" aria-label="Main">
+        {% for n in nav_primary %}
+        <a href="{{ n.href }}" class="{% if n.active %}active{% endif %}"{% if n.active %} aria-current="page"{% endif %}>
+          <span class="ic">{% include "dashboard/_nav_icon.html" with key=n.key %}</span>
+          <span class="lbl">{{ n.label }}</span>
+          {% if n.key == "attention" and needs_attention_count %}<span class="nav-badge" title="Items to check">{{ needs_attention_count }}</span>{% endif %}
+        </a>
+        {% endfor %}
       </nav>
       <div class="sidebar-foot">
         <button type="button" class="sidebar-toggle" id="sidebar-collapse-btn" aria-label="Collapse navigation">&laquo;</button>
@@ -105,6 +81,13 @@
         </div>
       </div>
 
+      {% if nav_tabs or nav_back_to_more %}
+      <nav class="subnav" aria-label="Pages in this section">
+        {% if nav_back_to_more %}<a href="{% url 'dashboard:more' %}" class="back">&larr; All tools</a>{% endif %}
+        {% for t in nav_tabs %}<a href="{{ t.href }}" class="{% if t.active %}active{% endif %}"{% if t.active %} aria-current="page"{% endif %}>{{ t.label }}</a>{% endfor %}
+      </nav>
+      {% endif %}
+
       <main class="page-enter" id="main-content">
   {% else %}
   <main id="main-content">
@@ -132,6 +115,7 @@
   <script>
     window.initCommandPalette([
       {label: "Dashboard", group: "Page", href: "{% url 'dashboard:home' %}"},
+      {label: "Classic overview", group: "Page", href: "{% url 'dashboard:overview_classic' %}"},
       {label: "CSP Directory / CSP 360°", group: "Page", href: "{% url 'dashboard:csp_directory' %}"},
       {label: "Balance Intelligence", group: "Page", href: "{% url 'dashboard:balance_intelligence' %}"},
       {label: "Daily Comparison", group: "Page", href: "{% url 'dashboard:csp_comparisons' %}"},

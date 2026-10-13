@@ -14,8 +14,11 @@ chrome; neither needs "which dashboard theme is active."
 from __future__ import annotations
 
 from autopilot.models import AnomalyFlag
+from common.cache import cache_aside
 from csp.services import get_data_freshness
 from django.conf import settings
+
+from . import navigation
 
 MODE_COOKIE = "csp_mode"
 DEFAULT_MODE = "tracker"
@@ -70,4 +73,23 @@ def dashboard_shell(request):
         context["unreviewed_anomaly_count"] = AnomalyFlag.objects.filter(
             reviewed_at__isnull=True
         ).count()
+        match = getattr(request, "resolver_match", None)
+        context.update(navigation.build(match.url_name if match else None, request.user.is_staff))
+        context["needs_attention_count"] = _needs_attention_count()
     return context
+
+
+def _needs_attention_count() -> int | None:
+    """Real count of items that should be checked (high + medium), for the sidebar badge.
+    None -- badge hidden -- if it cannot be computed; never a placeholder number."""
+    try:
+        from bankflow import intelligence
+
+        def _count():
+            frm, to = intelligence.resolve_range(30)
+            items = intelligence.exceptions(frm, to, limit=100000)["items"]
+            return sum(1 for i in items if i["severity"] in ("high", "medium"))
+
+        return cache_aside("nav:attention_count", ttl=60, fn=_count) or None
+    except Exception:  # noqa: BLE001 -- the shell must never fail because a badge could not load
+        return None

@@ -1,0 +1,68 @@
+{% extends "dashboard/base.html" %}
+{% load static fmt %}
+{% block title %}Money Movement — CSP Balance Tracker{% endblock %}
+{% block content %}
+{% with fl=summary.flows %}
+<div class="wrap sm">
+  <header class="sm-head">
+    <div>
+      <h1>Money Movement</h1>
+      <p class="sub">Money coming into and going out of the pool &middot; {{ date_from|date:"d M" }} to {{ date_to|date:"d M Y" }}</p>
+    </div>
+    <div class="sm-range" role="group" aria-label="Time period">
+      {% for r in ranges %}<a class="chip" aria-pressed="{% if r == days %}true{% else %}false{% endif %}" href="?range={{ r }}">Last {{ r }} days</a>{% endfor %}
+    </div>
+  </header>
+
+  {% for n in notes %}<div class="sm-note {{ n.level }}" role="status">{{ n.text }}</div>{% endfor %}
+
+  <section class="sm-cards three" aria-label="Totals">
+    <article class="sm-card"><div class="sm-label">Money received into the pool</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_credits|inr }}{% else %}&mdash;{% endif %}</div></article>
+    <article class="sm-card"><div class="sm-label">Money sent out of the pool</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_debits|inr }}{% else %}&mdash;{% endif %}</div></article>
+    <article class="sm-card"><div class="sm-label">Money in minus money out</div>
+      <div class="sm-big {{ fl.net_pool_flow|tone }}">{% if fl.days_with_data %}{{ fl.net_pool_flow|signed_inr }}{% else %}&mdash;{% endif %}</div>
+      <div class="sm-sub flat">{% if fl.days_with_data %}{% if fl.net_pool_flow >= 0 %}More came in than went out{% else %}More went out than came in{% endif %}{% endif %}</div></article>
+  </section>
+
+  <section class="sm-panel" aria-labelledby="mm-trend">
+    <div class="sm-panel-head"><h2 id="mm-trend">Trend</h2>
+      <div class="fh-tabs" role="tablist">
+        <button class="chip" role="tab" data-view="money" aria-pressed="true">Money in and out</button>
+        <button class="chip" role="tab" data-view="accounts" aria-pressed="false">Customer accounts</button>
+        <button class="chip" role="tab" data-view="balance" aria-pressed="false">Average balance</button>
+      </div></div>
+    <div id="fh-chart" class="fh-chart" role="img" aria-label="Trend chart"></div>
+    <div id="fh-chart-legend" class="fh-legend"></div>
+    <ul class="sm-mute sm-notes">{% for n in movement_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </section>
+
+  <section class="sm-panel" aria-labelledby="mm-days">
+    <div class="sm-panel-head"><h2 id="mm-days">Day by day</h2></div>
+    <div class="tbl-scroll sm-tablewrap"><table class="sm-table">
+      <thead><tr><th>Date</th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Money in minus money out</th><th class="num">Transactions</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for d in day_rows %}
+      <tr>
+        <td data-label="Date">{{ d.date|date:"D d M" }}</td>
+        {% if d.pool_credits is None %}
+        <td class="num sm-mute" data-label="Money in">&mdash;</td><td class="num sm-mute" data-label="Money out">&mdash;</td><td class="num sm-mute" data-label="Money in minus money out">&mdash;</td><td class="num sm-mute" data-label="Transactions">&mdash;</td>
+        <td data-label="Note"><span class="sm-mute">No bank statement for this day</span></td>
+        {% else %}
+        <td class="num" data-label="Money in">{{ d.pool_credits|inr }}</td><td class="num" data-label="Money out">{{ d.pool_debits|inr }}</td>
+        <td class="num {{ d.net_pool_flow|tone }}" data-label="Money in minus money out">{{ d.net_pool_flow|signed_inr }}</td><td class="num" data-label="Transactions">{{ d.txn_count|intc }}</td>
+        <td data-label="Note">{% if d.flow_status == "complete" %}<span class="sm-pill ok">Complete</span>{% else %}<span class="sm-pill wait" title="Not yet confirmed complete">May be incomplete</span>{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+
+  <p class="sm-mute">Looking for transaction lists, daily comparisons or trends? Use the tabs at the top of this page.</p>
+</div>
+{{ chart|json_script:"fh-chart-data" }}
+{% endwith %}
+{% endblock %}
+{% block extra_scripts %}<script src="{% static 'dashboard/home_flow.js' %}"></script>{% endblock %}

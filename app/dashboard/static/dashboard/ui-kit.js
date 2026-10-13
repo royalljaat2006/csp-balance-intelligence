@@ -146,8 +146,8 @@
       // Icon-only by default (matches the reference's slim nav rail) — a
       // saved "0" means the user explicitly expanded it before, so that
       // choice sticks across visits.
-      let collapsed = true;
-      try { collapsed = localStorage.getItem("sidebar-collapsed") !== "0"; } catch (e) {}
+      let collapsed = false;  // expanded by default: labels matter more than width
+      try { collapsed = localStorage.getItem("sidebar-collapsed") === "1"; } catch (e) {}
       if (collapsed) sidebar.classList.add("collapsed");
       collapseBtn.addEventListener("click", () => {
         collapsed = !collapsed;
