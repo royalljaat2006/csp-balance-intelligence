@@ -378,21 +378,21 @@ docker compose up -d worker-bankflow                     # the new, opt-in worke
 
 ### 2. One-time data steps (the worker would also do these within the hour)
 ```bash
-docker compose exec -T worker-bankflow python manage.py flag_invalid_csp_codes --dry-run   # lists non-1A85XXXX rows
-docker compose exec -T worker-bankflow python manage.py flag_invalid_csp_codes
-docker compose exec -T worker-bankflow python manage.py ingest_bank_statements --recursive --pattern 'statement_1556_*' --max-file-mb 100
-docker compose exec -T worker-bankflow python manage.py build_bank_flows
-docker compose exec -T worker-bankflow python manage.py ingest_pmjdy --force
-docker compose exec -T worker-bankflow python manage.py snapshot_calling_sheet_baseline
-docker compose exec -T worker-bankflow python manage.py evaluate_account_count_hypothesis
-docker compose exec -T worker-bankflow python manage.py compute_daily_estimates
-docker compose exec -T worker-bankflow python manage.py bank_flow_coverage      # what is loaded, what is missing
+docker compose exec -T -w /app/app worker-bankflow python manage.py flag_invalid_csp_codes --dry-run   # lists non-1A85XXXX rows
+docker compose exec -T -w /app/app worker-bankflow python manage.py flag_invalid_csp_codes
+docker compose exec -T -w /app/app worker-bankflow python manage.py ingest_bank_statements --recursive --pattern 'statement_1556_*' --max-file-mb 100
+docker compose exec -T -w /app/app worker-bankflow python manage.py build_bank_flows
+docker compose exec -T -w /app/app worker-bankflow python manage.py ingest_pmjdy --force
+docker compose exec -T -w /app/app worker-bankflow python manage.py snapshot_calling_sheet_baseline
+docker compose exec -T -w /app/app worker-bankflow python manage.py evaluate_account_count_hypothesis
+docker compose exec -T -w /app/app worker-bankflow python manage.py compute_daily_estimates
+docker compose exec -T -w /app/app worker-bankflow python manage.py bank_flow_coverage      # what is loaded, what is missing
 ```
 
 ### 3. Check it is alive
 ```bash
 docker compose logs --tail=50 worker-bankflow                       # job_run lines, no poll_failed
-docker compose exec -T web python manage.py shell -c "from csp.models import IngestLog as L; print(list(L.objects.filter(source__in=['pmjdy','baseline_snapshot']).order_by('-id').values_list('source','status','error_summary')[:6]))"
+docker compose exec -T -w /app/app web python manage.py shell -c "from csp.models import IngestLog as L; print(list(L.objects.filter(source__in=['pmjdy','baseline_snapshot']).order_by('-id').values_list('source','status','error_summary')[:6]))"
 ```
 Then open `/dashboard/` (staff). Expected on day 1: customer accounts and new accounts for the month, money in/out
 from the statements, SBI-reported average balance, and "Reliable estimate not available yet" -- there is no history yet.
