@@ -14,6 +14,7 @@ from ninja.throttling import AnonRateThrottle, AuthRateThrottle
 from api import errors
 
 from .balances import router as balances_router
+from .bankflow import router as bankflow_router
 from .comparisons import network_router as comparisons_network_router
 from .comparisons import router as comparisons_router
 from .csps import router as csps_router
@@ -54,4 +55,5 @@ api.add_router("/csps", projections_router)
 api.add_router("/csps", transactions_router)
 api.add_router("/csps", comparisons_router)
 api.add_router("/reports", reports_router)
+api.add_router("/bank-flow", bankflow_router)
 api.add_router("/comparisons", comparisons_network_router)

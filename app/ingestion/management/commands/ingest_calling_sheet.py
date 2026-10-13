@@ -165,11 +165,17 @@ class Command(BaseCommand):
         log.rows_upserted = len(csp_objs)
         log.finished_at = timezone.now()
         no_balance = len(csp_objs) - len(balance_objs)
+        notes = []
         if no_balance:
-            log.error_summary = (
+            notes.append(
                 f"{no_balance} CSP(s) had a blank Avg Balance (no accounts/data yet) — "
                 "master record updated, no balance row written for today."
             )
+        if result.rows_invalid_code:
+            notes.append(
+                f"{result.rows_invalid_code} row(s) skipped: CSP ID is not 1A85 + 4 digits."
+            )
+        log.error_summary = " ".join(notes)
         log.save(
             update_fields=[
                 "status",

@@ -6,7 +6,15 @@ read/write these tables. Kept intentionally minimal at this stage: this is
 the scaffolding pass, not the ingestion/calculation implementation.
 """
 
+import re
+
 from django.db import models
+
+#: A real CSP/KO code is "1A85" + four digits (8 characters). Anything else in the sheet's CSP ID
+#: column (a stray "f", a note, a blank-ish cell) is not a CSP.
+CSP_CODE_RE = re.compile(r"^1A85\d{4}$")
+#: Csp.status for a row whose code is not in the 1A85XXXX format; kept out of every CSP listing.
+INVALID_CODE_STATUS = "invalid_code"
 
 #: Csp.status value for a bare stub created only to satisfy a foreign key
 #: (a historical Calling Sheet backfill, or a transaction/mart row
@@ -25,7 +33,7 @@ class CspQuerySet(models.QuerySet):
         CSP listing/count/bulk-comparison a person or dashboard sees --
         .all() is for internal bookkeeping (e.g. resolving a known
         csp_code) where the distinction doesn't apply."""
-        return self.exclude(status=HISTORICAL_ONLY_STATUS)
+        return self.exclude(status__in=[HISTORICAL_ONLY_STATUS, INVALID_CODE_STATUS])
 
 
 class Csp(models.Model):

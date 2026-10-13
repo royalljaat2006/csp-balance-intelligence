@@ -158,6 +158,15 @@ def main():
         rows_by_csp = {
             row.csp_code: row for row in result.rows if row.avg_balance is not None
         }
+        # PRD FR3: a history value must NEVER overwrite a live calling_sheet snapshot for
+        # the same CSP+day. Re-running this script only (re)writes source=history rows.
+        protected = set(
+            DailyBalance.objects.filter(
+                balance_date=file_date, source=DailyBalance.Source.CALLING_SHEET
+            ).values_list("csp_id", flat=True)
+        )
+        if protected:
+            print(f"  {path.name}: keeping {len(protected)} live calling_sheet row(s) untouched")
         balance_objs = [
             DailyBalance(
                 csp_id=row.csp_code,
@@ -167,6 +176,7 @@ def main():
                 source=DailyBalance.Source.HISTORY,
             )
             for row in rows_by_csp.values()
+            if row.csp_code not in protected
         ]
         if balance_objs:
             DailyBalance.objects.bulk_create(

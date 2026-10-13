@@ -18,6 +18,8 @@ import decimal
 import re
 from dataclasses import dataclass
 
+from csp.models import CSP_CODE_RE
+
 HEADER_ROW = 2
 DATA_START_ROW = 3
 DEFAULT_WORKSHEET_NAME = "Calling Sheet New"
@@ -111,8 +113,9 @@ class CallingSheetRow:
 @dataclass
 class ParseResult:
     rows: list[CallingSheetRow]
-    rows_read: int  # data rows with a non-blank CSP ID
-    rows_skipped: int  # data rows with a blank/missing CSP ID
+    rows_read: int  # data rows with a valid CSP ID
+    rows_skipped: int  # data rows with a blank/missing/invalid CSP ID
+    rows_invalid_code: int = 0  # of those, rows whose CSP ID is not 1A85 + 4 digits
 
 
 def parse_sheet_values(all_values: list[list[str]]) -> ParseResult:
@@ -126,6 +129,7 @@ def parse_sheet_values(all_values: list[list[str]]) -> ParseResult:
 
     rows: list[CallingSheetRow] = []
     skipped = 0
+    invalid = 0
     for raw in all_values[DATA_START_ROW - 1 :]:
         if len(raw) <= max_col:
             skipped += 1
@@ -133,6 +137,10 @@ def parse_sheet_values(all_values: list[list[str]]) -> ParseResult:
         csp_code = raw[cols["CSP ID"]].strip()
         if not csp_code:
             skipped += 1
+            continue
+        if not CSP_CODE_RE.match(csp_code):  # a CSP code is 1A85 + 4 digits; nothing else counts
+            skipped += 1
+            invalid += 1
             continue
         mobile_cell = raw[cols["CSP Mobile number"]]
         rows.append(
@@ -150,4 +158,6 @@ def parse_sheet_values(all_values: list[list[str]]) -> ParseResult:
                 ),
             )
         )
-    return ParseResult(rows=rows, rows_read=len(rows), rows_skipped=skipped)
+    return ParseResult(
+        rows=rows, rows_read=len(rows), rows_skipped=skipped, rows_invalid_code=invalid
+    )

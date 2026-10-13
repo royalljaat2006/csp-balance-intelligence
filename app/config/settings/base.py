@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "common",
     "dashboard",
     "autopilot",
+    "bankflow",
 ]
 
 MIDDLEWARE = [
@@ -220,6 +221,37 @@ GOOGLE_SERVICE_ACCOUNT_FILE = env("GOOGLE_SERVICE_ACCOUNT_FILE", default="")
 CALLING_SHEET_ID = env("CALLING_SHEET_ID", default="")
 CALLING_SHEET_WORKSHEET_NAME = env("CALLING_SHEET_WORKSHEET_NAME", default="Calling Sheet New")
 
+# New PMJDY accounts: every month the main tab (CALLING_SHEET_WORKSHEET_NAME) gains blocks such as
+# "MTD Achievement October'26" / "FTD Achievement ..." / "Targets Oct 2026" with a PMJDY column.
+# The block for the current IST month is read by ingest_pmjdy (bankflow.pmjdy_monthly).
+# Rate-limited: within PMJDY_MIN_INTERVAL_SECONDS of the last success it does nothing.
+PMJDY_COLUMN = env("PMJDY_COLUMN", default="PMJDY")
+
+# "Needs attention" materiality. A CSP is flagged for more money going out than coming in only
+# when the imbalance is both large in rupees AND a large share of that CSP's own activity (a 2 %
+# wobble on ten lakh of turnover is noise). Alerts pause, with a visible notice, when statements
+# cover too little of the period for a CSP-level comparison to mean anything.
+ALERT_MIN_OUTFLOW = env.float("ALERT_MIN_OUTFLOW", default=100000)  # rupees
+ALERT_MIN_IMBALANCE = env.float("ALERT_MIN_IMBALANCE", default=0.25)  # share of credits + debits
+ALERT_HIGH_OUTFLOW = env.float("ALERT_HIGH_OUTFLOW", default=500000)  # high needs both highs
+ALERT_HIGH_IMBALANCE = env.float("ALERT_HIGH_IMBALANCE", default=0.40)
+ALERT_MIN_NETWORK_COVERAGE = env.float("ALERT_MIN_NETWORK_COVERAGE", default=0.5)  # share of days
+ALERT_NEW_ACCOUNTS = env.int("ALERT_NEW_ACCOUNTS", default=10)  # new accounts, no activity
+PMJDY_MIN_INTERVAL_SECONDS = env.int("PMJDY_MIN_INTERVAL_SECONDS", default=3300)
+
+# Automation for the bank-flow / estimate pipeline (run by `watch_transactions` on the dedicated
+# worker-bankflow service, which opts in through WATCH_JOBS -- a plain worker never runs these).
+PMJDY_INTERVAL_SECONDS = env.int("PMJDY_INTERVAL_SECONDS", default=3600)  # hourly
+ESTIMATE_INTERVAL_SECONDS = env.int("ESTIMATE_INTERVAL_SECONDS", default=3600)  # hourly
+BANKFLOW_STATEMENT_INTERVAL_SECONDS = env.int("BANKFLOW_STATEMENT_INTERVAL_SECONDS", default=3600)
+BANKFLOW_BUILD_FLOWS_INTERVAL_SECONDS = env.int(
+    "BANKFLOW_BUILD_FLOWS_INTERVAL_SECONDS", default=86400
+)  # re-attribute when new CSPs appear in the sheet
+HYPOTHESIS_INTERVAL_SECONDS = env.int("HYPOTHESIS_INTERVAL_SECONDS", default=86400)
+BASELINE_SNAPSHOT_AT = env("BASELINE_SNAPSHOT_AT", default="06:00")  # IST, once a day
+BANKFLOW_STATEMENT_PATTERN = env("BANKFLOW_STATEMENT_PATTERN", default="statement_1556_*")
+BANKFLOW_MAX_FILE_MB = env.int("BANKFLOW_MAX_FILE_MB", default=100)
+
 # Root of the ingestion file-safety workflow (PRD §7.2, Phase 4/10):
 #   <dir>/incoming/  — the watched folder itself
 #   <dir>/processed/ — successfully ingested files are moved here
@@ -242,6 +274,21 @@ NEMOTRON_MODEL = env("NEMOTRON_MODEL", default="nvidia/nemotron-3-super-120b-a12
 # allow-list, ANY chat that discovers the bot could submit transaction files.
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_ALLOWED_CHAT_ID = env("TELEGRAM_CHAT_ID", default="")
+
+# SBI pool-account statement flow validation (bankflow app, docs/BANK-FLOW.md).
+# Analysis-only: nothing in bankflow writes DailyBalance or switches the balance
+# source. The watch folder is only ever READ; files are never moved or deleted.
+BANKFLOW_WATCH_DIR = env(
+    "BANKFLOW_WATCH_DIR", default="/home/kapil/login_automation/yonosbi-automation/downloads"
+)
+# Only statements of this pool account (last 5 digits) are accepted; others are quarantined.
+BANKFLOW_EXPECTED_ACCOUNT_SUFFIX = env("BANKFLOW_EXPECTED_ACCOUNT_SUFFIX", default="71556")
+# Trailing-character KO variants (e.g. 1A8502957 -> 1A850295) are UNCONFIRMED. Leave False
+# until the pattern is confirmed by authoritative documentation or validated examples.
+BANKFLOW_CONFIRM_TRAILING_VARIANTS = env.bool("BANKFLOW_CONFIRM_TRAILING_VARIANTS", default=False)
+# The flag above is IGNORED unless this also names where the rule was confirmed
+# (a document / ticket reference). Prevents an accidental env flip enabling guesses.
+BANKFLOW_VARIANT_RULE_CONFIRMATION_REF = env("BANKFLOW_VARIANT_RULE_CONFIRMATION_REF", default="")
 
 # API auth is per-consumer, DB-backed (api.models.ApiConsumer/ApiKey) as of
 # Phase 8 — see api/auth.py. Issue keys with `manage.py create_api_key`.
