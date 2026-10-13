@@ -46,13 +46,17 @@ whichever schedules are due.
 
 from __future__ import annotations
 
+import datetime as dt
+import os
 import time
 
 import structlog
 from common import metrics
 from common.cache import release_lock, try_acquire_lock
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 logger = structlog.get_logger("ingestion")
 
@@ -62,13 +66,33 @@ logger = structlog.get_logger("ingestion")
 # from running that job.
 _LOCK_TTL_SECONDS = 600
 
-_ALL_JOBS = (
+_DEFAULT_JOBS = (
     "ingest_transactions",
     "ingest_calling_sheet",
     "sync_daily_snapshots",
     "poll_telegram",
     "run_autopilot",
 )
+# Bank-flow / estimate pipeline. OPT-IN: runs only when named in --jobs / WATCH_JOBS (the
+# worker-bankflow service), so a plain `worker` behaves exactly as before. In a pass they run in
+# this order: statements -> re-attribution -> PMJDY -> 06:00 snapshot -> estimator verdict ->
+# estimates.
+_BANKFLOW_JOBS = (
+    "ingest_bank_statements",
+    "build_bank_flows",
+    "ingest_pmjdy",
+    "snapshot_calling_sheet_baseline",
+    "evaluate_account_count_hypothesis",
+    "compute_daily_estimates",
+)
+_ALL_JOBS = _DEFAULT_JOBS + _BANKFLOW_JOBS
+
+
+def snapshot_due(now: dt.datetime, at: str, last_run_date: dt.date | None) -> bool:
+    """The once-a-day snapshot is due at/after `at` (HH:MM, same timezone as `now`) if it has not
+    already run on `now`'s date. A worker down at the target time still takes it on return."""
+    hh, mm = (int(x) for x in at.split(":"))
+    return now.time() >= dt.time(hh, mm) and last_run_date != now.date()
 
 
 class Command(BaseCommand):
@@ -108,6 +132,21 @@ class Command(BaseCommand):
             default=86400,
             help="Seconds between run_autopilot passes (default: 86400 = daily).",
         )
+        for flag, setting, label in (
+            ("--statement-interval", "BANKFLOW_STATEMENT_INTERVAL_SECONDS", "statement import"),
+            ("--build-flows-interval", "BANKFLOW_BUILD_FLOWS_INTERVAL_SECONDS", "re-attribution"),
+            ("--pmjdy-interval", "PMJDY_INTERVAL_SECONDS", "ingest_pmjdy"),
+            ("--hypothesis-interval", "HYPOTHESIS_INTERVAL_SECONDS", "estimator verdict"),
+            ("--estimate-interval", "ESTIMATE_INTERVAL_SECONDS", "compute_daily_estimates"),
+        ):
+            parser.add_argument(
+                flag, type=int, default=getattr(settings, setting),
+                help=f"Seconds between {label} passes (bank-flow worker; default {setting}).",
+            )
+        parser.add_argument(
+            "--snapshot-at", default=settings.BASELINE_SNAPSHOT_AT,
+            help="HH:MM IST for the once-a-day snapshot_calling_sheet_baseline (default 06:00).",
+        )
         parser.add_argument(
             "--once",
             action="store_true",
@@ -121,13 +160,14 @@ class Command(BaseCommand):
             help=(
                 "Comma-separated subset of {{{}}} for this instance to run — the rest are "
                 "skipped entirely (their interval never ticks, no lock contention). Empty "
-                "(default) runs all five, exactly as before this flag existed. Lets compose.yml "
-                "run separately-scalable worker roles from the same image/command — see "
+                "(default) runs the original five, exactly as before this flag existed; the "
+                "bank-flow jobs run only when named here. Lets compose.yml run "
+                "separately-scalable worker roles from the same image/command — see "
                 "docs/DEPLOYMENT.md's worker topology.".format(", ".join(_ALL_JOBS))
             ),
         )
 
-    def _run_locked_job(self, job_name: str) -> None:
+    def _run_locked_job(self, job_name: str, **job_kwargs) -> None:
         """Cross-replica mutual exclusion for one scheduled tick — see
         common/cache.py's try_acquire_lock docstring for the fail-open/
         idempotent-jobs reasoning. Lock is released immediately after the
@@ -138,13 +178,27 @@ class Command(BaseCommand):
             metrics.record_job_run(job=job_name, outcome="skipped_locked")
             return
         try:
-            call_command(job_name)
+            call_command(job_name, **job_kwargs)
             metrics.record_job_run(job=job_name, outcome="ok")
         except Exception:  # noqa: BLE001 — a bad file/run must not kill the worker loop
             logger.exception("poll_failed", stage="SCHEDULER", job=job_name)
             metrics.record_job_run(job=job_name, outcome="failed")
         finally:
             release_lock(f"watch:{job_name}")
+
+    def _run_statement_import(self) -> None:
+        """Read-only import of the other team's statement folder. If the folder is not mounted /
+        reachable, say so and skip -- never fail the whole worker pass for a missing input."""
+        path = settings.BANKFLOW_WATCH_DIR
+        if not os.path.isdir(path):
+            logger.warning("skipped_no_input", stage="SCHEDULER", job="ingest_bank_statements",
+                           path=path)
+            metrics.record_job_run(job="ingest_bank_statements", outcome="skipped_no_input")
+            return
+        self._run_locked_job(
+            "ingest_bank_statements", path=path, recursive=True,
+            pattern=settings.BANKFLOW_STATEMENT_PATTERN, max_file_mb=settings.BANKFLOW_MAX_FILE_MB,
+        )
 
     def handle(self, *args, **options):
         interval = options["interval"]
@@ -155,7 +209,9 @@ class Command(BaseCommand):
         run_once = options["once"]
         jobs_arg = options["jobs"].strip()
         active_jobs = (
-            {j.strip() for j in jobs_arg.split(",") if j.strip()} if jobs_arg else set(_ALL_JOBS)
+            {j.strip() for j in jobs_arg.split(",") if j.strip()}
+            if jobs_arg
+            else set(_DEFAULT_JOBS)
         )
         unknown = active_jobs - set(_ALL_JOBS)
         if unknown:
@@ -165,7 +221,7 @@ class Command(BaseCommand):
         tick = min(
             interval, calling_sheet_interval, snapshot_interval, telegram_interval,
             autopilot_interval,
-        )
+        )  # <= 60 s by default; also what the 06:00 time-of-day check needs
         logger.info(
             "started",
             stage="SCHEDULER",
@@ -190,6 +246,15 @@ class Command(BaseCommand):
         last_snapshot_run = 0.0
         last_telegram_run = 0.0
         last_autopilot_run = 0.0
+        last_bf = dict.fromkeys(_BANKFLOW_JOBS, 0.0)
+        bf_interval = {
+            "ingest_bank_statements": options["statement_interval"],
+            "build_bank_flows": options["build_flows_interval"],
+            "ingest_pmjdy": options["pmjdy_interval"],
+            "evaluate_account_count_hypothesis": options["hypothesis_interval"],
+            "compute_daily_estimates": options["estimate_interval"],
+        }
+        last_snapshot_date: dt.date | None = None
         while True:
             now = time.time()
 
@@ -222,6 +287,25 @@ class Command(BaseCommand):
             ):
                 self._run_locked_job("run_autopilot")
                 last_autopilot_run = time.time()
+
+            now = time.time()
+            for job in _BANKFLOW_JOBS:
+                if job not in active_jobs:
+                    continue
+                if job == "snapshot_calling_sheet_baseline":
+                    local_now = timezone.localtime()
+                    due = snapshot_due(local_now, options["snapshot_at"], last_snapshot_date)
+                    if run_once or due:
+                        self._run_locked_job(job, expected_at=options["snapshot_at"])
+                        last_snapshot_date = local_now.date()
+                    continue
+                if not (run_once or now - last_bf[job] >= bf_interval[job]):
+                    continue
+                if job == "ingest_bank_statements":
+                    self._run_statement_import()
+                else:
+                    self._run_locked_job(job)
+                last_bf[job] = time.time()
 
             if run_once:
                 logger.info("stopped", stage="SCHEDULER", reason="once")

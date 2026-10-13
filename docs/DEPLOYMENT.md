@@ -346,3 +346,55 @@ Validation:
   docker compose ps
   curl http://127.0.0.1:<assigned-port>/health
 ```
+
+
+## Bank-flow and estimate rollout
+
+New in this release: the bank-flow statement pipeline, the PMJDY (new accounts) capture, daily estimates, the
+simplified dashboard, and a dedicated `worker-bankflow` service. Migrations are **additive** (new `bankflow_*`
+tables only, `bankflow` 0001-0005; no existing table changes), so stopping the new worker is a complete rollback.
+
+### 0. Before you deploy
+1. `.env` on the host: `GOOGLE_SERVICE_ACCOUNT_FILE_HOST` must point at the **real** service-account JSON (a file, not
+   a folder; if the path does not exist Docker creates an empty folder there and the sheet cannot be read).
+2. Statement folder: set `BANKFLOW_STATEMENT_DIR_HOST` (default `./data/bank_statements`). It belongs to another
+   team and is mounted **read-only**. Either let the container user read
+   `/home/kapil/login_automation/yonosbi-automation/downloads` (the owner grants it; do not change permissions
+   yourself), or keep a read-only copy in `./data/bank_statements` with a cron on the host:
+   `rsync -rt --ignore-existing --include='*/' --include='statement_1556_*' --exclude='*' <src>/ ./data/bank_statements/`
+3. Optional tuning (defaults shown in `.env.example`): `PMJDY_INTERVAL_SECONDS`, `ESTIMATE_INTERVAL_SECONDS`,
+   `BASELINE_SNAPSHOT_AT`, `ALERT_*`.
+
+### 1. Deploy
+```bash
+git fetch origin && git checkout <this-branch>          # or merge it to main first
+docker compose build web                                 # one image for every service; collectstatic runs at start
+docker compose run --rm --no-deps --entrypoint sh web -c 'cd /app/app && python manage.py migrate'
+docker compose up -d web lb worker-ingestion worker-calling-sheet worker-telegram worker-autopilot agent-worker
+docker compose up -d worker-bankflow                     # the new, opt-in worker
+```
+
+### 2. One-time data steps (the worker would also do these within the hour)
+```bash
+docker compose exec -T worker-bankflow python manage.py flag_invalid_csp_codes --dry-run   # lists non-1A85XXXX rows
+docker compose exec -T worker-bankflow python manage.py flag_invalid_csp_codes
+docker compose exec -T worker-bankflow python manage.py ingest_bank_statements --recursive --pattern 'statement_1556_*' --max-file-mb 100
+docker compose exec -T worker-bankflow python manage.py build_bank_flows
+docker compose exec -T worker-bankflow python manage.py ingest_pmjdy --force
+docker compose exec -T worker-bankflow python manage.py snapshot_calling_sheet_baseline
+docker compose exec -T worker-bankflow python manage.py evaluate_account_count_hypothesis
+docker compose exec -T worker-bankflow python manage.py compute_daily_estimates
+docker compose exec -T worker-bankflow python manage.py bank_flow_coverage      # what is loaded, what is missing
+```
+
+### 3. Check it is alive
+```bash
+docker compose logs --tail=50 worker-bankflow                       # job_run lines, no poll_failed
+docker compose exec -T web python manage.py shell -c "from csp.models import IngestLog as L; print(list(L.objects.filter(source__in=['pmjdy','baseline_snapshot']).order_by('-id').values_list('source','status','error_summary')[:6]))"
+```
+Then open `/dashboard/` (staff). Expected on day 1: customer accounts and new accounts for the month, money in/out
+from the statements, SBI-reported average balance, and "Reliable estimate not available yet" -- there is no history yet.
+The estimate appears by itself once enough history has accumulated (`bank_flow_coverage` shows the progress).
+
+### 4. Roll back
+`docker compose stop worker-bankflow`. Nothing else depends on it; the migrations only add tables.

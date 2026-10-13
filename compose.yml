@@ -116,6 +116,22 @@ services:
     environment:
       WATCH_JOBS: "run_autopilot"
 
+  # Bank-flow + estimate pipeline (opt-in jobs, see ingestion/management/commands/watch_transactions.py):
+  #   hourly   ingest_bank_statements, ingest_pmjdy, compute_daily_estimates
+  #   daily    build_bank_flows, evaluate_account_count_hypothesis
+  #   06:00 IST snapshot_calling_sheet_baseline (once a day)
+  # The statement folder belongs to another team: mount it READ-ONLY (the worker never writes to it).
+  worker-bankflow:
+    <<: *worker-base
+    container_name: ${APP_NAME}-worker-bankflow
+    environment:
+      WATCH_JOBS: "ingest_bank_statements,build_bank_flows,ingest_pmjdy,snapshot_calling_sheet_baseline,evaluate_account_count_hypothesis,compute_daily_estimates"
+      BANKFLOW_WATCH_DIR: /bank_statements
+    volumes:
+      - ${TRANSACTION_DATA_DIR_HOST}:/data
+      - ${GOOGLE_SERVICE_ACCOUNT_FILE_HOST}:/run/secrets/google-sa.json:ro
+      - ${BANKFLOW_STATEMENT_DIR_HOST:-./data/bank_statements}:/bank_statements:ro
+
   redis:
     image: redis:7-alpine
     container_name: ${APP_NAME}-redis
