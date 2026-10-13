@@ -143,8 +143,8 @@ def daily_summary(summary: dict, attention_total: int, high: int, days: int) -> 
         diff = f["net_pool_flow"]
         word = "more came in than went out" if diff >= 0 else "more went out than came in"
         out.append(
-            f"{inr(f['pool_credits'])} came into the pool and {inr(f['pool_debits'])} "
-            f"went out: {inr(abs(diff))} {word}."
+            f"From withdrawals and deposits, {inr(f['pool_credits'])} came into the pool and "
+            f"{inr(f['pool_debits'])} went out: {inr(abs(diff))} {word}."
         )
     else:
         out.append("No bank statements cover this period yet, so money movement is not shown.")

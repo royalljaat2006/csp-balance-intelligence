@@ -74,6 +74,15 @@ a reversal flips sign). Money transfer, off-us withdrawal, loan/initial/SSA depo
 are **excluded** by default. Alternatives (`customer_wd_dep_xfer`, `pool_net`) are selectable offline.
 The channel→category map is inferred from labels and needs business confirmation.
 
+**The dashboard counts the same types.** The headline money in / money out (Home, Money Movement, the
+per-CSP flow, the alerts and `/api/v1/bankflow/dashboard-summary`) is the sum of the `withdrawal` and
+`deposit` categories only (`intelligence.COUNTED_CATEGORIES`, taken from the default definition). Every
+other category is reported separately as `flows.other_types` ("not counted here") and is never hidden. On
+the first production import (18 statement days) the picture was: withdrawals + deposits ≈ ₹64.1 Cr in /
+₹8.0 Cr out, while money transfers alone were ₹39.0 Cr out and EKO deductions (no KO code, so unattributed)
+₹20.3 Cr out; counting every type had made "money out" about six times too large. The unattributed share
+still compares all types with all types.
+
 ## KO-code resolution
 
 Only **exact** matches are attributed to a CSP. A code that is a known code plus trailing characters

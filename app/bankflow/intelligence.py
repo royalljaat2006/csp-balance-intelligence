@@ -139,17 +139,42 @@ def account_counts(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]
     return out
 
 
+# Only these statement categories feed the estimate (flows.DEFAULT_DEFINITION), so only they make
+# up the headline money in/out and each CSP's flow. Every other category (transfers, off-us
+# withdrawals, loan/initial/SSA deposits, unrecognised channels) is reported separately as "other
+# types": never added to the headline, never hidden.
+COUNTED_CATEGORIES: tuple[str, ...] = flows.FLOW_DEFINITIONS[flows.DEFAULT_DEFINITION][1] or ()
+
+
+def _split_flow(cats: dict | None) -> tuple[tuple, tuple]:
+    """(credit, debit, count) of the counted categories and of all the others, from one
+    FlowAggregate.by_category."""
+    counted: list = [ZERO, ZERO, 0]
+    other: list = [ZERO, ZERO, 0]
+    for cat, v in (cats or {}).items():
+        t = counted if cat in COUNTED_CATEGORIES else other
+        t[0] += Decimal(v["credit"])
+        t[1] += Decimal(v["debit"])
+        t[2] += int(v["count"])
+    return tuple(counted), tuple(other)
+
+
 def _flow_rows(date_from: dt.date, date_to: dt.date):
-    return FlowAggregate.objects.filter(
+    """Attributed (exact KO match) flow per CSP and day, as
+    (csp, day, credit, debit, n, by_category, other) where credit/debit/n are the counted
+    categories only and `other` is the (credit, debit, n) of everything else."""
+    rows = FlowAggregate.objects.filter(
         resolution_mode=flows.MODE_EXACT, flow_date__gte=date_from, flow_date__lte=date_to
-    ).values_list("csp_id", "flow_date", "credit_amount", "debit_amount", "txn_count",
-                  "by_category")
+    ).values_list("csp_id", "flow_date", "by_category")
+    for c, d, cats in rows.iterator():
+        (cr, db, n), other = _split_flow(cats)
+        yield c, d, cr, db, n, cats, other
 
 
 def flow_by_csp(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]:
     ids = set(ids)
     out: dict[str, dict] = {}
-    for c, d, cr, db, n, _cat in _flow_rows(date_from, date_to).iterator():
+    for c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to):
         if c not in ids:
             continue
         r = out.setdefault(c, {"credits": ZERO, "debits": ZERO, "txn_count": 0, "days": set()})
@@ -241,14 +266,17 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     sources = {s: sum(1 for c in counts.values() if c["source"] == s)
                for s in ("pmjdy", "calling_sheet")}
 
-    credits = debits = ZERO
-    txns = 0
+    credits = debits = other_cr = other_db = ZERO
+    txns = other_n = 0
     days: set[dt.date] = set()
     cat_split: dict[str, dict] = defaultdict(lambda: {"credit": ZERO, "debit": ZERO})
-    for _c, d, cr, db, n, cats in _flow_rows(date_from, date_to).iterator():
+    for _c, d, cr, db, n, cats, other in _flow_rows(date_from, date_to):
         credits += cr
         debits += db
         txns += n
+        other_cr += other[0]
+        other_db += other[1]
+        other_n += other[2]
         days.add(d)
         for cat, v in (cats or {}).items():
             cat_split[cat]["credit"] += Decimal(v["credit"])
@@ -260,6 +288,9 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     )
     unres_amt = unresolved.aggregate(c=Sum("credit_amount"), d=Sum("debit_amount"))
     unres_total = (unres_amt["c"] or ZERO) + (unres_amt["d"] or ZERO)
+    # the unattributed share compares like with like: statement value of ALL types that could not
+    # be linked to a CSP against statement value of ALL types that could
+    attributed_all = credits + debits + other_cr + other_db
 
     obs = latest_observed(ids)
     est_date = latest_estimate_date()
@@ -317,13 +348,20 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
             "coverage": len(days) / range_days if range_days else 0,
             "attribution": "exact KO match only",
             "unattributed_amount": unres_total,
-            "unattributed_share": _f(unres_total / (unres_total + credits + debits))
-            if (unres_total + credits + debits) else None,
+            "unattributed_share": _f(unres_total / (unres_total + attributed_all))
+            if (unres_total + attributed_all) else None,
+            "counted_types": list(COUNTED_CATEGORIES),
+            "other_types": {
+                "credit": other_cr, "debit": other_db, "txn_count": other_n,
+                "note": "Money transfers, other-bank (off-us) withdrawals, loan/initial/SSA "
+                        "deposits and unrecognised channels: shown here, not in the totals above.",
+            },
             "provisional_channel_split": {
                 k: {"credit": v["credit"], "debit": v["debit"]} for k, v in cat_split.items()
             },
-            "split_note": "Channel->deposit/withdrawal mapping is unconfirmed; pool credit/debit "
-                          "direction is what the statement states.",
+            "split_note": "Only withdrawal and deposit transactions are counted in the totals. "
+                          "The channel->deposit/withdrawal mapping is unconfirmed; pool "
+                          "credit/debit direction is what the statement states.",
         },
         "observed_avg_balance": {
             "csps_with_observation": len(obs), "coverage": len(obs) / len(ids) if ids else None,
@@ -345,7 +383,7 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
 # ---------------------------------------------------------------- movement
 def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
     by_day: dict[dt.date, dict] = {}
-    for _c, d, cr, db, n, _cat in _flow_rows(date_from, date_to).iterator():
+    for _c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to):
         r = by_day.setdefault(d, {"credits": ZERO, "debits": ZERO, "txn_count": 0})
         r["credits"] += cr
         r["debits"] += db

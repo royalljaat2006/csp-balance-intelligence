@@ -307,3 +307,53 @@ def test_viewer_sees_home_without_staff_only_links(client, world):
     html = client.get("/dashboard/").content.decode()
     assert "Customer accounts" in html and "Technical validation details" not in html
     assert ">Administration<" not in html
+
+
+# ---------------------------------------------------------------- only the selected types count
+def _mixed_flow(code, day):
+    """One CSP-day with every kind of statement row the real data contains."""
+    cats = {
+        "withdrawal": {"count": 3, "credit": "9000", "debit": "0"},
+        "deposit": {"count": 2, "credit": "0", "debit": "2000"},
+        "transfer": {"count": 5, "credit": "0", "debit": "50000"},
+        "offus": {"count": 1, "credit": "700", "debit": "0"},
+        "other_product": {"count": 1, "credit": "0", "debit": "300"},
+        "unclassified": {"count": 1, "credit": "100", "debit": "0"},
+    }
+    FlowAggregate.objects.create(
+        csp_id=code, flow_date=day, resolution_mode="exact_only", txn_count=13,
+        credit_amount=D(9800), debit_amount=D(52300), recon_status="RECONCILED",
+        by_category=cats)
+
+
+def test_headline_money_counts_only_withdrawals_and_deposits_and_reports_the_rest_apart():
+    _csp("M")
+    _mixed_flow("M", TODAY)
+    fl = intelligence.dashboard_summary(*_range())["flows"]
+    # only withdrawal + deposit (the types the estimate uses) are in the headline ...
+    assert fl["counted_types"] == ["withdrawal", "deposit"]
+    assert fl["pool_credits"] == D(9000) and fl["pool_debits"] == D(2000)
+    assert fl["net_pool_flow"] == D(7000) and fl["txn_count"] == 5
+    # ... the money transfer debit (50,000) does NOT inflate "money out" ...
+    assert fl["pool_debits"] < D(50000)
+    # ... but nothing is hidden: the other types are reported on their own
+    assert fl["other_types"]["credit"] == D(800) and fl["other_types"]["debit"] == D(50300)
+    assert fl["other_types"]["txn_count"] == 8
+
+
+def test_unattributed_share_compares_all_types_with_all_types():
+    _csp("M")
+    _mixed_flow("M", TODAY)  # attributed, all types: 9,800 + 52,300 = 62,100
+    UnresolvedFlowDaily.objects.create(flow_date=TODAY, status="unmatched", txn_count=1,
+                                       credit_amount=D(0), debit_amount=D(62100))
+    assert intelligence.dashboard_summary(*_range())["flows"]["unattributed_share"] == 0.5
+
+
+def test_per_csp_flow_and_movement_use_the_same_selected_types():
+    _csp("M")
+    _mixed_flow("M", TODAY)
+    f = intelligence.flow_by_csp(["M"], *_range())["M"]
+    assert (f["credits"], f["debits"], f["txn_count"]) == (D(9000), D(2000), 5)
+    day = next(r for r in intelligence.network_movement(*_range())["series"]
+               if r["date"] == TODAY)
+    assert (day["pool_credits"], day["pool_debits"]) == (D(9000), D(2000))

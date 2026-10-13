@@ -25,6 +25,12 @@
       <div class="sm-big {{ fl.net_pool_flow|tone }}">{% if fl.days_with_data %}{{ fl.net_pool_flow|signed_inr }}{% else %}&mdash;{% endif %}</div>
       <div class="sm-sub flat">{% if fl.days_with_data %}{% if fl.net_pool_flow >= 0 %}More came in than went out{% else %}More went out than came in{% endif %}{% endif %}</div></article>
   </section>
+  {% if fl.days_with_data %}
+  <p class="sm-mute">These totals count customer withdrawals and deposits only.
+    {% if fl.other_types.txn_count %}Not counted: money transfers, other-bank withdrawals, loan, initial and SSA deposits and
+    unrecognised types &mdash; {{ fl.other_types.credit|inr }} in and {{ fl.other_types.debit|inr }} out across
+    {{ fl.other_types.txn_count|intc }} transactions.{% endif %}</p>
+  {% endif %}
 
   <section class="sm-panel" aria-labelledby="mm-trend">
     <div class="sm-panel-head"><h2 id="mm-trend">Trend</h2>
