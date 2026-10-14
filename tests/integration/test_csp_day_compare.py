@@ -235,3 +235,19 @@ def test_api_csp_day_compare_scope_shape_and_validation(client, world, api_key):
     assert body["rows"][0]["csp_code"] == "1A850001" and body["rows"][0]["net_today"] == 4000.0
     assert "customer_name" not in body["rows"][0] and "mobile" not in body["rows"][0]
     assert client.get(url + "?sort=bogus", HTTP_X_API_KEY=report).status_code == 422
+
+
+# ---------------------------------------------------------------- lazy loading
+def test_the_heat_map_is_not_shipped_with_the_page_but_fetched_on_demand(staff):
+    page = staff.get("/dashboard/").content.decode()
+    assert 'id="fh-heat-data"' not in page            # no ~100 KB payload in every page load
+    assert 'data-url="/dashboard/data/heat/?range=30"' in page
+    r = staff.get("/dashboard/data/heat/?range=30")
+    assert r.status_code == 200 and "private" in r["Cache-Control"]
+    cells = r.json()
+    assert {c["code"] for c in cells} == {"1A850001", "1A850002", "1A850003"}
+    assert set(cells[0]) == {"code", "name", "growth_pct", "net_flow", "fresh", "delta", "status"}
+
+
+def test_the_heat_map_endpoint_needs_a_login(client, world):
+    assert client.get("/dashboard/data/heat/").status_code == 302

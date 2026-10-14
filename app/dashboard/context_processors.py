@@ -14,12 +14,10 @@ chrome; neither needs "which dashboard theme is active."
 from __future__ import annotations
 
 from autopilot.models import AnomalyFlag
-from common.cache import cache_aside
 from csp.services import get_data_freshness
 from django.conf import settings
-from django.utils import timezone
 
-from . import navigation
+from . import navigation, shell
 
 MODE_COOKIE = "csp_mode"
 DEFAULT_MODE = "tracker"
@@ -76,38 +74,17 @@ def dashboard_shell(request):
         ).count()
         match = getattr(request, "resolver_match", None)
         context.update(navigation.build(match.url_name if match else None, request.user.is_staff))
-        context["needs_attention_count"] = _needs_attention_count()
         name = match.url_name if match else None
-        context["day_compare"] = _day_compare() if name in navigation.COMPARE_PAGES else None
+        # Peek only: a missing value is fetched by the page after it has rendered (shell.py).
+        have_count, count = shell.peek_attention_count()
+        context["needs_attention_count"] = count
+        pending = not have_count
+        context["day_compare"] = None
+        context["day_compare_pending"] = False
+        if name in navigation.COMPARE_PAGES:
+            have_strip, strip = shell.peek_day_compare()
+            context["day_compare"] = strip if have_strip else None
+            context["day_compare_pending"] = not have_strip
+            pending = pending or not have_strip
+        context["shell_lazy"] = pending
     return context
-
-
-def _day_compare() -> dict | None:
-    """Today (the present IST day) against yesterday, for the strip at the top of every data page.
-    Cached for a minute and keyed by the date, so it rolls over at midnight. None -- strip hidden
-    -- if it cannot be computed; the shell must never fail because a comparison could not load."""
-    try:
-        from bankflow import intelligence
-
-        today = timezone.localdate()
-        return cache_aside(
-            f"nav:daycompare:{today}", ttl=60, fn=lambda: intelligence.day_compare(today)
-        )
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _needs_attention_count() -> int | None:
-    """Real count of items that should be checked (high + medium), for the sidebar badge.
-    None -- badge hidden -- if it cannot be computed; never a placeholder number."""
-    try:
-        from bankflow import intelligence
-
-        def _count():
-            frm, to = intelligence.resolve_range(30)
-            items = intelligence.exceptions(frm, to, limit=100000)["items"]
-            return sum(1 for i in items if i["severity"] in ("high", "medium"))
-
-        return cache_aside("nav:attention_count", ttl=60, fn=_count) or None
-    except Exception:  # noqa: BLE001 -- the shell must never fail because a badge could not load
-        return None

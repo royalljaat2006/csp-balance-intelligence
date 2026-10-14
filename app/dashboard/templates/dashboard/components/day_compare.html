@@ -28,16 +28,3 @@
       <a href="{% url 'dashboard:data_progress' %}">See when each figure was last updated</a>.</p>
   </details>
 </section>
-<script>
-(function () {
-  document.querySelectorAll("[data-dc-details]").forEach(function (d) {
-    var saved = null;
-    try { saved = localStorage.getItem("dc-open"); } catch (e) {}
-    // a phone starts with the strip folded away (the page content comes first); a saved choice wins
-    if (saved === "0" || (saved === null && window.innerWidth < 700)) d.removeAttribute("open");
-    d.addEventListener("toggle", function () {
-      try { localStorage.setItem("dc-open", d.open ? "1" : "0"); } catch (e) {}
-    });
-  });
-})();
-</script>

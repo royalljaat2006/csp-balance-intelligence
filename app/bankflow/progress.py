@@ -17,7 +17,7 @@ from collections import Counter
 
 from csp.models import IngestLog
 from django.conf import settings
-from django.db.models import Count, Max, Min, Sum
+from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
 
 from .models import (
@@ -74,14 +74,18 @@ def _health(last_at, now, every_seconds: int) -> str:
 def _log_day(source: str, day: dt.date) -> dict:
     start, end = day_bounds(day)
     qs = IngestLog.objects.filter(source=source, started_at__gte=start, started_at__lt=end)
-    a = qs.aggregate(n=Count("id"), first=Min("started_at"), last=Max("started_at"))
-    failed = qs.filter(status=IngestLog.Status.FAILED).count()
-    last_ok = qs.filter(status__in=[IngestLog.Status.SUCCESS, IngestLog.Status.PARTIAL]).aggregate(
-        m=Max("finished_at"))["m"]
-    last_row = qs.order_by("-started_at").first()
-    return {"n": a["n"], "first": a["first"], "last": a["last"], "failed": failed,
-            "last_ok": last_ok,
-            "last_error": (last_row.error_summary if last_row and last_row.error_summary else "")}
+    # one aggregate query for every figure (this used to be four queries per source per day)
+    a = qs.aggregate(
+        n=Count("id"), first=Min("started_at"), last=Max("started_at"),
+        failed=Count("id", filter=Q(status=IngestLog.Status.FAILED)),
+        last_ok=Max("finished_at", filter=Q(status__in=[IngestLog.Status.SUCCESS,
+                                                        IngestLog.Status.PARTIAL])),
+    )
+    error = ""
+    if a["n"]:
+        error = qs.order_by("-started_at").values_list("error_summary", flat=True).first() or ""
+    return {"n": a["n"], "first": a["first"], "last": a["last"], "failed": a["failed"],
+            "last_ok": a["last_ok"], "last_error": error}
 
 
 def _runs_state(day_is_today: bool, n: int, failed: int) -> str:

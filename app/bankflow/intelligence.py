@@ -23,6 +23,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, NamedTuple
 
+from common.cache import cache_aside
 from csp.models import Csp, DailyBalance
 from csp.models import Transaction as CspTransaction
 from csp.rules import ELIGIBILITY_MIN_ACCOUNTS
@@ -84,16 +85,45 @@ def _tracked() -> dict[str, Csp]:
     return {c.csp_code: c for c in Csp.objects.tracked()}
 
 
+def _memo(key: str, fn):
+    """Cache one expensive building block for the current data generation (see common/cache.py):
+    anything that writes the data it reads bumps the generation, so a long TTL costs no
+    freshness."""
+    return cache_aside(key, ttl=settings.DASHBOARD_CACHE_TTL, fn=fn)
+
+
+def _latest_readings(day: dt.date | None, *, with_count: bool) -> dict[str, tuple]:
+    """{csp: (SBI average balance, account count, reading date)}: each CSP's newest observed
+    reading on or before `day` (None = the newest there is), demo and carry-forward rows excluded,
+    optionally only readings that carry an account count.
+
+    One index probe per CSP (LATERAL) instead of sorting the whole balance history for every
+    question, and cached: this was asked 6-16 times a page, ~35 ms each and growing with history."""
+    def compute():
+        from django.db import connection
+
+        extra = "AND b.account_count IS NOT NULL" if with_count else ""
+        sql = f"""
+            SELECT c.csp_code, l.daily_avg_balance, l.account_count, l.balance_date
+            FROM {Csp._meta.db_table} c
+            JOIN LATERAL (
+                SELECT b.daily_avg_balance, b.account_count, b.balance_date
+                FROM {DailyBalance._meta.db_table} b
+                WHERE b.csp_id = c.csp_code AND b.balance_date <= %s {extra}
+                  AND b.source <> ALL(%s)
+                ORDER BY b.balance_date DESC LIMIT 1
+            ) l ON TRUE
+        """
+        with connection.cursor() as cur:
+            cur.execute(sql, [day or dt.date.max, [str(x) for x in NOT_OBSERVATIONS]])
+            return {c: (avg, n, d) for c, avg, n, d in cur.fetchall()}
+
+    return _memo(f"bf:latest_readings:{day}:{int(with_count)}", compute)
+
+
 def _sheet_counts_as_of(date: dt.date, ids) -> dict[str, tuple[int | None, dt.date]]:
-    rows = (
-        DailyBalance.objects.filter(balance_date__lte=date, csp_id__in=list(ids),
-                                    account_count__isnull=False)
-        .exclude(source__in=NOT_OBSERVATIONS)
-        .order_by("csp_id", "-balance_date")
-        .distinct("csp_id")
-        .values_list("csp_id", "account_count", "balance_date")
-    )
-    return {c: (n, d) for c, n, d in rows}
+    snap = _latest_readings(date, with_count=True)
+    return {c: (snap[c][1], snap[c][2]) for c in ids if c in snap}
 
 
 def account_counts(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]:
@@ -148,18 +178,6 @@ def account_counts(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]
 COUNTED_CATEGORIES: tuple[str, ...] = flows.FLOW_DEFINITIONS[flows.DEFAULT_DEFINITION][1] or ()
 
 
-class FlowRow(NamedTuple):
-    csp: str
-    day: dt.date
-    credit: Decimal        # pool credits of the counted categories
-    debit: Decimal         # pool debits of the counted categories
-    n: int                 # transactions in the counted categories
-    cats: dict             # the stored by_category breakdown
-    other: tuple           # (credit, debit, n) of every category that is not counted
-    withdrawals: Decimal   # cash customers took out, net of reversals
-    deposits: Decimal      # cash customers put in, net of reversals
-
-
 def _split_flow(cats: dict | None) -> tuple[dict, tuple]:
     """One FlowAggregate.by_category split into the counted categories (with the customer
     withdrawals and deposits) and everything else."""
@@ -183,46 +201,71 @@ def _split_flow(cats: dict | None) -> tuple[dict, tuple]:
     return counted, tuple(other)
 
 
-def _flow_rows(date_from: dt.date, date_to: dt.date, ids=None):
-    """Attributed (exact KO match) flow per CSP and day as FlowRow. credit/debit/n and the
-    withdrawals/deposits are the counted categories only; `other` is everything else. `ids`
-    limits it to those CSPs (the dashboard passes the tracked ones)."""
-    qs = FlowAggregate.objects.filter(
-        resolution_mode=flows.MODE_EXACT, flow_date__gte=date_from, flow_date__lte=date_to
-    )
+class FlowGroup(NamedTuple):
+    """The counted-category figures of one group of FlowAggregate rows (a CSP, a day, or all)."""
+    credit: Decimal        # pool credits of the counted categories
+    debit: Decimal         # pool debits of the counted categories
+    n: int                 # transactions in the counted categories
+    cats: dict             # {category: {"credit", "debit", "count"}} for every category
+    other: tuple           # (credit, debit, n) of every category that is not counted
+    withdrawals: Decimal   # cash customers took out, net of reversals
+    deposits: Decimal      # cash customers put in, net of reversals
+    days: frozenset        # the flow dates that contributed
+
+
+_FLOW_GROUP_KEY = {"csp": "fa.csp_id", "day": "fa.flow_date", "all": None}
+
+
+def _flow_groups(date_from: dt.date, date_to: dt.date, ids=None, *, by: str) -> dict:
+    """Attributed (exact KO match) flow, grouped `by` "csp", "day" or "all" (key None), summed in
+    the database from FlowAggregate.by_category. A 30-day range is ~16,000 aggregate rows with a
+    JSON breakdown each; decoding and folding those in Python cost ~0.2 s a page, while the
+    grouped result is a few hundred rows. `ids` limits it to those CSPs (the dashboard passes the
+    tracked ones)."""
+    from django.db import connection
+
+    key = _FLOW_GROUP_KEY[by]
+    select_key = key or "NULL"                      # "all": one group, so no grouping column
+    group_cat = f"{key}, e.key" if key else "e.key"
+    group_days = f"GROUP BY {key}" if key else ""
+    where = "fa.resolution_mode = %s AND fa.flow_date BETWEEN %s AND %s"
+    params: list = [flows.MODE_EXACT, date_from, date_to]
     if ids is not None:
-        qs = qs.filter(csp_id__in=list(ids))
-    rows = qs.values_list("csp_id", "flow_date", "by_category")
-    for c, d, cats in rows.iterator():
-        counted, other = _split_flow(cats)
-        yield FlowRow(c, d, counted["credit"], counted["debit"], counted["n"], cats, other,
-                      counted["withdrawals"], counted["deposits"])
-
-
-def flow_by_csp(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]:
-    ids = set(ids)
-    out: dict[str, dict] = {}
-    for fr in _flow_rows(date_from, date_to):
-        if fr.csp not in ids:
-            continue
-        r = out.setdefault(fr.csp, {"credits": ZERO, "debits": ZERO, "withdrawals": ZERO,
-                                    "deposits": ZERO, "txn_count": 0, "days": set()})
-        r["credits"] += fr.credit
-        r["debits"] += fr.debit
-        r["withdrawals"] += fr.withdrawals
-        r["deposits"] += fr.deposits
-        r["txn_count"] += fr.n
-        r["days"].add(fr.day)
+        where += " AND fa.csp_id = ANY(%s)"
+        params.append(list(ids))
+    table = FlowAggregate._meta.db_table
+    with connection.cursor() as cur:
+        cur.execute(
+            f"""SELECT {select_key}, e.key, SUM((e.value->>'credit')::numeric),
+                       SUM((e.value->>'debit')::numeric), SUM((e.value->>'count')::bigint)
+                FROM {table} fa CROSS JOIN LATERAL jsonb_each(fa.by_category) AS e(key, value)
+                WHERE {where} GROUP BY {group_cat}""", params)
+        cats: dict = defaultdict(dict)
+        for k, cat, cr, db, n in cur.fetchall():
+            cats[k][cat] = {"credit": cr or ZERO, "debit": db or ZERO, "count": int(n or 0)}
+        cur.execute(
+            f"SELECT {select_key}, array_agg(DISTINCT fa.flow_date) FROM {table} fa "
+            f"WHERE {where} {group_days}", params)
+        days = {k: frozenset(d or ()) for k, d in cur.fetchall()}
+    out = {}
+    for k, per_cat in cats.items():
+        counted, other = _split_flow(per_cat)
+        out[k] = FlowGroup(counted["credit"], counted["debit"], counted["n"], per_cat, other,
+                           counted["withdrawals"], counted["deposits"], days.get(k, frozenset()))
     return out
 
 
+def flow_by_csp(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]:
+    return {
+        csp: {"credits": g.credit, "debits": g.debit, "withdrawals": g.withdrawals,
+              "deposits": g.deposits, "txn_count": g.n, "days": set(g.days)}
+        for csp, g in _flow_groups(date_from, date_to, set(ids), by="csp").items()
+    }
+
+
 def latest_observed(ids) -> dict[str, dict]:
-    rows = (
-        DailyBalance.objects.filter(csp_id__in=list(ids)).exclude(source__in=NOT_OBSERVATIONS)
-        .order_by("csp_id", "-balance_date").distinct("csp_id")
-        .values_list("csp_id", "daily_avg_balance", "balance_date")
-    )
-    return {c: {"avg": v, "last_seen": d} for c, v, d in rows}
+    snap = _latest_readings(None, with_count=False)
+    return {c: {"avg": snap[c][0], "last_seen": snap[c][2]} for c in ids if c in snap}
 
 
 def latest_estimate_date() -> dt.date | None:
@@ -288,6 +331,13 @@ def _new_accounts(day: dt.date) -> dict:
 
 
 def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
+    """Cached per data generation: Home, Money Movement, Needs Attention, the sidebar badge and the
+    API all ask for the same range, and it used to be recomputed for each of them."""
+    return _memo(f"bf:summary:{date_from}:{date_to}",
+                 lambda: _dashboard_summary(date_from, date_to))
+
+
+def _dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     csps = _tracked()
     ids = list(csps)
     counts = account_counts(ids, date_from, date_to)
@@ -301,17 +351,13 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     txns = other_n = 0
     days: set[dt.date] = set()
     cat_split: dict[str, dict] = defaultdict(lambda: {"credit": ZERO, "debit": ZERO})
-    for fr in _flow_rows(date_from, date_to, ids):
-        credits += fr.credit
-        debits += fr.debit
-        withdrawals += fr.withdrawals
-        deposits += fr.deposits
-        txns += fr.n
-        other_cr += fr.other[0]
-        other_db += fr.other[1]
-        other_n += fr.other[2]
-        days.add(fr.day)
-        for cat, v in (fr.cats or {}).items():
+    total = _flow_groups(date_from, date_to, ids, by="all").get(None)
+    if total is not None:
+        credits, debits, txns = total.credit, total.debit, total.n
+        withdrawals, deposits = total.withdrawals, total.deposits
+        other_cr, other_db, other_n = total.other
+        days = set(total.days)
+        for cat, v in total.cats.items():
             cat_split[cat]["credit"] += Decimal(v["credit"])
             cat_split[cat]["debit"] += Decimal(v["debit"])
     range_days = (date_to - date_from).days + 1
@@ -417,15 +463,16 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
 
 # ---------------------------------------------------------------- movement
 def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
-    by_day: dict[dt.date, dict] = {}
-    for fr in _flow_rows(date_from, date_to, _tracked()):
-        r = by_day.setdefault(fr.day, {"credits": ZERO, "debits": ZERO, "withdrawals": ZERO,
-                                       "deposits": ZERO, "txn_count": 0})
-        r["credits"] += fr.credit
-        r["debits"] += fr.debit
-        r["withdrawals"] += fr.withdrawals
-        r["deposits"] += fr.deposits
-        r["txn_count"] += fr.n
+    return _memo(f"bf:movement:{date_from}:{date_to}",
+                 lambda: _network_movement(date_from, date_to))
+
+
+def _network_movement(date_from: dt.date, date_to: dt.date) -> dict:
+    by_day: dict[dt.date, dict] = {
+        day: {"credits": g.credit, "debits": g.debit, "withdrawals": g.withdrawals,
+              "deposits": g.deposits, "txn_count": g.n}
+        for day, g in _flow_groups(date_from, date_to, _tracked(), by="day").items()
+    }
     complete = flows.proven_complete_dates()
     acct = {r["date"]: r for r in pmjdy.daily_network_counts(date_from, date_to)}
     acct_source = "pmjdy" if any(r["total_accounts"] is not None for r in acct.values()) else None
@@ -537,14 +584,8 @@ def _new_accounts_as_of(day: dt.date, ids) -> dict | None:
 
 def _observed_by_csp(day: dt.date, ids) -> dict[str, tuple]:
     """{csp: (SBI average balance, account count)}: each CSP's newest reading on or before `day`."""
-    rows = (
-        DailyBalance.objects.filter(balance_date__lte=day, csp_id__in=list(ids),
-                                    account_count__isnull=False)
-        .exclude(source__in=NOT_OBSERVATIONS)
-        .order_by("csp_id", "-balance_date").distinct("csp_id")
-        .values_list("csp_id", "daily_avg_balance", "account_count")
-    )
-    return {c: (v, n) for c, v, n in rows}
+    snap = _latest_readings(day, with_count=True)
+    return {c: (snap[c][0], snap[c][1]) for c in ids if c in snap}
 
 
 def _observed_avg_as_of(day: dt.date, ids) -> tuple[Decimal | None, int]:
@@ -627,15 +668,11 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
     for d in (today, yesterday):
         withdrawn = deposited = o_credit = o_debit = ZERO
         n = o_n = 0
-        seen = False
-        for fr in _flow_rows(d, d, idset):
-            seen = True
-            withdrawn += fr.withdrawals
-            deposited += fr.deposits
-            n += fr.n
-            o_credit += fr.other[0]
-            o_debit += fr.other[1]
-            o_n += fr.other[2]
+        total = _flow_groups(d, d, idset, by="all").get(None)
+        seen = total is not None
+        if total is not None:
+            withdrawn, deposited, n = total.withdrawals, total.deposits, total.n
+            o_credit, o_debit, o_n = total.other
         state, note = _flow_state(d, coverage, "today" if d == today else "yesterday")
         fl[d] = {"seen": seen, "withdrawals": withdrawn if seen else None,
                  "deposits": deposited if seen else None, "n": n if seen else None,
@@ -735,11 +772,24 @@ def csp_day_compare_rows(
     """Every tracked CSP with the present day against the day before: customer accounts, new
     accounts, customer withdrawals and deposits (the statement's own figures for each day),
     deposits minus withdrawals, the SBI average balance and our estimate. Same definitions as
-    `day_compare`, built from a handful of batch queries (not one per CSP). A missing figure is
+    `day_compare`, built from a handful of batch queries (not one per CSP) and cached per data
+    generation; only search, order and the page are applied per request. A missing figure is
     None; a change needs both days. Returns (page of rows, total rows, day-level meta)."""
+    today = today or timezone.localdate()
+    rows, meta = _memo(f"bf:csp_day_rows:{today}", lambda: _csp_day_rows(today))
+    q = search.strip().lower()
+    if q:
+        rows = [r for r in rows if q in r["csp_code"].lower() or q in (r["name"] or "").lower()]
+    key = DAY_SORTS.get(sort, DAY_SORTS["accounts_change"])
+    # a CSP with no such figure goes last whichever way the list is ordered
+    present = sorted((r for r in rows if key(r) is not None), key=key, reverse=descending)
+    rows = present + [r for r in rows if key(r) is None]
+    return rows[offset: offset + limit], len(rows), meta
+
+
+def _csp_day_rows(today: dt.date) -> tuple[list[dict], dict]:
     from . import services
 
-    today = today or timezone.localdate()
     yesterday = today - dt.timedelta(days=1)
     tracked = _tracked()
     ids = list(tracked)
@@ -750,12 +800,7 @@ def csp_day_compare_rows(
     monthly = {d: {r.csp_id: r for r in _monthly_readings_as_of(d, ids)} for d, _ in d_labels}
     observed = {d: _observed_by_csp(d, ids) for d, _ in d_labels}
     estimates = {d: _estimates_by_csp(d, ids) for d, _ in d_labels}
-    flow: dict[dt.date, dict[str, FlowRow]] = {}
-    for d, _ in d_labels:
-        per: dict[str, FlowRow] = {}
-        for fr in _flow_rows(d, d, set(ids)):
-            per[fr.csp] = fr
-        flow[d] = per
+    flow = {d: _flow_groups(d, d, set(ids), by="csp") for d, _ in d_labels}
     states = {d: _flow_state(d, coverage, label) for d, label in d_labels}
     like_for_like = states[today][0] == "complete" and states[yesterday][0] == "complete"
 
@@ -792,13 +837,6 @@ def csp_day_compare_rows(
             "estimate_change": _diff(e_t[0] if e_t else None, e_y[0] if e_y else None),
             "estimate_status": e_t[2] if e_t else None,
         })
-    q = search.strip().lower()
-    if q:
-        rows = [r for r in rows if q in r["csp_code"].lower() or q in (r["name"] or "").lower()]
-    key = DAY_SORTS.get(sort, DAY_SORTS["accounts_change"])
-    # a CSP with no such figure goes last whichever way the list is ordered
-    present = sorted((r for r in rows if key(r) is not None), key=key, reverse=descending)
-    rows = present + [r for r in rows if key(r) is None]
     meta = {
         "today": today, "yesterday": yesterday, "like_for_like_money": like_for_like,
         "money_state": {"today": states[today][0], "yesterday": states[yesterday][0],
@@ -810,7 +848,7 @@ def csp_day_compare_rows(
                   "A dash means no figure is stored for that CSP and day, never zero.",
                   "A CSP's change needs both days; with only one day there is no change."],
     }
-    return rows[offset: offset + limit], len(rows), meta
+    return rows, meta
 
 
 def hourly_activity(hours: int = 48) -> dict:
@@ -848,6 +886,13 @@ SORTS = {
 
 
 def _build_rows(date_from: dt.date, date_to: dt.date) -> tuple[list[dict], dict]:
+    """The per-CSP table behind the growth explorer, the alerts and the sidebar badge: computed once
+    per data generation. Callers get their own copy (the cache hands back a fresh unpickled one), so
+    they can add fields to the rows."""
+    return _memo(f"bf:rows:{date_from}:{date_to}", lambda: _compute_rows(date_from, date_to))
+
+
+def _compute_rows(date_from: dt.date, date_to: dt.date) -> tuple[list[dict], dict]:
     csps = _tracked()
     ids = list(csps)
     counts = account_counts(ids, date_from, date_to)

@@ -267,3 +267,47 @@
     document.querySelectorAll("[data-cmdk-trigger]").forEach((btn) => btn.addEventListener("click", open));
   };
 })();
+
+/* Page shell: the today-vs-yesterday strip's fold state, and the lazy fetch of the shell data
+   (sidebar count + strip) for pages that rendered before it was cached. */
+(function () {
+  function initDayCompare(root) {
+    (root || document).querySelectorAll("[data-dc-details]").forEach(function (d) {
+      if (d.dataset.dcReady) return;
+      d.dataset.dcReady = "1";
+      var saved = null;
+      try { saved = localStorage.getItem("dc-open"); } catch (e) {}
+      // a phone starts with the strip folded away (the page content comes first); a saved choice wins
+      if (saved === "0" || (saved === null && window.innerWidth < 700)) d.removeAttribute("open");
+      d.addEventListener("toggle", function () {
+        try { localStorage.setItem("dc-open", d.open ? "1" : "0"); } catch (e) {}
+      });
+    });
+  }
+  window.initDayCompare = initDayCompare;
+
+  function lazyShell() {
+    var url = document.body.getAttribute("data-shell-url");
+    if (!url || document.body.getAttribute("data-shell-lazy") !== "1") return;
+    var run = function () {
+      fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          var slot = document.getElementById("dc-lazy");
+          if (!d) { if (slot) slot.remove(); return; }
+          var badge = document.getElementById("nav-attention-badge");
+          if (badge && d.attention_count) { badge.textContent = d.attention_count; badge.hidden = false; }
+          if (slot) {
+            if (d.strip_html) { slot.outerHTML = d.strip_html; initDayCompare(document); }
+            else slot.remove();
+          }
+        })
+        .catch(function () { var s = document.getElementById("dc-lazy"); if (s) s.remove(); });
+    };
+    (window.requestIdleCallback || function (f) { setTimeout(f, 30); })(run);
+  }
+
+  function start() { initDayCompare(); lazyShell(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
+})();

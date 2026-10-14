@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 
+from common.cache import bumps_generation
 from csp.models import Csp
 from django.db import transaction
 from django.utils import timezone
@@ -22,6 +23,7 @@ from bankflow.models import AccountCountObservation
 SOURCE = "pmjdy"
 
 
+@bumps_generation
 def capture_counts(counts: dict[str, int], observed_at: dt.datetime | None = None) -> dict:
     """Insert-only. Idempotent: re-running with the same counts on the same IST day adds
     nothing. Counts for CSP codes we do not already track are reported, never created."""

@@ -232,6 +232,49 @@ Roll back: `systemctl --user disable --now csp-transaction-watchdog` (or `sudo s
 | `${TRANSACTION_DATA_DIR_HOST}` (bind) | `/data` in `worker` | transaction file workflow — persistent, host-owned |
 | `${GOOGLE_SERVICE_ACCOUNT_FILE_HOST}` (bind, read-only) | `/run/secrets/google-sa.json` in `worker` | credential |
 
+## Fast loading and scalability (added 2026-10-14)
+
+Pages used to be slow on the production-sized data for four reasons, all fixed in code (no new service,
+no new infrastructure):
+
+| Cause | Fix |
+|---|---|
+| The 60-second Calling Sheet poll dropped the whole dashboard cache every time, even when nothing had changed, so almost every visit was a cold one. | The poll fingerprints what it would write and, if it is identical to the last write, writes nothing and leaves the cache alone. Every real write (`@bumps_generation` on the import, flow rebuild, PMJDY capture, estimator and hypothesis functions) invalidates the cache itself, so the 600 s `DASHBOARD_CACHE_TTL` is only a ceiling. |
+| Figures were rebuilt with full scans and Python loops (all statement rows, one query per day, one per CSP). | Index probes and SQL aggregation (`LATERAL`, `jsonb_each`, grouped queries), two new indexes (`bankflow` 0006, `csp` 0008), the per-CSP "today vs yesterday" rows built once per data generation and only sorted/searched/paginated per request. |
+| The sidebar count and the today-vs-yesterday strip were computed while building **every** page, and the Home heat map (~100 KB of JSON) shipped with every load. | The page only *peeks* at the cache. If the figure is not there yet it renders at once with a placeholder and fetches `/dashboard/shell/` afterwards; the heat map is fetched (`/dashboard/data/heat/`) only when "Advanced details" is opened. |
+| Pages went out uncompressed and waited on Google Fonts; one sync gunicorn worker idled on every query. | gzip for pages and JSON (not for the live event stream), non-blocking fonts, gunicorn `gthread` workers. |
+
+**Measured** (in-process, production-sized synthetic data: ~535 CSPs, ~70 days of statements; cold = cache empty,
+warm = cache filled; milliseconds):
+
+| Page | Cold before | Cold after | Warm before | Warm after | Queries (cold) |
+|---|---|---|---|---|---|
+| Home | 3447 | 376 | 416 | 16 | 121 -> 42 |
+| Home, today vs yesterday | 3793 | 428 | 817 | 17 | 138 -> 56 |
+| Money movement | 2098 | 160 | 17 | 8 | 78 -> 32 |
+| Needs attention | 2145 | 204 | 17 | 7 | 82 -> 34 |
+| Daily comparison | 1355 | 66 | 53 | 43 | 59 -> 12 |
+| Data progress | 1066 | 66 | 152 | 54 | 98 -> 48 |
+| Bank-flow validation | 5510 | 1300 | 2647 | 645 | 162 -> 48 |
+
+Home also dropped from 144 KB to 45 KB (21 KB -> 8 KB gzipped). Real servers differ; the ratios are what matter.
+
+**Cache warm-up.** `worker-bankflow` also runs `manage.py warm_dashboard_cache` every `WARM_CACHE_INTERVAL_SECONDS`
+(60). It does nothing unless the data generation or the date changed, then computes the shared figures once so the
+first visitor after an ingest does not pay for them. It is safe to skip or fail: a cold page computes what it needs
+itself. For the warm cache to reach the web containers, every service must share the same cache backend (`REDIS_URL`,
+already the production setup; with the default in-process cache each container has its own and the warm-up helps only
+its own process).
+
+**Tuning (all optional, `.env.example`).** `GUNICORN_WORKERS` (3) x `GUNICORN_THREADS` (4) = up to 12 simultaneous
+requests per `web` container, each able to hold a database connection: keep `DB_CONN_MAX_AGE` as is and make sure
+Postgres `max_connections` (or PgBouncer, below) covers `workers x threads x replicas` plus the workers. If you see
+"too many connections", lower `GUNICORN_THREADS` or enable PgBouncer. `GUNICORN_MAX_REQUESTS` (2000) recycles a worker
+now and then.
+
+**After a deploy** the first request of each page is cold (the cache is empty) until `worker-bankflow` has run its
+warm-up, normally within a minute of start.
+
 ## Connection pooling (PgBouncer)
 
 `pgbouncer` (compose.yml) is a **real, verified-working, opt-in** service — confirmed live by
@@ -434,7 +477,7 @@ Validation:
 
 New in this release: the bank-flow statement pipeline, the PMJDY (new accounts) capture, daily estimates, the
 simplified dashboard, and a dedicated `worker-bankflow` service. Migrations are **additive** (new `bankflow_*`
-tables only, `bankflow` 0001-0005; no existing table changes), so stopping the new worker is a complete rollback.
+tables only, `bankflow` 0001-0006; two later migrations only add an index: `bankflow` 0006 and `csp` 0008), so stopping the new worker is a complete rollback.
 
 ### 0. Before you deploy
 1. `.env` on the host: `GOOGLE_SERVICE_ACCOUNT_FILE_HOST` must point at the **real** service-account JSON (a file, not

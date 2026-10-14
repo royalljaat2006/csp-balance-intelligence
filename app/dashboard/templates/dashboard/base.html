@@ -5,11 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}CSP Balance Tracker{% endblock %}</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap">
+  <!-- Fonts load without blocking the first paint (a slow or unreachable font host used to hold
+       the whole page back); the page draws in the fallback font and swaps. Fraunces was only used by
+       the retired top navigation and is no longer requested. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"></noscript>
   <link rel="stylesheet" href="{% static 'dashboard/dashboard.css' %}">
   {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body{% if user.is_authenticated and shell_lazy %} data-shell-lazy="1" data-shell-url="{% url 'dashboard:shell_data' %}"{% endif %}>
   <a href="#main-content" class="skip-link">Skip to main content</a>
   {% if user.is_authenticated %}
   <div class="app-shell">
@@ -24,7 +30,7 @@
         <a href="{{ n.href }}" class="{% if n.active %}active{% endif %}"{% if n.active %} aria-current="page"{% endif %}>
           <span class="ic">{% include "dashboard/_nav_icon.html" with key=n.key %}</span>
           <span class="lbl">{{ n.label }}</span>
-          {% if n.key == "attention" and needs_attention_count %}<span class="nav-badge" title="Items to check">{{ needs_attention_count }}</span>{% endif %}
+          {% if n.key == "attention" %}<span class="nav-badge" id="nav-attention-badge" title="Items to check"{% if not needs_attention_count %} hidden{% endif %}>{{ needs_attention_count|default_if_none:"" }}</span>{% endif %}
         </a>
         {% endfor %}
       </nav>
@@ -89,7 +95,8 @@
       {% endif %}
 
       <main class="page-enter" id="main-content">
-        {% if day_compare %}<div class="wrap dc-slot">{% include "dashboard/components/day_compare.html" with dc=day_compare %}</div>{% endif %}
+        {% if day_compare %}<div class="wrap dc-slot">{% include "dashboard/components/day_compare.html" with dc=day_compare %}</div>
+        {% elif day_compare_pending %}<div class="wrap dc-slot"><div id="dc-lazy" class="dc-skel" aria-busy="true" role="status">Loading today vs yesterday&hellip;</div></div>{% endif %}
   {% else %}
   <main id="main-content">
   {% endif %}

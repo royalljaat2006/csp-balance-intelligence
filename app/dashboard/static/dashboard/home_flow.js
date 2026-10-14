@@ -137,11 +137,27 @@
   draw();
 
   // ---------------------------------------------------------------- heatmap
-  const heat = readJson("fh-heat-data") || [];
+  let heat = [];
   const grid = $("fh-heat"), sel = $("fh-heat-metric");
+  // The cells are fetched the first time Advanced details is opened, not shipped with every page.
+  let heatRequested = false;
+  function loadHeat() {
+    if (heatRequested || !grid) return;
+    heatRequested = true;
+    grid.setAttribute("aria-busy", "true");
+    fetch(grid.dataset.url, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => { heat = d; grid.removeAttribute("aria-busy"); paint(); })
+      .catch(() => { heatRequested = false; grid.removeAttribute("aria-busy"); });
+  }
+  const advanced = $("advanced");
+  if (advanced) {
+    advanced.addEventListener("toggle", () => { if (advanced.open) loadHeat(); });
+    if (advanced.open) loadHeat();
+  }
   function mix(color, pct) { return `color-mix(in srgb, ${color} ${Math.round(pct)}%, var(--surface))`; }
   function paint() {
-    if (!grid) return;
+    if (!grid || !heat.length) return;
     const metric = sel.value;
     grid.innerHTML = "";
     const vals = heat.map((c) => (metric === "delta" ? (["VALIDATED", "PROVISIONAL"].includes(c.status) ? c.delta : null) : c[metric])).filter((v) => typeof v === "number");
@@ -166,10 +182,10 @@
     });
     $("fh-heat-legend").textContent = {
       growth_pct: "Green = more customer accounts than before, red = fewer, grey = no earlier count. Darker = bigger change.",
-      net_flow: "Green = more money came in than went out, red = more went out than came in, grey = no bank statement data. This is not the change in anyone's balance.",
+      net_flow: "Green = customers deposited more than they withdrew, red = they withdrew more than they deposited, grey = no bank statement data. This is the cash movement, not a measured change in anyone's balance.",
       fresh: "Green = account count updated in the last 26 hours, amber = older, blue = from the Calling Sheet only, grey = none.",
       delta: "Only estimates that have been checked are coloured. CSPs without a reliable estimate stay grey on purpose.",
     }[metric];
   }
-  if (sel) { sel.addEventListener("change", paint); paint(); }
+  if (sel) sel.addEventListener("change", paint);
 })();

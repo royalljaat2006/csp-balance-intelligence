@@ -15,11 +15,12 @@ per Phase 4's "access must fail clearly if credentials are missing."
 
 from __future__ import annotations
 
+import hashlib
 import time
 
 import gspread
 import structlog
-from common.cache import bump_generation
+from common.cache import bump_generation, fingerprint_unchanged, remember_fingerprint
 from csp.models import Csp, DailyBalance, IngestLog
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -44,6 +45,20 @@ _SHEETS_TIMEOUT_SECONDS = 30
 # than hanging the calling-sheet worker for its whole interval.
 _SHEETS_FETCH_RETRIES = 2
 _SHEETS_FETCH_BACKOFF_SECONDS = 2
+
+
+_FINGERPRINT_NAME = "calling_sheet"
+
+
+def _fingerprint(csp_objs, balance_objs, today) -> str:
+    """A digest of everything this poll would write, so an identical poll can be recognised."""
+    h = hashlib.sha256(str(today).encode())
+    for c in sorted(csp_objs, key=lambda x: x.csp_code):
+        h.update(repr((c.csp_code, c.name, c.email, c.mobile, c.account_count,
+                       sorted((c.raw_attrs or {}).items(), key=lambda kv: kv[0]))).encode())
+    for b in sorted(balance_objs, key=lambda x: x.csp_id):
+        h.update(repr((b.csp_id, str(b.daily_avg_balance), b.account_count)).encode())
+    return h.hexdigest()
 
 
 class Command(BaseCommand):
@@ -143,26 +158,33 @@ class Command(BaseCommand):
                     )
                 )
 
-        Csp.objects.bulk_create(
-            csp_objs,
-            update_conflicts=True,
-            unique_fields=["csp_code"],
-            update_fields=_CSP_UPDATE_FIELDS,
-            batch_size=1000,
-        )
-        DailyBalance.objects.bulk_create(
-            balance_objs,
-            update_conflicts=True,
-            unique_fields=["csp", "balance_date"],
-            update_fields=["daily_avg_balance", "account_count", "source"],
-            batch_size=1000,
-        )
+        # The sheet is polled every minute but changes rarely. Writing ~1,000 rows and dropping the
+        # dashboard cache each time made every page cold within a minute, so when nothing differs
+        # from the last successful write today (the date is part of the fingerprint, so the first
+        # poll of a day always writes) skip the writes and leave the cache alone.
+        fingerprint = _fingerprint(csp_objs, balance_objs, today)
+        changed = not fingerprint_unchanged(_FINGERPRINT_NAME, fingerprint)
+        if changed:
+            Csp.objects.bulk_create(
+                csp_objs,
+                update_conflicts=True,
+                unique_fields=["csp_code"],
+                update_fields=_CSP_UPDATE_FIELDS,
+                batch_size=1000,
+            )
+            DailyBalance.objects.bulk_create(
+                balance_objs,
+                update_conflicts=True,
+                unique_fields=["csp", "balance_date"],
+                update_fields=["daily_avg_balance", "account_count", "source"],
+                batch_size=1000,
+            )
 
         log.status = IngestLog.Status.SUCCESS
         log.rows_read = result.rows_read
         log.rows_valid = len(result.rows)
         log.rows_rejected = result.rows_skipped
-        log.rows_upserted = len(csp_objs)
+        log.rows_upserted = len(csp_objs) if changed else 0
         log.finished_at = timezone.now()
         no_balance = len(csp_objs) - len(balance_objs)
         notes = []
@@ -188,11 +210,15 @@ class Command(BaseCommand):
             ]
         )
 
-        job.info("upserted", stage="DATABASE", csps=len(csp_objs), balances=len(balance_objs))
-        # New balances/account counts just landed — invalidate the cached
-        # dashboard rollups (Overview, Trends) immediately rather than
-        # waiting out their TTL. See common/cache.py.
-        bump_generation()
+        if changed:
+            job.info("upserted", stage="DATABASE", csps=len(csp_objs), balances=len(balance_objs))
+            # New balances/account counts just landed — invalidate the cached
+            # dashboard rollups (Overview, Trends) immediately rather than
+            # waiting out their TTL. See common/cache.py.
+            remember_fingerprint(_FINGERPRINT_NAME, fingerprint)
+            bump_generation()
+        else:
+            job.info("unchanged", stage="DATABASE", csps=len(csp_objs))
         job.info("finished", stage="INGESTION", status=log.status)
         self.stdout.write(
             self.style.SUCCESS(

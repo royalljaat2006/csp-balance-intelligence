@@ -16,7 +16,7 @@ from django.urls import reverse
 
 #: url_name -> section key
 SECTION_OF: dict[str, str] = {
-    "home": "home",
+    "home": "home", "shell_data": "home", "heat_data": "home",
     "csp_directory": "csps", "csp_detail": "csps", "csp_activity_json": "csps",
     "balance_intelligence": "csps",
     "money_movement": "money", "transactions": "money", "csp_comparisons": "money",

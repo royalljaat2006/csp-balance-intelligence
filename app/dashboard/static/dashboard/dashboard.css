@@ -998,6 +998,10 @@ body{font-size:15px;}
 
 /* ---- Today vs yesterday strip (every data page) and Data progress ---- */
 .dc-slot{margin-bottom:22px;}
+.dc-skel{max-width:1180px; margin-inline:auto; min-height:56px; display:flex; align-items:center; padding:0 20px; border:1px solid var(--line); border-radius:16px; color:var(--muted); font-size:13.5px; background:linear-gradient(90deg,var(--surface) 25%,var(--surface-2) 37%,var(--surface) 63%); background-size:400% 100%; animation:dcShimmer 1.4s ease infinite;}
+@keyframes dcShimmer{0%{background-position:100% 0;}100%{background-position:0 0;}}
+@media (prefers-reduced-motion: reduce){ .dc-skel{animation:none;} }
+.nav-badge[hidden]{display:none !important;}
 .dc{max-width:1180px; margin-inline:auto;}
 .dc-box{background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow-sm); padding:0;}
 .dc-head{display:flex; align-items:baseline; justify-content:space-between; gap:8px 16px; flex-wrap:wrap; padding:14px 20px; cursor:pointer; list-style:none;}

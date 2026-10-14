@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from common.cache import cache_aside
+from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Avg, Count, QuerySet, Sum
 from django.db.utils import OperationalError, ProgrammingError
@@ -324,14 +326,33 @@ def get_network_daily_trend(
     to MAB. Empty if the dbt mart hasn't been built yet. No default window —
     the ledger is a fixed historical range (e.g. one exported month), not a
     rolling "last N days" from today, so callers/views own the date filter."""
-    rows = _query_daily_activity(date_from=date_from, date_to=date_to)
-    by_date: dict[dt.date, dict] = {}
-    for row in rows:
-        d = row["activity_date"]
-        bucket = by_date.setdefault(d, dict.fromkeys(_DAILY_ACTIVITY_COLUMNS[1:], 0))
-        for col in _DAILY_ACTIVITY_COLUMNS[1:]:
-            bucket[col] += row[col] or 0
-    return [{"activity_date": d, **v} for d, v in sorted(by_date.items())]
+    return cache_aside(
+        f"csp:network_daily_trend:{date_from}:{date_to}", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=lambda: _network_daily_trend(date_from, date_to),
+    )
+
+
+def _network_daily_trend(date_from: dt.date | None, date_to: dt.date | None) -> list[dict]:
+    """Summed across every CSP by the database: the mart holds one row per CSP per day (535 x 60
+    days = 32,000 rows for two months), and adding them up in Python cost ~80 ms a call."""
+    clauses, params = [], []
+    if date_from:
+        clauses.append("activity_date >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append("activity_date <= %s")
+        params.append(date_to)
+    where_sql = ("where " + " and ".join(clauses)) if clauses else ""
+    sums = ", ".join(f"coalesce(sum({c}), 0)" for c in _DAILY_ACTIVITY_COLUMNS[1:])
+    sql = (f"select activity_date, {sums} from daily_activity {where_sql} "
+           "group by activity_date order by activity_date")
+    try:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+    except (ProgrammingError, OperationalError):
+        return []  # the dbt mart has not been built yet
+    return [dict(zip(_DAILY_ACTIVITY_COLUMNS, row, strict=True)) for row in rows]
 
 
 def get_csp_daily_activity(
@@ -388,7 +409,11 @@ def get_active_transaction_csp_count(target_date: dt.date) -> int:
     """Distinct CSPs with at least one allow-listed transaction on a given
     date — real ledger data (Transaction rows only exist for allow-listed
     types per ingestion/transaction_ingest.py)."""
-    return Transaction.objects.filter(txn_date=target_date).values("csp_id").distinct().count()
+    return cache_aside(
+        f"csp:active_csps:{target_date}", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=lambda: Transaction.objects.filter(txn_date=target_date)
+        .values("csp_id").distinct().count(),
+    )
 
 
 def get_transaction_type_distribution(
@@ -397,13 +422,17 @@ def get_transaction_type_distribution(
     """Count + total amount per allow-listed transaction type actually on
     file — never the full raw-file type list (only allow-listed types ever
     reach the Transaction table, per ingestion/transaction_ingest.py)."""
-    qs = Transaction.objects.all()
-    if date_from:
-        qs = qs.filter(txn_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(txn_date__lte=date_to)
-    return list(
-        qs.values("txn_type")
-        .annotate(count=Count("ref_number"), amount=Sum("amount"))
-        .order_by("-count")
-    )
+    def compute():
+        qs = Transaction.objects.all()
+        if date_from:
+            qs = qs.filter(txn_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(txn_date__lte=date_to)
+        return list(
+            qs.values("txn_type")
+            .annotate(count=Count("ref_number"), amount=Sum("amount"))
+            .order_by("-count")
+        )
+
+    return cache_aside(f"csp:type_distribution:{date_from}:{date_to}",
+                       ttl=settings.DASHBOARD_CACHE_TTL, fn=compute)

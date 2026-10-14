@@ -151,6 +151,9 @@ class StatementTransaction(models.Model):
             models.Index(fields=["txn_date"]),
             models.Index(fields=["ref_number"]),
             models.Index(fields=["description_hash"]),
+            # "the last row of each day" is one index probe per day (flows.day_closing_balances)
+            models.Index(fields=["txn_date", "first_statement", "row_index"],
+                         name="idx_stmttxn_day_order"),
         ]
 
     @property

@@ -276,7 +276,12 @@ class IngestLog(models.Model):
 
     class Meta:
         ordering = ["-started_at"]
-        indexes = [models.Index(fields=["source_hash"])]
+        indexes = [
+            models.Index(fields=["source_hash"]),
+            # "latest / today's runs of one source" (freshness, progress): the log grows by ~1,400
+            # calling-sheet rows a day, so these lookups must not scan it
+            models.Index(fields=["source", "-started_at"], name="idx_ingestlog_src_started"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.source} @ {self.started_at:%Y-%m-%d %H:%M} ({self.status})"

@@ -69,7 +69,7 @@ _DEFAULT_JOBS = (
 # Bank-flow / estimate pipeline. OPT-IN: runs only when named in --jobs / WATCH_JOBS (the
 # worker-bankflow service), so a plain `worker` behaves exactly as before. In a pass they run in
 # this order: statements -> re-attribution -> PMJDY -> 06:00 snapshot -> estimator verdict ->
-# estimates.
+# estimates -> cache warm-up (last, so it computes from the data the others just wrote).
 _BANKFLOW_JOBS = (
     "ingest_bank_statements",
     "build_bank_flows",
@@ -77,6 +77,7 @@ _BANKFLOW_JOBS = (
     "snapshot_calling_sheet_baseline",
     "evaluate_account_count_hypothesis",
     "compute_daily_estimates",
+    "warm_dashboard_cache",
 )
 _ALL_JOBS = _DEFAULT_JOBS + _BANKFLOW_JOBS
 
@@ -125,6 +126,7 @@ class Command(BaseCommand):
             ("--pmjdy-interval", "PMJDY_INTERVAL_SECONDS", "ingest_pmjdy"),
             ("--hypothesis-interval", "HYPOTHESIS_INTERVAL_SECONDS", "estimator verdict"),
             ("--estimate-interval", "ESTIMATE_INTERVAL_SECONDS", "compute_daily_estimates"),
+            ("--warm-interval", "WARM_CACHE_INTERVAL_SECONDS", "dashboard cache warm-up"),
         ):
             parser.add_argument(
                 flag, type=int, default=getattr(settings, setting),
@@ -236,6 +238,7 @@ class Command(BaseCommand):
             "ingest_pmjdy": options["pmjdy_interval"],
             "evaluate_account_count_hypothesis": options["hypothesis_interval"],
             "compute_daily_estimates": options["estimate_interval"],
+            "warm_dashboard_cache": options["warm_interval"],
         }
         last_snapshot_date: dt.date | None = None
         while True:

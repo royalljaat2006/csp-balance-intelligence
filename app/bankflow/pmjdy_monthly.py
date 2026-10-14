@@ -24,6 +24,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from common.cache import bumps_generation
 from csp.models import Csp
 from django.db import transaction
 from django.utils import timezone
@@ -151,6 +152,7 @@ def latest_monthly(month: str, csp_ids=None) -> dict[str, PmjdyMonthly]:
     return {r.csp_id: r for r in qs.order_by("csp_id", "-observed_at").distinct("csp_id")}
 
 
+@bumps_generation
 def capture_monthly(parsed: MonthlyParse, observed_at: dt.datetime | None = None) -> dict:
     """Insert-only and idempotent: a CSP gets a new row only if a figure changed or it has no row
     for this IST day. Unknown CSP codes are reported, never created."""

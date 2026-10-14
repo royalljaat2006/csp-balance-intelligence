@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 
+from common.cache import cache_aside
 from csp.models import Csp, DailyBalance
 from django.conf import settings
 from django.db.models import Count, Max, Min, Sum
@@ -128,6 +129,12 @@ CODE_FORMAT_RULE = (
 
 
 def code_resolution_stats() -> dict:
+    """Cached per data generation (it only changes when statements are imported or re-resolved)."""
+    return cache_aside("bf:resolution_stats", ttl=settings.DASHBOARD_CACHE_TTL,
+                       fn=_code_resolution_stats)
+
+
+def _code_resolution_stats() -> dict:
     """Match rates by transaction COUNT and by AMOUNT (credit + debit), so a
     high row-match percentage cannot hide unmapped money."""
     rows = list(
@@ -333,6 +340,12 @@ def target_overview() -> dict:
 
 
 def coverage_report(min_events: int = 8) -> dict:
+    """Cached per data generation."""
+    return cache_aside(f"bf:coverage_report:{min_events}", ttl=settings.DASHBOARD_CACHE_TTL,
+                       fn=lambda: _coverage_report(min_events))
+
+
+def _coverage_report(min_events: int = 8) -> dict:
     """Is there enough history to evaluate? Everything here is measured, nothing
     assumed: statement date coverage and gaps, ledger-continuity-proven days,
     overlap between hourly exports, independent refresh events and how many of
@@ -455,6 +468,11 @@ UNVERIFIED_DAY = "UNVERIFIED"
 
 
 def day_coverage() -> dict[dt.date, dict]:
+    """Cached per data generation (it only changes when statements are imported)."""
+    return cache_aside("bf:day_coverage", ttl=settings.DASHBOARD_CACHE_TTL, fn=_day_coverage)
+
+
+def _day_coverage() -> dict[dt.date, dict]:
     """Classify every statement day. Never treats a partial day as a daily total.
 
     COMPLETE_DAY  proven by ledger continuity (flows.proven_complete_dates).
@@ -513,14 +531,27 @@ def partial_snapshot_report() -> list[dict]:
     are reported (rows, pool credits/debits, attribution), each with its coverage window.
     Snapshots are NOT comparable across days unless their coverage is similar, so each
     carries `cut_hour` for like-with-like grouping; no per-day total is implied."""
+    return cache_aside("bf:partial_snapshots", ttl=settings.DASHBOARD_CACHE_TTL,
+                       fn=_partial_snapshot_report)
+
+
+def _partial_snapshot_report() -> list[dict]:
+    partial = {d: e for d, e in sorted(day_coverage().items()) if e["class"] == PARTIAL_DAY}
+    # one grouped query for all the days, not two queries per day
+    sums = {
+        r["txn_date"]: r for r in StatementTransaction.objects.filter(txn_date__in=list(partial))
+        .values("txn_date").annotate(credit=Sum("credit"), debit=Sum("debit"))
+    }
+    exact_by_day = {
+        r["transaction__txn_date"]: r["n"]
+        for r in CodeResolution.objects.filter(
+            transaction__txn_date__in=list(partial), status="exact")
+        .values("transaction__txn_date").annotate(n=Count("id"))
+    }
     out = []
-    for day, e in sorted(day_coverage().items()):
-        if e["class"] != PARTIAL_DAY:
-            continue
-        agg = StatementTransaction.objects.filter(txn_date=day).aggregate(
-            credit=Sum("credit"), debit=Sum("debit")
-        )
-        exact = CodeResolution.objects.filter(transaction__txn_date=day, status="exact").count()
+    for day, e in partial.items():
+        agg = sums.get(day, {})
+        exact = exact_by_day.get(day, 0)
         out.append(
             {
                 "date": day,
@@ -530,8 +561,8 @@ def partial_snapshot_report() -> list[dict]:
                 "coverage_end_at_most": e["coverage_end_at_most"],
                 "coverage_hours": e["coverage_hours"],
                 "cut_hour": e["latest_export"].hour,
-                "pool_credit": agg["credit"] or ZERO,
-                "pool_debit": agg["debit"] or ZERO,
+                "pool_credit": agg.get("credit") or ZERO,
+                "pool_debit": agg.get("debit") or ZERO,
                 "exact_attributed_rows": exact,
                 "files": e["files"],
             }

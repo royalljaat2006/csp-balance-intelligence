@@ -33,6 +33,7 @@ import datetime as dt
 from decimal import Decimal
 
 import structlog
+from common.cache import bumps_generation
 from csp.models import Csp
 from csp.rules import is_eligible
 from django.db import transaction
@@ -81,6 +82,7 @@ def _expected_error(hyp, method: str) -> float | None:
         return None
 
 
+@bumps_generation
 def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
     estimate_date = estimate_date or timezone.localdate()
     now = timezone.now()

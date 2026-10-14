@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 
 import structlog
+from common.cache import bump_generation
 from csp.models import Csp, DailyBalance, IngestLog
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -95,6 +96,8 @@ class Command(BaseCommand):
             raise
         log.finished_at = timezone.now()
         log.save()
+        if log.rows_upserted:
+            bump_generation()
         self.stdout.write(
             f"{day}: inserted={log.rows_upserted} already_present={log.rows_duplicate} "
             f"no_reading={log.rows_rejected} status={log.status}"

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.django_db
 SCHED = "ingestion.management.commands.watch_transactions.call_command"
 PIPELINE = ["ingest_bank_statements", "build_bank_flows", "ingest_pmjdy",
             "snapshot_calling_sheet_baseline", "evaluate_account_count_hypothesis",
-            "compute_daily_estimates"]
+            "compute_daily_estimates", "warm_dashboard_cache"]
 TODAY = timezone.localdate()
 
 
@@ -62,7 +62,7 @@ def test_a_missing_statement_folder_is_skipped_and_the_rest_still_runs(settings)
 def test_one_failing_job_does_not_stop_the_pass(settings, tmp_path):
     settings.BANKFLOW_WATCH_DIR = str(tmp_path)
     with patch(SCHED) as mock_call:
-        mock_call.side_effect = [None, RuntimeError("sheets down"), None, None, None, None][:6]
+        mock_call.side_effect = [None, RuntimeError("sheets down"), None, None, None, None, None]
         call_command("watch_transactions", once=True, jobs=",".join(PIPELINE))
     assert [c.args[0] for c in mock_call.call_args_list] == PIPELINE
 

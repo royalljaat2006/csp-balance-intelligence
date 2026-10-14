@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import structlog
+from common.cache import bumps_generation
 from csp.models import Csp
 from django.conf import settings
 from django.db import connection
@@ -132,6 +133,7 @@ def _lock() -> None:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", [ADVISORY_LOCK_KEY])
 
 
+@bumps_generation
 def run_import(
     path: str | Path,
     *,
@@ -536,6 +538,7 @@ def reclassify_stored() -> int:
     return moved
 
 
+@bumps_generation
 def reresolve_all() -> dict[str, int]:
     """Re-run code resolution over every stored transaction (e.g. after new CSPs
     appear, or after the variant rule is confirmed) and rebuild aggregates.

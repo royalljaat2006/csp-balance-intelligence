@@ -205,7 +205,7 @@
       <select id="fh-heat-metric" aria-label="What to colour by">
         <option value="growth_pct">New customer accounts</option><option value="net_flow">Deposits minus withdrawals</option>
         <option value="fresh">How recent the account count is</option><option value="delta">Estimated change (checked estimates only)</option></select>
-      <div id="fh-heat" class="fh-heat" role="list"></div>
+      <div id="fh-heat" class="fh-heat" role="list" data-url="{% url 'dashboard:heat_data' %}?range={{ days }}"><span class="sm-mute">Opens when you open Advanced details&hellip;</span></div>
       <div id="fh-heat-legend" class="sm-mute"></div>
     </div>
 
@@ -218,7 +218,6 @@
   </details>
 </div>
 {{ chart|json_script:"fh-chart-data" }}
-{{ heat|json_script:"fh-heat-data" }}
 {% endwith %}
 {% endblock %}
 {% block extra_scripts %}

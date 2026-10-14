@@ -119,7 +119,7 @@ services:
     <<: *worker-base
     container_name: ${APP_NAME}-worker-bankflow
     environment:
-      WATCH_JOBS: "ingest_bank_statements,build_bank_flows,ingest_pmjdy,snapshot_calling_sheet_baseline,evaluate_account_count_hypothesis,compute_daily_estimates"
+      WATCH_JOBS: "ingest_bank_statements,build_bank_flows,ingest_pmjdy,snapshot_calling_sheet_baseline,evaluate_account_count_hypothesis,compute_daily_estimates,warm_dashboard_cache"
       BANKFLOW_WATCH_DIR: /bank_statements
     volumes:
       - ${TRANSACTION_DATA_DIR_HOST}:/data

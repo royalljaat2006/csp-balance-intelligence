@@ -226,9 +226,25 @@ def staff(client):
     "/dashboard/", "/dashboard/money/", "/dashboard/needs-attention/",
 ])
 def test_the_strip_is_on_every_data_page(staff, url):
-    html = staff.get(url).content.decode()
-    assert "Today vs yesterday" in html and 'data-dc-key="accounts"' in html, url
-    assert f"{TODAY:%a %d %b}" in html and f"{YESTERDAY:%a %d %b}" in html
+    # first visit, nothing cached yet: the page renders at once with a placeholder ...
+    cold = staff.get(url).content.decode()
+    assert 'id="dc-lazy"' in cold and 'data-shell-lazy="1"' in cold and 'data-dc-key=' not in cold
+    # ... and the shell endpoint (what the page fetches next) returns the strip
+    strip = staff.get("/dashboard/shell/").json()["strip_html"]
+    assert "Today vs yesterday" in strip and 'data-dc-key="accounts"' in strip, url
+    assert f"{TODAY:%a %d %b}" in strip and f"{YESTERDAY:%a %d %b}" in strip
+    # every later visit finds it cached and has the strip inline: no placeholder, no fetch
+    warm = staff.get(url).content.decode()
+    assert 'data-dc-key="accounts"' in warm and 'id="dc-lazy"' not in warm, url
+    assert 'data-shell-lazy' not in warm
+
+
+def test_the_shell_endpoint_needs_a_login_and_is_not_cached_by_shared_proxies(staff, client):
+    r = staff.get("/dashboard/shell/")
+    assert r.status_code == 200 and "private" in r["Cache-Control"]
+    assert set(r.json()) == {"attention_count", "strip_html"}
+    client.logout()
+    assert client.get("/dashboard/shell/").status_code == 302
 
 
 @pytest.mark.parametrize("url", ["/dashboard/progress/", "/dashboard/audit/"])
@@ -252,7 +268,8 @@ def test_the_csp_page_has_its_own_strip_for_that_csp(staff):
     assert 'include "dashboard/components/day_compare.html" with dc=csp_day_compare' in page
 
 
-def test_the_strip_numbers_match_the_api(staff, client):
+def test_the_strip_numbers_are_the_same_figures_the_api_returns(staff, client):
+    staff.get("/dashboard/shell/")  # warms the strip
     html = staff.get("/dashboard/money/").content.decode()
     assert ">310<" in html.replace(" ", "")  # today's customer accounts
 

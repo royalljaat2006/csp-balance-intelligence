@@ -22,6 +22,7 @@ import decimal
 from collections import defaultdict
 from collections.abc import Iterable
 
+from common.cache import bumps_generation, cache_aside
 from csp.models import Csp
 
 from .models import (
@@ -66,6 +67,7 @@ def _worst(a: str, b: str) -> str:
     return a if _RECON_RANK.get(a, 0) >= _RECON_RANK.get(b, 0) else b
 
 
+@bumps_generation
 def rebuild_aggregates(dates: Iterable[dt.date] | None = None) -> dict[str, int]:
     """Rebuild FlowAggregate/UnresolvedFlowDaily for `dates` (default: every
     date that has statement transactions). Idempotent: existing rows for those
@@ -194,16 +196,50 @@ def rebuild_aggregates(dates: Iterable[dt.date] | None = None) -> dict[str, int]
 
 
 def day_closing_balances() -> dict[dt.date, Decimal]:
-    """Running balance of the LAST ledger row stored for each date (rows are
-    stored in statement order; later hourly exports have higher ids)."""
-    out: dict[dt.date, Decimal] = {}
-    rows = StatementTransaction.objects.order_by("txn_date", "first_statement_id", "row_index")
-    for d, bal in rows.values_list("txn_date", "balance").iterator(chunk_size=5000):
-        out[d] = bal  # later rows overwrite earlier ones; the last per date wins
-    return out
+    """Running balance of the LAST ledger row stored for each date (rows are stored in statement
+    order; later hourly exports have higher ids).
+
+    One index probe per statement day instead of streaming every ledger row through Python (that
+    cost grew with the number of transactions: ~0.2 s at 200k rows, ~3 s a year in). The days come
+    from the statement files' own first/last row dates."""
+    from django.db import connection
+
+    from .models import StatementFile
+
+    days: set[dt.date] = set()
+    for first, last in StatementFile.objects.filter(
+        first_row_date__isnull=False, last_row_date__isnull=False
+    ).values_list("first_row_date", "last_row_date"):
+        if first is None or last is None:
+            continue
+        day = first
+        while day <= last:
+            days.add(day)
+            day += dt.timedelta(days=1)
+    if not days:
+        return {}
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.day, (SELECT t.balance FROM bankflow_statementtransaction t
+                            WHERE t.txn_date = d.day
+                            ORDER BY t.first_statement_id DESC, t.row_index DESC LIMIT 1)
+            FROM unnest(%s::date[]) AS d(day)
+            """,
+            [sorted(days)],
+        )
+        return {day: bal for day, bal in cur.fetchall() if bal is not None}
 
 
 def proven_complete_dates() -> set[dt.date]:
+    """Cached per data generation (it only changes when statements are imported)."""
+    from django.conf import settings
+
+    return cache_aside("bf:proven_complete", ttl=settings.DASHBOARD_CACHE_TTL,
+                       fn=_proven_complete_dates)
+
+
+def _proven_complete_dates() -> set[dt.date]:
     """Dates whose flow data is PROVEN complete by ledger continuity. Two independent
     proofs, either is enough:
 

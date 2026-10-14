@@ -27,8 +27,15 @@ case "${1:-web}" in
     # --timeout/--graceful-timeout: bound how long one request can occupy a
     # worker and give in-flight requests time to finish on shutdown/reload
     # instead of being killed mid-response (graceful shutdown requirement).
+    # gthread: each worker serves GUNICORN_THREADS requests at once. The pages are database-bound,
+    # and a sync worker sat idle on every query while the next visitor queued behind it.
+    # --max-requests recycles a worker now and then (with jitter so they do not all go at once).
     exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 \
+      --worker-class gthread \
       --workers "${GUNICORN_WORKERS:-3}" \
+      --threads "${GUNICORN_THREADS:-4}" \
+      --max-requests "${GUNICORN_MAX_REQUESTS:-2000}" \
+      --max-requests-jitter "${GUNICORN_MAX_REQUESTS_JITTER:-200}" \
       --timeout "${GUNICORN_TIMEOUT:-30}" \
       --graceful-timeout "${GUNICORN_GRACEFUL_TIMEOUT:-30}"
     ;;

@@ -37,6 +37,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 
+from common.cache import bumps_generation
 from csp.models import DailyBalance
 
 from bankflow.evaluation import _bootstrap_ci
@@ -274,6 +275,7 @@ def classify(m: dict, label: str = "Proportional rule") -> tuple[str, str]:
 _RANK = {VALIDATED: 3, PROVISIONAL: 2, INSUFFICIENT: 1, NOT_SUPPORTED: 0}
 
 
+@bumps_generation
 def run_hypothesis_test(*, persist: bool = True, until: dt.date | None = None):
     """Evaluate on DailyBalance history; returns (metrics, status, detail, run|None).
 

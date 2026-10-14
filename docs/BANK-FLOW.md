@@ -398,6 +398,7 @@ Schedule (all settings, see `.env.example`):
 | `ingest_pmjdy` | **hourly** | this month's new-account block from the Calling Sheet |
 | `compute_daily_estimates` | **hourly** | the estimates, from the latest observations and flows |
 | `snapshot_calling_sheet_baseline` | **once a day, from 06:00 IST** | preserves the day's starting value of every CSP (first capture wins; a worker that was down at 06:00 takes it on return and the log says how late) |
+| `warm_dashboard_cache` | every minute (a no-op unless the data changed) | pre-computes the cached dashboard figures so the first visitor after an ingest is not slow (see docs/DEPLOYMENT.md, "Fast loading") |
 | `build_bank_flows` | daily | re-attributes statement rows when new CSPs appeared in the sheet |
 | `evaluate_account_count_hypothesis` | daily | re-runs the estimator comparison as history accumulates |
 

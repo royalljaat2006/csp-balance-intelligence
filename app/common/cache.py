@@ -25,8 +25,10 @@ generation without needing to know their names in advance.
 
 from __future__ import annotations
 
+import functools
 import time
 from collections.abc import Callable
+from typing import Any
 
 import structlog
 from django.core.cache import cache
@@ -74,6 +76,43 @@ def bump_generation() -> None:
     lands — see ingestion/file_ingest.py, calling_sheet_ingest.py,
     csp/management/commands/sync_daily_snapshots.py."""
     _safe("bump_generation", _bump, None)
+
+
+def bumps_generation[**P, T](fn: Callable[P, T]) -> Callable[P, T]:
+    """Decorator for the functions that WRITE data the dashboards read: the cached aggregates are
+    invalidated as soon as the write has run, so the invalidation lives with the write and a caller
+    (a management command, a test, a view) cannot forget it."""
+    @functools.wraps(fn)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            bump_generation()
+
+    return wrapper
+
+
+def cache_peek(key: str) -> tuple[bool, Any]:
+    """(found, value) for a cache_aside key of the CURRENT generation, computing nothing. Lets a
+    page use a value that is already there and render a placeholder (fetched later) when it is not,
+    instead of making the visitor wait for it."""
+    cached = _safe("peek", lambda: cache.get(f"csp-tracker:v{get_generation()}:{key}"), None)
+    return (cached is not None), cached
+
+
+def _fingerprint_key(name: str) -> str:
+    return f"csp-tracker:fingerprint:{name}"
+
+
+def fingerprint_unchanged(name: str, fingerprint: str) -> bool:
+    """True only when `fingerprint` is exactly what was last remembered under `name`. A missing or
+    unreadable cache says "changed", so the caller then does the work: never skips by mistake."""
+    return _safe("fingerprint_get", lambda: cache.get(_fingerprint_key(name)), None) == fingerprint
+
+
+def remember_fingerprint(name: str, fingerprint: str) -> None:
+    _safe("fingerprint_set",
+          lambda: cache.set(_fingerprint_key(name), fingerprint, timeout=None), None)
 
 
 def cache_aside[T](key: str, *, ttl: int, fn: Callable[[], T]) -> T:

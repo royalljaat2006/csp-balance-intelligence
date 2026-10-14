@@ -46,7 +46,7 @@ from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from . import pipeline_state, plain
+from . import pipeline_state, plain, shell
 from .pipeline_sse import stream_pipeline_events
 
 
@@ -922,11 +922,14 @@ def balance_intelligence(request):
         {"date": str(r["date"]), "value": r["avg_balance"]}
         for r in cache_aside(
             f"network_balance_trend:{window_days}",
-            ttl=30,
+            ttl=settings.DASHBOARD_CACHE_TTL,
             fn=lambda: services.get_network_balance_trend(days=window_days),
         )
     ]
-    overview = cache_aside(f"overview:{month}", ttl=30, fn=lambda: services.get_overview(month))
+    overview = cache_aside(
+        f"overview:{month}", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=lambda: services.get_overview(month),
+    )
 
     return render(
         request,
@@ -960,10 +963,14 @@ def balance_intelligence(request):
 @login_required
 def overview_classic(request):
     month = request.GET.get("month") or services.current_month()
-    overview = cache_aside(f"overview:{month}", ttl=30, fn=lambda: services.get_overview(month))
+    overview = cache_aside(
+        f"overview:{month}", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=lambda: services.get_overview(month),
+    )
     summaries, _ = services.list_monthly_summaries(month=month, limit=100000)
     growth_by_csp = cache_aside(
-        "all_csps_account_growth", ttl=30, fn=services.get_all_csps_account_growth
+        "all_csps_account_growth", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=services.get_all_csps_account_growth
     )
     csp_rows = [_csp_row(ms, growth_by_csp) for ms in summaries]
 
@@ -1023,7 +1030,7 @@ def overview_classic(request):
         {"date": str(r["date"]), "value": r["avg_balance"]}
         for r in cache_aside(
             "network_balance_trend:30",
-            ttl=30,
+            ttl=settings.DASHBOARD_CACHE_TTL,
             fn=lambda: services.get_network_balance_trend(days=30),
         )
     ]
@@ -1350,14 +1357,18 @@ def trends(request):
     }
 
     month = services.current_month()
-    overview = cache_aside(f"overview:{month}", ttl=30, fn=lambda: services.get_overview(month))
+    overview = cache_aside(
+        f"overview:{month}", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=lambda: services.get_overview(month),
+    )
     summaries, _ = services.list_monthly_summaries(month=month, limit=100000)
     trend_counts = {"improving": 0, "declining": 0, "stable": 0}
     for ms in summaries:
         trend_counts[ms.trend_flag or "stable"] = trend_counts.get(ms.trend_flag or "stable", 0) + 1
 
     account_growth = cache_aside(
-        "network_account_growth", ttl=30, fn=services.get_network_account_growth
+        "network_account_growth", ttl=settings.DASHBOARD_CACHE_TTL,
+        fn=services.get_network_account_growth
     )
     account_growth_series = [
         {"date": str(g["date"]), "value": g["total_accounts"]} for g in account_growth
@@ -1568,7 +1579,7 @@ def _days_param(request) -> int:
 
 
 def _cached(prefix: str, days: int, fn):
-    return cache_aside(f"{prefix}:{days}", ttl=30, fn=fn)
+    return cache_aside(f"{prefix}:{days}", ttl=settings.DASHBOARD_CACHE_TTL, fn=fn)
 
 
 def _chart_payload(movement: dict) -> dict:
@@ -1666,19 +1677,13 @@ def home(request):
                   else "never")}
         for k in ("pmjdy", "calling_sheet", "transactions", "estimates")
     ]
-    heat = bankflow_intelligence.plain([
-        {"code": r["csp_code"], "name": r["name"], "growth_pct": r["growth_pct"],
-         "net_flow": r["net_flow"], "fresh": r["count_freshness"],
-         "delta": r["estimated_delta"], "status": r["estimate_status"]}
-        for r in all_rows[:600]
-    ])
     return render(request, "dashboard/home_flow.html", {
         "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
         "summary": summary,
         "summary_lines": plain.daily_summary(summary, attention_total, high, days),
         "notes": plain.data_notes(summary),
         "attention_cards": cards[:5], "attention_total": attention_total, "attention_high": high,
-        "chart": _chart_payload(movement), "heat": heat,
+        "chart": _chart_payload(movement),
         "rows": rows, "total": total, "page": page,
         "total_pages": max(1, -(-total // page_size)),
         "q": q, "show": show, "sort": sort, "order": "desc" if descending else "asc",
@@ -1714,6 +1719,42 @@ def _csp_day_compare(csp_code: str) -> dict | None:
         return bankflow_intelligence.day_compare(csp_codes=[csp_code])
     except Exception:  # noqa: BLE001 -- a side panel must never break the CSP page
         return None
+
+
+@login_required
+def shell_data(request):
+    """What the page shell shows around the content, for the pages that rendered without it
+    because it was not cached yet: the sidebar count and the today-vs-yesterday strip as HTML."""
+    from django.template.loader import render_to_string
+
+    dc = shell.day_compare()
+    payload = {
+        "attention_count": shell.attention_count(),
+        "strip_html": (render_to_string("dashboard/components/day_compare.html", {"dc": dc})
+                       if dc else None),
+    }
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, max-age=30"
+    return response
+
+
+@login_required
+def heat_data(request):
+    """The heat map's cells (one per CSP), loaded only when Advanced details is opened: they used to
+    be embedded in every Home page load (~100 KB) whether or not anyone looked at them."""
+    days = _days_param(request)
+    date_from, date_to = bankflow_intelligence.resolve_range(days)
+    rows, _total, _meta = bankflow_intelligence.csp_growth(
+        date_from, date_to, sort="net_flow", descending=True, limit=10000, offset=0)
+    heat = bankflow_intelligence.plain([
+        {"code": r["csp_code"], "name": r["name"], "growth_pct": r["growth_pct"],
+         "net_flow": r["net_flow"], "fresh": r["count_freshness"],
+         "delta": r["estimated_delta"], "status": r["estimate_status"]}
+        for r in rows[:600]
+    ])
+    response = JsonResponse(heat, safe=False)
+    response["Cache-Control"] = "private, max-age=60"
+    return response
 
 
 @login_required

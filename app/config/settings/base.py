@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "common.middleware.CompressMiddleware",  # gzip dynamic pages/JSON; static is pre-compressed
     # Order matters — see api/middleware.py docstring: logging outer, request-id inner.
     "api.middleware.RequestLoggingMiddleware",
     "api.middleware.RequestIdMiddleware",
@@ -124,6 +125,11 @@ DATABASES["replica"] = (
 DATABASE_ROUTERS = ["common.db_router.PrimaryReplicaRouter"]
 
 # --- Cache (Redis in production; in-process LocMemCache everywhere else) ---
+# How long a cached dashboard aggregate may live. It is only a CEILING: every ingest/calculation
+# that really changes data bumps the cache generation (common/cache.py), so a long value costs no
+# freshness and keeps pages warm between changes. Seconds.
+DASHBOARD_CACHE_TTL = env.int("DASHBOARD_CACHE_TTL", default=600)
+
 # REDIS_URL blank -> LocMemCache: dev/test/CI need no Redis instance running
 # to pass, matching the existing "blank env var -> graceful degrade" pattern
 # used for NEMOTRON_API_KEY below. production.py switches
@@ -248,6 +254,9 @@ BANKFLOW_BUILD_FLOWS_INTERVAL_SECONDS = env.int(
     "BANKFLOW_BUILD_FLOWS_INTERVAL_SECONDS", default=86400
 )  # re-attribute when new CSPs appear in the sheet
 HYPOTHESIS_INTERVAL_SECONDS = env.int("HYPOTHESIS_INTERVAL_SECONDS", default=86400)
+# How often the worker checks whether the data changed and the cached dashboard figures need
+# re-computing (a no-op when nothing changed).
+WARM_CACHE_INTERVAL_SECONDS = env.int("WARM_CACHE_INTERVAL_SECONDS", default=60)
 BASELINE_SNAPSHOT_AT = env("BASELINE_SNAPSHOT_AT", default="06:00")  # IST, once a day
 BANKFLOW_STATEMENT_PATTERN = env("BANKFLOW_STATEMENT_PATTERN", default="statement_1556_*")
 BANKFLOW_MAX_FILE_MB = env.int("BANKFLOW_MAX_FILE_MB", default=100)

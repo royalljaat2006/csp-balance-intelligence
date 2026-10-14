@@ -215,13 +215,17 @@ def test_old_routes_are_all_still_registered_and_staff_pages_stay_protected(staf
 
 # ---------------------------------------------------------------- badge
 def test_badge_is_hidden_without_real_items_and_shows_the_real_count(staff):
-    assert "nav-badge" not in staff.get("/dashboard/more/").content.decode()
+    html = staff.get("/dashboard/more/").content.decode()
+    assert re.search(r'class="nav-badge"[^>]*id="nav-attention-badge"[^>]* hidden>', html)
+    assert staff.get("/dashboard/shell/").json()["attention_count"] is None
     _seed_negative_flow()
     from common.cache import bump_generation
 
     bump_generation()
-    html = staff.get("/dashboard/more/").content.decode()
-    assert re.search(r'class="nav-badge"[^>]*>1<', html)
+    assert staff.get("/dashboard/shell/").json()["attention_count"] == 1
+    html = staff.get("/dashboard/more/").content.decode()  # now cached: inline, not hidden
+    tag = re.search(r'<span class="nav-badge"[^>]*id="nav-attention-badge"[^>]*>1<', html)
+    assert tag and " hidden" not in tag.group(0)
 
 
 # ---------------------------------------------------------------- wording
