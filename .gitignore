@@ -38,6 +38,15 @@ data/failed/*
 !data/processed/.gitkeep
 !data/failed/.gitkeep
 
+# Server-side working data: bank statements hold customer names and account numbers, so they must
+# never be committable; the rest is run-time state and logs.
+data/bank_statements/
+data/cs_backfill/
+data/transaction_watchdog.json
+dbt_run.log
+txn_sync.log
+txn_watchdog.log
+
 # OS / editor
 .DS_Store
 Thumbs.db
