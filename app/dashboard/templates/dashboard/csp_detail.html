@@ -13,6 +13,8 @@
     </p>
   </div>
 
+  {% if csp_day_compare %}{% include "dashboard/components/day_compare.html" with dc=csp_day_compare %}{% endif %}
+
   {% if row %}
   <section class="panel">
     <div class="panel-head"><h2>{{ month }} summary</h2>

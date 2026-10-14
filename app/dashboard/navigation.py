@@ -20,7 +20,7 @@ SECTION_OF: dict[str, str] = {
     "csp_directory": "csps", "csp_detail": "csps", "csp_activity_json": "csps",
     "balance_intelligence": "csps",
     "money_movement": "money", "transactions": "money", "csp_comparisons": "money",
-    "trends": "money", "bank_flow": "money",
+    "trends": "money", "bank_flow": "money", "data_progress": "money",
     "needs_attention": "attention", "risk": "attention", "actions": "attention",
     "approvals": "attention", "verification": "attention", "agent_findings": "attention",
     "more": "more", "overview_classic": "more", "messaging": "more", "ai_operations": "more",
@@ -28,6 +28,15 @@ SECTION_OF: dict[str, str] = {
     "pipeline": "more", "pipeline_events": "more", "pipeline_history": "more",
     "pipeline_node_detail": "more", "api_docs": "more", "audit": "more", "admin_embed": "more",
 }
+
+
+#: pages that show the Today-vs-yesterday strip. Today is the present IST day, yesterday the day
+#: before; every page that shows data about the network or its CSPs belongs here (CSP detail has
+#: its own per-CSP version; admin, audit, messaging and API pages show no such data).
+COMPARE_PAGES = frozenset({
+    "home", "money_movement", "transactions", "csp_comparisons", "trends", "bank_flow",
+    "csp_directory", "balance_intelligence", "needs_attention", "overview_classic",
+})
 
 
 @dataclass(frozen=True)
@@ -55,6 +64,7 @@ TABS: dict[str, list[Tab]] = {
     ],
     "money": [
         Tab("Overview", "money_movement"),
+        Tab("Data progress", "data_progress"),
         Tab("Transactions", "transactions"),
         Tab("Daily Comparison", "csp_comparisons"),
         Tab("Trends & Analytics", "trends"),
@@ -86,6 +96,8 @@ MORE_GROUPS: list[tuple[str, list[tuple[str, str, bool, str]]]] = [
         ("Agent Monitoring", "agent_monitoring", True, "How the automated assistants are doing."),
     ]),
     ("Checks on the data", [
+        ("Data progress", "data_progress", False,
+         "What ran today and yesterday, and when each figure was last updated."),
         ("Bank-Flow Validation", "bank_flow", True,
          "Technical checks on bank statements and the estimate."),
         ("Data Pipeline", "pipeline", True, "Where data comes from and when it last arrived."),

@@ -159,13 +159,17 @@ def _split_flow(cats: dict | None) -> tuple[tuple, tuple]:
     return tuple(counted), tuple(other)
 
 
-def _flow_rows(date_from: dt.date, date_to: dt.date):
+def _flow_rows(date_from: dt.date, date_to: dt.date, ids=None):
     """Attributed (exact KO match) flow per CSP and day, as
     (csp, day, credit, debit, n, by_category, other) where credit/debit/n are the counted
-    categories only and `other` is the (credit, debit, n) of everything else."""
-    rows = FlowAggregate.objects.filter(
+    categories only and `other` is the (credit, debit, n) of everything else. `ids` limits it to
+    those CSPs (the dashboard passes the tracked ones)."""
+    qs = FlowAggregate.objects.filter(
         resolution_mode=flows.MODE_EXACT, flow_date__gte=date_from, flow_date__lte=date_to
-    ).values_list("csp_id", "flow_date", "by_category")
+    )
+    if ids is not None:
+        qs = qs.filter(csp_id__in=list(ids))
+    rows = qs.values_list("csp_id", "flow_date", "by_category")
     for c, d, cats in rows.iterator():
         (cr, db, n), other = _split_flow(cats)
         yield c, d, cr, db, n, cats, other
@@ -270,7 +274,7 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     txns = other_n = 0
     days: set[dt.date] = set()
     cat_split: dict[str, dict] = defaultdict(lambda: {"credit": ZERO, "debit": ZERO})
-    for _c, d, cr, db, n, cats, other in _flow_rows(date_from, date_to):
+    for _c, d, cr, db, n, cats, other in _flow_rows(date_from, date_to, ids):
         credits += cr
         debits += db
         txns += n
@@ -383,7 +387,7 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
 # ---------------------------------------------------------------- movement
 def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
     by_day: dict[dt.date, dict] = {}
-    for _c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to):
+    for _c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to, _tracked()):
         r = by_day.setdefault(d, {"credits": ZERO, "debits": ZERO, "txn_count": 0})
         r["credits"] += cr
         r["debits"] += db
@@ -448,6 +452,208 @@ def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
             "Estimated points exist only for days the estimator ran; they are model output, "
             "not balances.",
         ],
+    }
+
+
+# ---------------------------------------------------------------- today vs yesterday
+def _weighted_avg(pairs) -> tuple[Decimal | None, int]:
+    pairs = [(v, n) for v, n in pairs if v is not None and n]
+    tot = sum(n for _, n in pairs)
+    return (sum(v * n for v, n in pairs) / tot, len(pairs)) if tot else (None, 0)
+
+
+def _accounts_as_of(day: dt.date, ids) -> dict[str, int]:
+    """{csp: customer-account count} as of the end of `day`: the newest PMJDY reading on or
+    before it, else the newest Calling Sheet count (labelled elsewhere as the fallback)."""
+    ids = list(ids)
+    out = {c: n for c, (n, _at) in pmjdy.counts_as_of(day, ids).items()}
+    rest = [c for c in ids if c not in out]
+    if rest:
+        out.update({c: n for c, (n, _d) in _sheet_counts_as_of(day, rest).items()
+                    if n is not None})
+    return out
+
+
+def _new_accounts_as_of(day: dt.date, ids) -> dict | None:
+    """New accounts opened so far in `day`'s month (MTD) and that day's own figure (FTD), from the
+    newest reading taken on or before the end of `day`."""
+    from .progress import day_bounds
+
+    _start, end = day_bounds(day)
+    rows = list(
+        PmjdyMonthly.objects.filter(month=f"{day:%Y-%m}", observed_at__lt=end,
+                                    csp_id__in=list(ids))
+        .order_by("csp_id", "-observed_at").distinct("csp_id")
+    )
+    if not rows:
+        return None
+    mtd = [r.mtd for r in rows if r.mtd is not None]
+    ftd = [r.ftd for r in rows if r.ftd is not None]
+    return {"mtd": sum(mtd) if mtd else None, "ftd": sum(ftd) if ftd else None,
+            "csps": len(rows), "observed_at": max(r.observed_at for r in rows)}
+
+
+def _observed_avg_as_of(day: dt.date, ids) -> tuple[Decimal | None, int]:
+    rows = (
+        DailyBalance.objects.filter(balance_date__lte=day, csp_id__in=list(ids),
+                                    account_count__isnull=False)
+        .exclude(source__in=NOT_OBSERVATIONS)
+        .order_by("csp_id", "-balance_date").distinct("csp_id")
+        .values_list("daily_avg_balance", "account_count")
+    )
+    return _weighted_avg(rows)
+
+
+def _estimate_avg_on(day: dt.date, ids) -> tuple[Decimal | None, int]:
+    rows = (
+        DailyEstimate.objects.filter(
+            estimate_date=day, csp_id__in=list(ids), status__in=("VALIDATED", "PROVISIONAL"),
+            estimated_value__isnull=False)
+        .values_list("estimated_value", "current_account_count")
+    )
+    return _weighted_avg(rows)
+
+
+def _flow_state(day: dt.date, coverage: dict, label: str) -> tuple[str, str]:
+    """(state, plain-English reason) of the bank-statement data for one day. `label` is how the
+    sentence refers to the day ("today" / "yesterday")."""
+    e = coverage.get(day)
+    if e is None:
+        return "no_data", f"there is no bank statement for {label} yet"
+    if e["class"] == "COMPLETE_DAY":
+        return "complete", f"{label} is complete"
+    exp = e.get("latest_export")
+    if e["class"] == "PARTIAL_DAY" and exp is not None:
+        clock = f"{exp:%I:%M %p}".lstrip("0")
+        return "so_far", f"the statement for {label} covers only up to {clock}"
+    return "unconfirmed", f"{label} is not yet confirmed complete"
+
+
+def _change(today, yesterday) -> tuple:
+    if today is None or yesterday is None:
+        return None, None
+    delta = today - yesterday
+    pct = (delta / yesterday * 100) if yesterday else None
+    return delta, (float(pct) if pct is not None else None)
+
+
+def _direction(delta) -> str:
+    if delta is None:
+        return "unknown"
+    return "flat" if delta == 0 else ("up" if delta > 0 else "down")
+
+
+def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
+    """The present day against the day before it, for the whole network or for `csp_codes`.
+
+    `today` defaults to the present IST day and `yesterday` is the calendar day before it. Each
+    figure is what the stored data says AS OF that day (account counts and the SBI average balance
+    are the newest reading on or before the day; money movement is that day's own statement).
+    Money movement for today is "so far" until a statement proves the day complete, so a
+    today-vs-yesterday money change is marked not like-for-like rather than presented as a trend.
+    A missing figure is None, never zero."""
+    from . import services
+
+    today = today or timezone.localdate()
+    yesterday = today - dt.timedelta(days=1)
+    tracked = _tracked()
+    ids = [c for c in (csp_codes if csp_codes is not None else tracked) if c in tracked]
+    idset = set(ids)
+    coverage = services.day_coverage()
+
+    acc = {d: _accounts_as_of(d, ids) for d in (today, yesterday)}
+    both = set(acc[today]) & set(acc[yesterday])
+    acc_change = sum(acc[today][c] - acc[yesterday][c] for c in both) if both else None
+    acc_total = {d: (sum(acc[d].values()) if acc[d] else None) for d in acc}
+
+    new = {d: _new_accounts_as_of(d, ids) for d in (today, yesterday)}
+    obs = {d: _observed_avg_as_of(d, ids) for d in (today, yesterday)}
+    est = {d: _estimate_avg_on(d, ids) for d in (today, yesterday)}
+
+    fl = {}
+    for d in (today, yesterday):
+        credit = debit = o_credit = o_debit = ZERO
+        n = o_n = 0
+        seen = False
+        for _c, _d, cr, db, k, _cats, other in _flow_rows(d, d, idset):
+            seen = True
+            credit += cr
+            debit += db
+            n += k
+            o_credit += other[0]
+            o_debit += other[1]
+            o_n += other[2]
+        state, note = _flow_state(d, coverage, "today" if d == today else "yesterday")
+        fl[d] = {"seen": seen, "credit": credit if seen else None,
+                 "debit": debit if seen else None, "n": n if seen else None,
+                 "other_credit": o_credit if seen else None,
+                 "other_debit": o_debit if seen else None, "other_n": o_n if seen else None,
+                 "state": state, "note": note}
+    like_for_like = (fl[today]["state"] == "complete" and fl[yesterday]["state"] == "complete")
+
+    def row(key, label, unit, t, y, *, note="", good_when_up=None, delta=None, pct=None,
+            comparable=True):
+        d, p = (delta, pct) if delta is not None else _change(t, y)
+        return {"key": key, "label": label, "unit": unit, "today": t, "yesterday": y,
+                "change": d, "change_pct": p, "direction": _direction(d),
+                "good_when_up": good_when_up, "note": note, "like_for_like": comparable}
+
+    acc_note = ""
+    if acc_total[today] is not None and acc_total[yesterday] is not None and len(
+            acc[today]) != len(acc[yesterday]):
+        acc_note = (f"{len(acc[today])} CSPs reporting today and {len(acc[yesterday])} "
+                    "yesterday; the change counts only CSPs with both readings.")
+    pct_acc = None
+    base = acc_total[yesterday]
+    if acc_change is not None and base:
+        pct_acc = float(Decimal(acc_change) / Decimal(base) * 100)
+    n_t, n_y = new[today], new[yesterday]
+    month_reset = f"{today:%Y-%m}" != f"{yesterday:%Y-%m}"
+    flow_note = ""
+    if not like_for_like:
+        parts = [fl[d]["note"] for d in (today, yesterday) if fl[d]["state"] != "complete"]
+        flow_note = "Not a like-for-like comparison: " + "; ".join(parts) + "."
+
+    rows = [
+        row("accounts", "Customer accounts", "count", acc_total[today], acc_total[yesterday],
+            good_when_up=True, delta=acc_change, pct=pct_acc, note=acc_note),
+        row("new_accounts_mtd", "New accounts this month", "count",
+            n_t["mtd"] if n_t else None, n_y["mtd"] if n_y else None, good_when_up=True,
+            note=("A new month started: this month's count restarts from zero." if month_reset
+                  else "")),
+        row("new_accounts_day", "New accounts opened that day", "count",
+            n_t["ftd"] if n_t else None, n_y["ftd"] if n_y else None, good_when_up=True,
+            note="Today's figure keeps growing until the day ends."),
+        row("money_in", "Money in (withdrawals and deposits)", "rupees",
+            fl[today]["credit"], fl[yesterday]["credit"], note=flow_note,
+            comparable=like_for_like),
+        row("money_out", "Money out (withdrawals and deposits)", "rupees",
+            fl[today]["debit"], fl[yesterday]["debit"], comparable=like_for_like),
+        row("transactions", "Transactions counted", "count", fl[today]["n"], fl[yesterday]["n"],
+            comparable=like_for_like),
+        row("observed_avg", "SBI-reported average balance per account", "rupees",
+            obs[today][0], obs[yesterday][0],
+            note="Changes only when SBI refreshes a CSP's figure in the Calling Sheet."),
+        row("estimated_avg", "Our estimated average balance per account", "rupees",
+            est[today][0], est[yesterday][0],
+            note="" if est[today][0] is not None or est[yesterday][0] is not None
+            else "No reliable estimate yet: the history is still too short."),
+    ]
+    return {
+        "today": today, "yesterday": yesterday, "scope": "network" if csp_codes is None else "csp",
+        "csps": len(ids), "rows": rows, "like_for_like_money": like_for_like,
+        "money_state": {"today": fl[today]["state"], "yesterday": fl[yesterday]["state"],
+                        "today_note": fl[today]["note"], "yesterday_note": fl[yesterday]["note"]},
+        "other_types": {
+            "today": {"credit": fl[today]["other_credit"], "debit": fl[today]["other_debit"],
+                      "txn_count": fl[today]["other_n"]},
+            "yesterday": {"credit": fl[yesterday]["other_credit"],
+                          "debit": fl[yesterday]["other_debit"],
+                          "txn_count": fl[yesterday]["other_n"]},
+        },
+        "notes": ["Today means the present day (India time) and yesterday the day before.",
+                  "Figures are what the stored data says as of each day; a missing figure is "
+                  "shown as a dash, never as zero."],
     }
 
 

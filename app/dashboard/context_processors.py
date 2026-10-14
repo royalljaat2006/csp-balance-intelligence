@@ -17,6 +17,7 @@ from autopilot.models import AnomalyFlag
 from common.cache import cache_aside
 from csp.services import get_data_freshness
 from django.conf import settings
+from django.utils import timezone
 
 from . import navigation
 
@@ -76,7 +77,24 @@ def dashboard_shell(request):
         match = getattr(request, "resolver_match", None)
         context.update(navigation.build(match.url_name if match else None, request.user.is_staff))
         context["needs_attention_count"] = _needs_attention_count()
+        name = match.url_name if match else None
+        context["day_compare"] = _day_compare() if name in navigation.COMPARE_PAGES else None
     return context
+
+
+def _day_compare() -> dict | None:
+    """Today (the present IST day) against yesterday, for the strip at the top of every data page.
+    Cached for a minute and keyed by the date, so it rolls over at midnight. None -- strip hidden
+    -- if it cannot be computed; the shell must never fail because a comparison could not load."""
+    try:
+        from bankflow import intelligence
+
+        today = timezone.localdate()
+        return cache_aside(
+            f"nav:daycompare:{today}", ttl=60, fn=lambda: intelligence.day_compare(today)
+        )
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _needs_attention_count() -> int | None:

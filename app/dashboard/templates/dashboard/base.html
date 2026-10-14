@@ -46,9 +46,9 @@
         </div>
         <div class="topbar-right">
           <span class="env-badge {{ env_badge|lower }}">{{ env_badge }}</span>
-          <span class="freshness-pill {{ freshness.overall_status }}" title="CALLING SHEET ingest freshness">
+          <a class="freshness-pill {{ freshness.overall_status }}" href="{% url 'dashboard:data_progress' %}" title="Calling Sheet freshness &mdash; open Data progress" style="text-decoration:none;">
             <span class="dot"></span>{{ freshness.overall_status|default:"missing"|capfirst }}{% if freshness.calling_sheet_last_success %} &middot; {{ freshness.calling_sheet_last_success|timesince }} ago{% endif %}
-          </span>
+          </a>
           <button type="button" class="icon-btn" id="refresh-btn" title="Refresh this page" aria-label="Refresh">&#8635;</button>
           <div class="mode-switch" role="group" aria-label="Dashboard mode">
             <button type="button" data-mode="tracker" class="{% if not is_eko_mode %}active{% endif %}">Tracker</button>
@@ -89,6 +89,7 @@
       {% endif %}
 
       <main class="page-enter" id="main-content">
+        {% if day_compare %}<div class="wrap dc-slot">{% include "dashboard/components/day_compare.html" with dc=day_compare %}</div>{% endif %}
   {% else %}
   <main id="main-content">
   {% endif %}

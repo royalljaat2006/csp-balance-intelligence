@@ -12,31 +12,31 @@
   </header>
 
   <p class="sub" style="margin-top:-10px;">
-    {% if is_wall_clock_today %}Showing today's figures ({{ today|date:"d M" }}).
-    {% else %}The ledger arrives as an end-of-day file, not live — showing the most recent day it actually
-      covers: <strong>{{ today|date:"d M Y" }}</strong> (vs. {{ yesterday|date:"d M" }}).{% endif %}
+    Today is <strong>{{ today|date:"D d M Y" }}</strong>, compared with yesterday ({{ yesterday|date:"d M" }}).
+    {% if not today_has_data %}Today&rsquo;s transactions have not arrived yet{% if latest_data_date %}; the newest day on file is
+      <strong>{{ latest_data_date|date:"D d M Y" }}</strong>{% endif %}.{% endif %}
   </p>
 
   <div class="stats cols-4">
     <div class="stat" style="cursor:default;">
-      <div class="label">{% if is_wall_clock_today %}Transactions today{% else %}Transactions ({{ today|date:"d M" }}){% endif %}</div>
-      <div class="value" data-count="{{ txn_count_today|default_if_none:0 }}">0</div>
+      <div class="label">Transactions today</div>
+      {% if txn_count_today is None %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ txn_count_today }}">0</div>{% endif %}
       <div class="foot">{% if txn_count_today is None %}no data yet{% else %}vs. {{ txn_count_yesterday|default_if_none:"—" }} on {{ yesterday|date:"d M" }}{% endif %}</div>
     </div>
     <div class="stat" style="cursor:default;">
-      <div class="label">{% if is_wall_clock_today %}Transaction amount today{% else %}Transaction amount ({{ today|date:"d M" }}){% endif %}</div>
+      <div class="label">Transaction amount today</div>
       <div class="value" id="stat-amount-today">—</div>
       <div class="foot">vs. <span id="stat-amount-yesterday">—</span> on {{ yesterday|date:"d M" }}</div>
     </div>
     <div class="stat" style="cursor:default;">
-      <div class="label">{% if is_wall_clock_today %}ONUS transactions today{% else %}ONUS transactions ({{ today|date:"d M" }}){% endif %}</div>
-      <div class="value" data-count="{{ onus_txn_count_today|default_if_none:0 }}">0</div>
-      <div class="foot">of {{ txn_count_today|default_if_none:0 }} overall</div>
+      <div class="label">ONUS transactions today</div>
+      {% if onus_txn_count_today is None %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ onus_txn_count_today }}">0</div>{% endif %}
+      <div class="foot">{% if txn_count_today is None %}no data yet{% else %}of {{ txn_count_today }} overall{% endif %}</div>
     </div>
     <div class="stat" style="cursor:default;">
-      <div class="label">{% if is_wall_clock_today %}Active CSPs today{% else %}Active CSPs ({{ today|date:"d M" }}){% endif %}</div>
-      <div class="value" data-count="{{ active_csps_today }}">0</div>
-      <div class="foot">with at least one transaction</div>
+      <div class="label">Active CSPs today</div>
+      {% if not today_has_data %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ active_csps_today }}">0</div>{% endif %}
+      <div class="foot">{% if today_has_data %}with at least one transaction{% else %}no data yet{% endif %}</div>
     </div>
   </div>
 

@@ -32,6 +32,7 @@ from autopilot.tasks import enqueue_agent_run
 from bankflow import estimates as bankflow_estimates
 from bankflow import flows as bankflow_flows
 from bankflow import intelligence as bankflow_intelligence
+from bankflow import progress as bankflow_progress
 from bankflow import services as bankflow_services
 from common.cache import cache_aside
 from csp import comparison, services
@@ -1194,6 +1195,7 @@ def csp_detail(request, csp_code: str):
             "month": month,
             "mode": mode,
             "daily_comparison": daily_comparison,
+            "csp_day_compare": _csp_day_compare(csp_code),
             "trend_intel": trend_intel,
             "slab_history": slab_history,
             "slab_history_series": slab_history_series,
@@ -1211,34 +1213,32 @@ def transactions(request):
     transaction table itself is server-paginated (never all rows loaded
     client-side — a real month's ledger is ~300k rows).
 
-    The headline KPI cards anchor on the LATEST date the daily_activity
-    mart actually has, not the wall-clock date — this ledger arrives as an
-    end-of-day batch file (Telegram/folder-watch), so "today" would read
-    as empty for most of every day until that file lands. Anchoring on the
-    latest real date instead means the cards always show the most recent
-    complete day's real numbers; the template labels the actual date
-    rather than hardcoding the word "today", so this is never a mislabel."""
+    "Today" is the present IST day and "yesterday" the day before, always. This ledger
+    arrives as a batch file, so today's figures can be missing for part of the day: the cards
+    then show a dash ("no data yet"), never an older day passed off as today, and the page says
+    which day the newest data on file belongs to."""
+    today = timezone.localdate()
+    previous_date = today - dt.timedelta(days=1)
     bounds = services.get_daily_activity_date_bounds()
-    latest_date = bounds[1] if bounds else timezone.localdate()
-    previous_date = latest_date - dt.timedelta(days=1)
+    latest_data_date = bounds[1] if bounds else None
 
     activity_by_date = {
         r["activity_date"]: r
-        for r in services.get_network_daily_trend(date_from=previous_date, date_to=latest_date)
+        for r in services.get_network_daily_trend(date_from=previous_date, date_to=today)
     }
-    today_activity = activity_by_date.get(latest_date)
+    today_activity = activity_by_date.get(today)
     yesterday_activity = activity_by_date.get(previous_date)
 
     def _metric(row, key):
         return row[key] if row else None
 
-    active_csps_today = services.get_active_transaction_csp_count(latest_date)
+    active_csps_today = services.get_active_transaction_csp_count(today)
     type_distribution = services.get_transaction_type_distribution(
-        date_from=previous_date, date_to=latest_date
+        date_from=previous_date, date_to=today
     )
 
     activity_series_30d = services.get_network_daily_trend(
-        date_from=latest_date - dt.timedelta(days=29), date_to=latest_date
+        date_from=today - dt.timedelta(days=29), date_to=today
     )
 
     # Ingestion health — real IngestLog rows, both delivery channels.
@@ -1277,14 +1277,11 @@ def transactions(request):
         request,
         "dashboard/transactions.html",
         {
-            "today": latest_date,
+            "today": today,
             "yesterday": previous_date,
-            "is_wall_clock_today": latest_date == timezone.localdate(),
-            "type_distribution_hint": (
-                "today + yesterday, allow-listed types only"
-                if latest_date == timezone.localdate()
-                else f"{previous_date:%d %b} + {latest_date:%d %b}, allow-listed types only"
-            ),
+            "latest_data_date": latest_data_date,
+            "today_has_data": today_activity is not None,
+            "type_distribution_hint": "today + yesterday, allow-listed types only",
             "txn_count_today": _metric(today_activity, "txn_count"),
             "txn_count_yesterday": _metric(yesterday_activity, "txn_count"),
             "txn_amount_today": _metric(today_activity, "txn_amount"),
@@ -1380,14 +1377,11 @@ def trends(request):
     ]
     latest_account_growth = account_growth[-1] if account_growth else None
 
-    # Today-vs-yesterday transaction comparison — anchored on the latest
-    # real date the transaction mart actually has (`bounds`, same anchor
-    # views.transactions() already uses for its own headline cards), not
-    # wall-clock today. The transaction workbook is downloaded/updated once
-    # a day and is a full day behind by the time it's ingested, so
-    # wall-clock "today" almost never has any real transaction row yet —
-    # this isn't a rolling live feed the way the Calling Sheet is.
-    txn_today = bounds[1] if bounds else timezone.localdate()
+    # Today-vs-yesterday transaction comparison: today is the present IST day and yesterday the
+    # day before, as everywhere else in the project. When the transaction batch for today has
+    # not arrived yet there is no row for it and the comparison reads "no data" -- it never
+    # slides back to an older day and calls it today.
+    txn_today = timezone.localdate()
     txn_yesterday = txn_today - dt.timedelta(days=1)
     today_yesterday = {
         a["activity_date"]: a
@@ -1698,6 +1692,27 @@ def money_movement(request):
         "day_rows": list(reversed(movement["series"])),
         "chart": _chart_payload(movement), "movement_notes": movement["notes"],
     })
+
+
+def _csp_day_compare(csp_code: str) -> dict | None:
+    """Today vs yesterday for one CSP; None (panel hidden) if it cannot be computed."""
+    try:
+        return bankflow_intelligence.day_compare(csp_codes=[csp_code])
+    except Exception:  # noqa: BLE001 -- a side panel must never break the CSP page
+        return None
+
+
+@login_required
+def data_progress(request):
+    """What each automated step has done today and yesterday, and when (India time): the morning
+    snapshot, the Calling Sheet reads, new accounts, bank statements ingested, the money-movement
+    and estimate calculations. Read straight from the tables the pipeline writes."""
+    data = bankflow_progress.pipeline_progress()
+    if not request.user.is_staff:  # technical error text is for staff only
+        for step in data["steps"]:
+            for day in ("today", "yesterday"):
+                step[day]["error"] = ""
+    return render(request, "dashboard/data_progress.html", {"p": data})
 
 
 @login_required

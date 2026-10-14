@@ -285,3 +285,41 @@ def exceptions(
         data=_plain(intelligence.exceptions(frm, to, limit=clamp_limit(limit))),
         request_id=request.request_id,
     )
+
+
+@router.get(
+    "/progress",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="What each automated step did today and yesterday, and when",
+    description=(
+        "Per step: schedule, last run, next due, health (on_time / late / waiting / never), and "
+        "what happened today and yesterday (IST). Also the recent statement files with the time "
+        "the bank file was produced and the time it was ingested, and a chronological timeline."
+    ),
+)
+def progress(request: ApiRequest):
+    from bankflow import progress as progress_mod
+
+    return DataEnvelope(
+        data=_plain(progress_mod.pipeline_progress()), request_id=request.request_id
+    )
+
+
+@router.get(
+    "/day-compare",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Today (the present IST day) against yesterday, network-wide or for one CSP",
+    description=(
+        "Customer accounts, new accounts, money in/out (withdrawals and deposits only), SBI "
+        "average balance and our estimate, each as of today and as of yesterday with the change. "
+        "Today's money movement is 'so far' until a statement proves the day complete, and the "
+        "response says when a money comparison is not like-for-like. Missing figures are null."
+    ),
+)
+def day_compare(request: ApiRequest, csp: str = ""):
+    codes = [csp.strip()[:16]] if csp.strip() else None
+    return DataEnvelope(
+        data=_plain(intelligence.day_compare(csp_codes=codes)), request_id=request.request_id
+    )

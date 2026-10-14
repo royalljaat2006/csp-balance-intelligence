@@ -75,7 +75,7 @@ are **excluded** by default. Alternatives (`customer_wd_dep_xfer`, `pool_net`) a
 The channel→category map is inferred from labels and needs business confirmation.
 
 **The dashboard counts the same types.** The headline money in / money out (Home, Money Movement, the
-per-CSP flow, the alerts and `/api/v1/bankflow/dashboard-summary`) is the sum of the `withdrawal` and
+per-CSP flow, the alerts and `/api/v1/bank-flow/dashboard-summary`) is the sum of the `withdrawal` and
 `deposit` categories only (`intelligence.COUNTED_CATEGORIES`, taken from the default definition). Every
 other category is reported separately as `flows.other_types` ("not counted here") and is never hidden. On
 the first production import (18 statement days) the picture was: withdrawals + deposits ≈ ₹64.1 Cr in /
@@ -426,3 +426,33 @@ the workbook copy gave MTD 1,246, FTD 130, target 5,205 across 535 CSPs.
 
 The dashboard says "new customer accounts" (the agreed plain wording). `AccountCountObservation` (total-count
 snapshots) is still supported but nothing feeds it: total accounts come from `DailyBalance.account_count`.
+
+## Data progress and "today vs yesterday" (added 2026-10-14)
+
+**Today is always the present IST day and yesterday the day before.** This applies to every page,
+API response and comparison. Where the data for today has not arrived yet (for example the
+transaction batch), the figure is shown as a dash / `null`, never as zero and never replaced by an
+older day: the Transactions and Trends pages used to anchor "today" on the newest day in the mart and
+now follow the wall clock like everything else.
+
+* **Data progress** (`/dashboard/progress/`; tab "Data progress" in Money Movement, entry in More,
+  and the freshness badge in the top bar links to it). `bankflow/progress.py::pipeline_progress` only
+  reads what the pipeline already writes (`IngestLog`, `ImportRun`, `StatementFile`,
+  `BaselineSnapshot`, `PmjdyMonthly`, `FlowAggregate`, `HypothesisRun`, `DailyEstimate`). Per step:
+  schedule, last run, next due, health (On time / Late / Waiting / Not run yet) and what happened
+  today and yesterday, including when the morning snapshot was captured and when each bank statement
+  was produced and ingested. Late means no run for two cycles plus one 5-minute worker tick; the
+  06:00 IST snapshot is "Waiting" before 06:00 and "Late" after it if nothing was captured. Error text
+  is shown to staff only. API: `GET /api/v1/bank-flow/progress` (scope `report:read`).
+* **Today vs yesterday strip** on every data page (`navigation.COMPARE_PAGES`) and a per-CSP version
+  on each CSP page. One function, `intelligence.day_compare(today=None, csp_codes=None)`, feeds both
+  and `GET /api/v1/bank-flow/day-compare[?csp=CODE]`. Each figure is what the stored data says *as of*
+  that day: account counts and the SBI average balance are the newest reading on or before the day
+  (the change counts only CSPs with both readings), new accounts are the newest monthly reading taken
+  by the end of the day, money in/out is that day's own statement (withdrawals and deposits only) and
+  the estimate is that day's `DailyEstimate` when it is validated or provisional. Today's money
+  movement is "so far" until a statement proves the day complete, so the money rows carry
+  `like_for_like: false` and a plain-English note instead of being presented as a trend. On a phone the
+  strip starts folded; the choice is remembered in the browser.
+* Money movement figures on the dashboard now cover **tracked CSPs only** everywhere, so the strip,
+  the summary cards and the daily table agree.

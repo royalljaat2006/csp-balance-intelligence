@@ -1,0 +1,89 @@
+{% extends "dashboard/base.html" %}
+{% load fmt %}
+{% block title %}Data progress — CSP Balance Tracker{% endblock %}
+{% block content %}
+<div class="wrap sm">
+  <header class="sm-head">
+    <div>
+      <h1>Data progress</h1>
+      <p class="sub">What has run today and yesterday, and when &middot; all times are India time &middot; today is {{ p.today|date:"D d M Y" }}</p>
+    </div>
+  </header>
+
+  <div class="dp-banner {{ p.overall.state }}" role="status">{{ p.overall.headline }}</div>
+
+  <section aria-labelledby="dp-steps-h">
+    <div class="sm-panel-head" style="margin-bottom:12px;"><h2 id="dp-steps-h">Step by step</h2></div>
+    <div class="dp-steps">
+      {% for st in p.steps %}
+      <article class="dp-step" data-step="{{ st.key }}">
+        <div>
+          <h3>{{ st.title }}
+            <span class="dp-state sm-pill {% if st.health == 'on_time' or st.health == 'info' %}ok{% elif st.health == 'late' %}attn{% else %}wait{% endif %}">{{ st.health_label }}</span>
+          </h3>
+          <p class="dp-what">{{ st.what }}</p>
+          <p class="dp-meta">{{ st.schedule }}
+            {% if st.last_at %}<br>Last run: {{ st.last_at|date:"D d M, h:i A" }}{% endif %}
+            {% if st.next_due %}<br>Next: about {{ st.next_due|date:"D d M, h:i A" }}{% endif %}</p>
+          {% if st.note %}<p class="dp-meta" style="color:#8a5309;margin-top:6px;">{{ st.note }}</p>{% endif %}
+        </div>
+        <div class="dp-day" data-day="today">
+          <h4>Today</h4>
+          <div class="when">{% if st.today.last_at %}{{ st.today.last_at|date:"h:i A" }}{% else %}&mdash;{% endif %}</div>
+          <p>{{ st.today.summary }}</p>
+          {% if st.today.error and user.is_staff %}<p class="sm-mute">{{ st.today.error }}</p>{% endif %}
+        </div>
+        <div class="dp-day" data-day="yesterday">
+          <h4>Yesterday</h4>
+          <div class="when">{% if st.yesterday.last_at %}{{ st.yesterday.last_at|date:"h:i A" }}{% else %}&mdash;{% endif %}</div>
+          <p>{{ st.yesterday.summary }}</p>
+          {% if st.yesterday.error and user.is_staff %}<p class="sm-mute">{{ st.yesterday.error }}</p>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="sm-panel" aria-labelledby="dp-files-h">
+    <div class="sm-panel-head"><h2 id="dp-files-h">Bank statement files</h2></div>
+    <p class="sm-mute" style="margin:0 0 10px;">&ldquo;Produced&rdquo; is when the bank file was written; &ldquo;Ingested&rdquo; is when we read it and used it to calculate the money movement.
+      {% if p.latest_statement_day %}The newest statement ingested is for {{ p.latest_statement_day|date:"D d M Y" }}.{% endif %}</p>
+    <div class="tbl-scroll sm-tablewrap"><table class="sm-table">
+      <thead><tr><th>Statement day</th><th>Produced</th><th>Ingested</th><th class="num">Transactions</th><th>Result</th></tr></thead>
+      <tbody>
+      {% for f in p.statement_files %}
+      <tr>
+        <td data-label="Statement day">{% if f.statement_day %}{{ f.statement_day|date:"D d M Y" }}{% else %}&mdash;{% endif %}</td>
+        <td data-label="Produced">{% if f.produced_at %}{{ f.produced_at|date:"d M, h:i A" }}{% else %}&mdash;{% endif %}</td>
+        <td data-label="Ingested">{{ f.ingested_at|date:"d M, h:i A" }}</td>
+        <td class="num" data-label="Transactions">{{ f.rows|intc }}</td>
+        <td data-label="Result">{% if f.status == "imported" %}<span class="sm-pill ok">Used</span>{% elif f.status == "quarantined" %}<span class="sm-pill attn" title="{{ f.reason }}">Held back</span>{% else %}<span class="sm-pill attn">Could not read</span>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5"><span class="sm-mute">No bank statement has been ingested yet.</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="sm-panel" aria-labelledby="dp-time-h">
+    <div class="sm-panel-head"><h2 id="dp-time-h">What happened, in order</h2></div>
+    <div class="dp-cols">
+      <div>
+        <h3 style="font-size:14px;margin:0 0 6px;">Today &middot; {{ p.today|date:"D d M" }}</h3>
+        <ul class="dp-time" data-day="today">
+          {% for e in p.timeline.today %}<li><span class="t">{{ e.at|date:"h:i A" }}</span><span>{{ e.text }}</span></li>
+          {% empty %}<li><span class="sm-mute">Nothing has run yet today.</span></li>{% endfor %}
+        </ul>
+      </div>
+      <div>
+        <h3 style="font-size:14px;margin:0 0 6px;">Yesterday &middot; {{ p.yesterday|date:"D d M" }}</h3>
+        <ul class="dp-time" data-day="yesterday">
+          {% for e in p.timeline.yesterday %}<li><span class="t">{{ e.at|date:"h:i A" }}</span><span>{{ e.text }}</span></li>
+          {% empty %}<li><span class="sm-mute">Nothing was recorded yesterday.</span></li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

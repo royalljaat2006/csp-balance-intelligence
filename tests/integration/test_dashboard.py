@@ -334,18 +334,16 @@ def test_trends_page_transaction_comparison_no_data_without_mart(logged_in_clien
 
 
 @pytest.mark.django_db
-def test_trends_transaction_comparison_anchors_on_mart_not_wall_clock_today(logged_in_client, db):
-    """The transaction workbook is downloaded/updated once a day and is
-    already a full day behind by the time it's ingested -- wall-clock
-    "today" almost never has a real transaction row. The comparison must
-    anchor on the mart's own latest real date (same as views.transactions),
-    not dt.date.today(), or this widget reads NO_DATA every single day."""
+def test_trends_comparison_is_always_the_present_day_against_yesterday(logged_in_client, db):
+    """Today is the present IST day and yesterday the day before, whatever the newest day in the
+    mart is. When the batch for today has not arrived, today reads "no data" (None) while
+    yesterday keeps its real value: the comparison never slides back to an older day and calls
+    it today."""
     from django.db import connection
+    from django.utils import timezone
 
     _create_daily_activity_mart()
-    real_today = dt.date.today()
-    # Simulate the real 1-day ingestion lag: the mart's most recent rows are
-    # for (real_today - 1) and (real_today - 2), never for real_today itself.
+    real_today = timezone.localdate()
     mart_latest = real_today - dt.timedelta(days=1)
     mart_prior = real_today - dt.timedelta(days=2)
     with connection.cursor() as cursor:
@@ -365,11 +363,11 @@ def test_trends_transaction_comparison_anchors_on_mart_not_wall_clock_today(logg
 
     response = logged_in_client.get("/dashboard/trends/")
     comparison_result = response.context["txn_count_comparison"]
-    assert comparison_result.current_value == decimal.Decimal("20")
-    assert comparison_result.previous_value == decimal.Decimal("10")
-    assert comparison_result.current_date == mart_latest
-    assert comparison_result.comparison_date == mart_prior
-    assert comparison_result.current_date != real_today
+    assert comparison_result.current_date == real_today
+    assert comparison_result.comparison_date == real_today - dt.timedelta(days=1)
+    assert comparison_result.current_value is None  # today's batch has not arrived
+    assert comparison_result.previous_value == decimal.Decimal("20")  # yesterday, as it was
+    assert comparison_result.trend == "NO_DATA"
 
 
 @pytest.mark.django_db

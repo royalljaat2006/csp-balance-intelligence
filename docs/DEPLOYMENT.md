@@ -394,7 +394,7 @@ docker compose exec -T -w /app/app worker-bankflow python manage.py bank_flow_co
 docker compose logs --tail=50 worker-bankflow                       # job_run lines, no poll_failed
 docker compose exec -T -w /app/app web python manage.py shell -c "from csp.models import IngestLog as L; print(list(L.objects.filter(source__in=['pmjdy','baseline_snapshot']).order_by('-id').values_list('source','status','error_summary')[:6]))"
 ```
-Then open `/dashboard/` (staff). Expected on day 1: customer accounts and new accounts for the month, money in/out
+Then open `/dashboard/progress/` (what ran today and yesterday, and when) and `/dashboard/` (staff). Expected on day 1: customer accounts and new accounts for the month, money in/out
 from the statements, SBI-reported average balance, and "Reliable estimate not available yet" -- there is no history yet.
 The estimate appears by itself once enough history has accumulated (`bank_flow_coverage` shows the progress).
 

@@ -169,7 +169,8 @@ def test_api_and_dashboard_never_expose_customer_data(client, tmp_path, csps):
     joined = " ".join(bodies)
     for secret in (
         CUSTOMER_ACCT,
-        "Customer",
+        "Test Customer",  # the planted name; the UI's own "Customer accounts" label is fine
+        "Test  Customer",
         "Mr. Test",
         "30707699536",
         "TRANSFER FROM",

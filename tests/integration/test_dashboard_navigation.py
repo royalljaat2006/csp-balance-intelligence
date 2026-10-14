@@ -104,6 +104,7 @@ def test_section_tabs_group_sibling_pages_and_respect_permissions(staff):
     viewer_tabs = [t["label"] for t in navigation.build("transactions", False)["nav_tabs"]]
     assert staff_tabs == [
         "Overview",
+        "Data progress",
         "Transactions",
         "Daily Comparison",
         "Trends & Analytics",

@@ -15,6 +15,7 @@ import pytest
 from csp.models import Csp, IngestLog, Transaction
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.utils import timezone
 
 
 @pytest.fixture
@@ -141,21 +142,24 @@ def stale_daily_activity_mart(db):
 
 
 @pytest.mark.django_db
-def test_kpi_cards_anchor_on_latest_mart_date_not_wall_clock(
+def test_kpi_cards_use_the_present_day_as_today_even_when_the_mart_is_older(
     logged_in_client, stale_daily_activity_mart
 ):
-    latest, previous = stale_daily_activity_mart
+    """Today is always the present IST day and yesterday the day before: an older day on file is
+    never passed off as today. The cards read "no data yet" and the page names the newest day."""
+    latest, _previous = stale_daily_activity_mart
     response = logged_in_client.get("/dashboard/transactions/")
 
-    assert response.context["today"] == latest
-    assert response.context["yesterday"] == previous
-    assert response.context["is_wall_clock_today"] is False
-    assert response.context["txn_count_today"] == 6  # the latest row's real count, not 0
+    today = timezone.localdate()
+    assert response.context["today"] == today
+    assert response.context["yesterday"] == today - dt.timedelta(days=1)
+    assert response.context["latest_data_date"] == latest
+    assert response.context["today_has_data"] is False
+    assert response.context["txn_count_today"] is None  # not the older day's 6, and not 0
 
     body = response.content.decode()
-    # The label must show the real date, never silently claim "today".
-    assert latest.strftime("%d %b") in body
-    assert "no data yet" not in body
+    assert "no data yet" in body and "have not arrived yet" in body
+    assert latest.strftime("%d %b") in body  # "the newest day on file is ..."
 
 
 @pytest.mark.django_db
@@ -192,9 +196,10 @@ def test_kpi_cards_say_today_when_mart_is_genuinely_current(logged_in_client, cs
         )
 
     response = logged_in_client.get("/dashboard/transactions/")
-    assert response.context["is_wall_clock_today"] is True
+    assert response.context["today_has_data"] is True
+    assert response.context["txn_count_today"] == 1
     body = response.content.decode()
-    assert "Transactions today" in body
+    assert "Transactions today" in body and "no data yet" not in body
 
 
 @pytest.mark.django_db
