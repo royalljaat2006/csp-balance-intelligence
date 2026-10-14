@@ -1,0 +1,30 @@
+# Host service that watches the other team's monthly transaction workbook and copies it into this
+# app's incoming/ folder once it has settled (replaces the */20 cron around sync_transaction_sheet.sh).
+# It only READS the other team's folder. See docs/DEPLOYMENT.md, "Transaction workbook watchdog".
+#
+# Install (needs sudo):
+#   sudo cp scripts/systemd/csp-transaction-watchdog.service /etc/systemd/system/
+#   sudo cp scripts/systemd/csp-transaction-watchdog.env.example /etc/csp-transaction-watchdog.env
+#   sudoedit /etc/csp-transaction-watchdog.env          # set the data dir
+#   sudo systemctl daemon-reload && sudo systemctl enable --now csp-transaction-watchdog
+# Without sudo, use the user-level unit instead: csp-transaction-watchdog.user.service
+[Unit]
+Description=CSP Balance Tracker - transaction workbook watchdog (read-only on the source)
+After=network.target
+
+[Service]
+Type=simple
+# Run as the same account the old cron ran as: it must be able to READ the other team's folder
+# and WRITE the app data directory. Change this if the cron belonged to another user.
+User=deepanshu
+EnvironmentFile=/etc/csp-transaction-watchdog.env
+ExecStart=/usr/bin/python3 /home/deepanshu/CSP_BALANCE_INTELLIGENCE/scripts/watch_transaction_sheet.py
+Restart=always
+RestartSec=10
+# Hardening that does not get in the way of reading /home/shumit and writing the data dir
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

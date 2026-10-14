@@ -131,6 +131,10 @@ the source directory) and copies the current month's workbook into this app's ow
 the normal `ingest_transactions` job picks it up as usual. Re-syncing the whole file periodically and
 re-ingesting is safe — upserts are idempotent (see `tests/unit/test_transaction_ingest.py::test_reingesting_same_file_is_idempotent`).
 
+**Superseded (2026-10-14): the cron is replaced by a watchdog service, see the next section.** The
+script and its cron line below still work and stay in the repo as a manual one-shot / fallback, but
+run only ONE of the two: both would write into `incoming/`.
+
 Run via cron on the host (not inside a container, so it has access to the source directory):
 
 ```cron
@@ -140,6 +144,57 @@ Run via cron on the host (not inside a container, so it has access to the source
 `TRANSACTION_SOURCE_DIR` (default `/home/shumit/sbikisok`) and `TRANSACTION_SYNC_RETENTION_DAYS`
 (default `14` — how long synced copies are kept in `processed/` before being pruned, since this
 re-syncs the same file repeatedly rather than receiving distinct uploads) are both overridable.
+
+### Transaction workbook watchdog (replaces the sync cron, 2026-10-14)
+
+`scripts/watch_transaction_sheet.py` is a small always-on **host service** (systemd, not a container, so
+it reads the other team's folder exactly as the cron did). Instead of copying the workbook blindly every
+20 minutes it watches `Transaction <Mon>'<yy>.xlsx` and copies it into `incoming/` only when it has
+**changed and stopped changing** (default: unchanged for 45 s). What it adds over the cron:
+
+* **Read-only on the source**, like the script it replaces: it only stats and reads the workbook.
+* **No half-written files:** copied to a hidden `.part` file and renamed into place; a copy is discarded
+  if the source changed while it was being read. `ingest_transactions` only looks at `*.xlsx`.
+* **Never overwrites a copy the app has not ingested yet** (the old `cp` could replace a file in the
+  middle of an ingest and lose the update). It waits, warns after 30 min ("is worker-ingestion
+  running?") and then copies the newest version.
+* **Copies only on change**, plus a safety re-sync every 6 h (ingest is idempotent), so a lost ingest heals.
+* A **heartbeat file** `<data dir>/transaction_watchdog.json` (state, last poll, last copy, bytes, copies,
+  last error) answers "is it alive and when did it last copy" without reading logs.
+* The month rolls over on **India time** (a workbook for the new month is picked up at 00:00 IST).
+
+Install on the R730 (find your data dir first: `grep TRANSACTION_DATA_DIR_HOST .env`):
+
+```bash
+cd /home/deepanshu/CSP_BALANCE_INTELLIGENCE && git pull
+python3 --version                                   # 3.9 or newer; nothing to pip install
+# 1. try it once by hand (copies now if the workbook changed, then exits)
+TRANSACTION_DATA_DIR_HOST=$PWD/data python3 scripts/watch_transaction_sheet.py --once; echo "exit $?"
+# 2. install the service (administrator)
+sudo cp scripts/systemd/csp-transaction-watchdog.service /etc/systemd/system/
+sudo cp scripts/systemd/csp-transaction-watchdog.env.example /etc/csp-transaction-watchdog.env
+sudoedit /etc/csp-transaction-watchdog.env            # set TRANSACTION_DATA_DIR_HOST (and the source dir if it moved)
+sudo systemctl daemon-reload && sudo systemctl enable --now csp-transaction-watchdog
+# 3. only now remove the old cron line, so there is no gap and no double copying
+crontab -l | grep -v sync_transaction_sheet.sh | crontab -
+# 4. check
+systemctl status csp-transaction-watchdog --no-pager
+journalctl -u csp-transaction-watchdog -n 30 --no-pager
+cat data/transaction_watchdog.json
+```
+
+No administrator rights? Use the user-level unit `scripts/systemd/csp-transaction-watchdog.user.service`
+(instructions are in its header: `systemctl --user ...`, plus a one-off `sudo loginctl enable-linger`).
+The `User=` in the system unit must be the account the old cron ran as: it needs to **read**
+`/home/shumit/sbikisok` and **write** the data directory.
+
+Healthy states in the log and heartbeat: `up_to_date`, `settling` (the other team is still saving),
+`copied`. `waiting_for_ingest` for more than a few minutes means `worker-ingestion` is not taking files
+from `incoming/` (it was switched off, or `ingest_transactions` is failing). `waiting_for_source` means
+this month's workbook does not exist yet. The `dbt run` and `sync_monthly_summary` cron lines are
+unchanged: they still run on their own schedule.
+
+Roll back: `sudo systemctl disable --now csp-transaction-watchdog` and put the cron line back.
 
 ## Volumes
 
@@ -194,7 +249,7 @@ independently-scalable services (see `compose.yml`'s `x-worker` anchor and each 
 | `manage.py ingest_transactions` | `worker-ingestion` (its own loop) | continuous, every 5 min (`--interval`, default); also triggered indirectly by `scripts/sync_transaction_sheet.sh` dropping a fresh file into `incoming/` |
 | `manage.py sync_daily_snapshots` | `worker-calling-sheet` (its own loop) | continuous, every 5 min (`--snapshot-interval`, default); can also be run once manually with `--date` |
 | `manage.py poll_telegram` | `worker-telegram` (its own loop) | continuous, every 60s (`--telegram-interval`, default); no-op unless `TELEGRAM_BOT_TOKEN` is set |
-| `scripts/sync_transaction_sheet.sh` | host cron (not a container) | every 20 min on the R730 — copies the live source workbook into `incoming/`, see "R730: syncing from the real transaction sheet" above |
+| `scripts/watch_transaction_sheet.py` | host systemd service `csp-transaction-watchdog` (not a container) | continuous (polls every 30 s) — copies the live source workbook into `incoming/` when it has changed and settled; replaces `scripts/sync_transaction_sheet.sh` and its `*/20` cron, see "Transaction workbook watchdog" above |
 | `dbt run` / `dbt test` | any `worker-*` container (dbt-core is in the shared image) | host cron |
 | `manage.py sync_monthly_summary` | `web` or any `worker-*` | host cron, right after `dbt run` |
 
@@ -207,12 +262,12 @@ the dbt marts pass all 12 tests, and `sync_monthly_summary` writes the projected
 ## Scheduled jobs
 
 The R730 production deployment runs `dbt run` + `sync_monthly_summary` every 20 minutes, staggered
-a few minutes behind the transaction sync so each step has time to finish before the next depends
-on it (`worker-calling-sheet` is just the container chosen to `exec` into — any `worker-*` service
+a few minutes behind the transaction sync (now the watchdog; the stagger is kept) so each step has time to
+finish before the next depends on it (`worker-calling-sheet` is just the container chosen to `exec` into — any `worker-*` service
 works, since dbt-core and the Django app are in the same shared image):
 
 ```cron
-*/20 * * * * TRANSACTION_DATA_DIR_HOST=/path/to/data /path/to/scripts/sync_transaction_sheet.sh >> /path/to/txn_sync.log 2>&1
+# (the */20 sync_transaction_sheet.sh line used to be here: replaced by the csp-transaction-watchdog service)
 8,28,48 * * * * docker compose -f /path/to/compose.yml exec -T -w /app/dbt worker-calling-sheet dbt run --project-dir /app/dbt --profiles-dir /app/dbt >> /path/to/dbt_run.log 2>&1
 10,30,50 * * * * docker compose -f /path/to/compose.yml exec -T worker-calling-sheet python app/manage.py sync_monthly_summary >> /path/to/dbt_run.log 2>&1
 ```

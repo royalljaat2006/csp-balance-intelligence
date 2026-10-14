@@ -248,3 +248,21 @@ def test_api_progress_needs_the_scope_and_returns_the_steps(client, api_key):
     data = ok.json()["data"]
     assert [s["key"] for s in data["steps"]][:2] == ["calling_sheet", "snapshot"]
     assert data["today"] == TODAY.isoformat() and "timeline" in data
+
+
+# ---------------------------------------------------------------- the transaction sheet
+def test_the_transaction_sheet_step_appears_only_once_a_workbook_has_ever_been_ingested():
+    assert "transactions" not in _by_key(progress.pipeline_progress(NOW))
+
+
+def test_the_transaction_sheet_is_information_not_a_schedule_that_can_be_late():
+    _log("transactions", at(YESTERDAY, 22, 12))
+    _log("transactions", at(TODAY, 9, 3))
+    _log("transactions", at(TODAY, 13, 41))
+    data = progress.pipeline_progress(NOW)
+    st = _by_key(data)["transactions"]
+    assert st["health"] == "info" and st["today"]["count"] == 2 and st["yesterday"]["count"] == 1
+    assert "first at 09:03" in st["today"]["summary"] and "last at 13:41" in st["today"]["summary"]
+    assert "Transaction sheet" in [t["title"] for t in data["steps"]]
+    assert "Transaction sheet" not in data["overall"]["late"]   # never counted as a missed schedule
+    assert any(e["step"] == "transactions" for e in data["timeline"]["today"])

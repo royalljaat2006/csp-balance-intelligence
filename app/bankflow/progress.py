@@ -156,6 +156,24 @@ def _step_statements(day: dt.date, today: dt.date) -> dict:
                 checks=runs["n"], last_check=runs["last"], rows=a["rows"] or 0)
 
 
+def _step_transactions(day: dt.date, today: dt.date) -> dict:
+    """The monthly transaction workbook ("Transaction Oct'26.xlsx"): the host watchdog copies it
+    into incoming/ when it changes and `ingest_transactions` reads it. It arrives when the other
+    team saves it, so this is information, not a schedule that can be late."""
+    d = _log_day("transactions", day)
+    if d["n"]:
+        summary = (f"{d['n']} workbook ingest(s), first at {_clock(d['first'])}, "
+                   f"last at {_clock(d['last'])}")
+        if d["failed"]:
+            summary += f" ({d['failed']} failed)"
+        state = "failed" if d["failed"] == d["n"] else "done"
+    else:
+        summary = "No new workbook ingested yet" if day == today else "No workbook ingested"
+        state = "waiting" if day == today else "missing"
+    return _day(d["n"], d["first"], d["last"], state=state, summary=summary,
+                error=d["last_error"])
+
+
 def _step_flows(day: dt.date, today: dt.date) -> dict:
     start, end = day_bounds(day)
     a = FlowAggregate.objects.filter(updated_at__gte=start, updated_at__lt=end).aggregate(
@@ -236,6 +254,10 @@ def _events(day: dt.date, steps_day: dict, files: list[dict]) -> list[dict]:
         add(f.imported_at, "statements",
             f"Statement for {d:%d %b} ingested ({f.row_count:,} transactions)" if d
             else f"Statement ingested ({f.row_count:,} transactions)")
+    if "transactions" in s:
+        add(s["transactions"]["first_at"], "transactions", "Transaction sheet ingested")
+        if s["transactions"]["count"] > 1:
+            add(s["transactions"]["last_at"], "transactions", "Transaction sheet ingested again")
     add(s["flows"]["last_at"], "flows", "Money movement recalculated")
     add(s["verdict"]["last_at"], "verdict", "Estimator checked against the history")
     add(s["estimates"]["last_at"], "estimates", "Daily estimates calculated")
@@ -251,12 +273,14 @@ def pipeline_progress(now: dt.datetime | None = None) -> dict:
     def both(fn, *extra):
         return {"today": fn(today, today, *extra), "yesterday": fn(yesterday, today, *extra)}
 
+    has_transactions = IngestLog.objects.filter(source="transactions").exists()
     per_day = {
         "calling_sheet": both(_step_calling_sheet),
         "snapshot": {"today": _step_snapshot(today, today, now),
                      "yesterday": _step_snapshot(yesterday, today, now)},
         "new_accounts": both(_step_new_accounts),
         "statements": both(_step_statements),
+        **({"transactions": both(_step_transactions)} if has_transactions else {}),
         "flows": both(_step_flows),
         "verdict": both(_step_verdict),
         "estimates": both(_step_estimates),
@@ -310,6 +334,12 @@ def pipeline_progress(now: dt.datetime | None = None) -> dict:
          "last_at": last_import,
          "next_due": nxt(last_import, s.BANKFLOW_STATEMENT_INTERVAL_SECONDS),
          "note": statement_note},
+        *([{"key": "transactions", "title": "Transaction sheet",
+            "what": "The monthly transaction workbook that feeds daily activity and the trends.",
+            "schedule": "When the workbook changes (a watchdog copies it in; read within 5 min)",
+            "health": "info", "last_at": _latest(IngestLog.objects.filter(source="transactions"),
+                                                 "started_at"),
+            "next_due": None, "note": None}] if has_transactions else []),
         {"key": "flows", "title": "Money movement",
          "what": "Adds up each CSP's withdrawals and deposits from the statements.",
          "schedule": "Right after a new statement, and re-checked daily",
