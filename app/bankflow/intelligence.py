@@ -511,17 +511,22 @@ def _accounts_as_of(day: dt.date, ids) -> dict[str, int]:
     return out
 
 
-def _new_accounts_as_of(day: dt.date, ids) -> dict | None:
-    """New accounts opened so far in `day`'s month (MTD) and that day's own figure (FTD), from the
-    newest reading taken on or before the end of `day`."""
+def _monthly_readings_as_of(day: dt.date, ids) -> list:
+    """The newest PmjdyMonthly reading of each CSP for `day`'s month, taken by the end of `day`."""
     from .progress import day_bounds
 
     _start, end = day_bounds(day)
-    rows = list(
+    return list(
         PmjdyMonthly.objects.filter(month=f"{day:%Y-%m}", observed_at__lt=end,
                                     csp_id__in=list(ids))
         .order_by("csp_id", "-observed_at").distinct("csp_id")
     )
+
+
+def _new_accounts_as_of(day: dt.date, ids) -> dict | None:
+    """New accounts opened so far in `day`'s month (MTD) and that day's own figure (FTD), from the
+    newest reading taken on or before the end of `day`."""
+    rows = _monthly_readings_as_of(day, ids)
     if not rows:
         return None
     mtd = [r.mtd for r in rows if r.mtd is not None]
@@ -530,25 +535,36 @@ def _new_accounts_as_of(day: dt.date, ids) -> dict | None:
             "csps": len(rows), "observed_at": max(r.observed_at for r in rows)}
 
 
-def _observed_avg_as_of(day: dt.date, ids) -> tuple[Decimal | None, int]:
+def _observed_by_csp(day: dt.date, ids) -> dict[str, tuple]:
+    """{csp: (SBI average balance, account count)}: each CSP's newest reading on or before `day`."""
     rows = (
         DailyBalance.objects.filter(balance_date__lte=day, csp_id__in=list(ids),
                                     account_count__isnull=False)
         .exclude(source__in=NOT_OBSERVATIONS)
         .order_by("csp_id", "-balance_date").distinct("csp_id")
-        .values_list("daily_avg_balance", "account_count")
+        .values_list("csp_id", "daily_avg_balance", "account_count")
     )
-    return _weighted_avg(rows)
+    return {c: (v, n) for c, v, n in rows}
 
 
-def _estimate_avg_on(day: dt.date, ids) -> tuple[Decimal | None, int]:
+def _observed_avg_as_of(day: dt.date, ids) -> tuple[Decimal | None, int]:
+    return _weighted_avg(_observed_by_csp(day, ids).values())
+
+
+def _estimates_by_csp(day: dt.date, ids) -> dict[str, tuple]:
+    """{csp: (estimated value, account count, status)} for that day's validated or provisional
+    estimates only."""
     rows = (
         DailyEstimate.objects.filter(
             estimate_date=day, csp_id__in=list(ids), status__in=("VALIDATED", "PROVISIONAL"),
             estimated_value__isnull=False)
-        .values_list("estimated_value", "current_account_count")
+        .values_list("csp_id", "estimated_value", "current_account_count", "status")
     )
-    return _weighted_avg(rows)
+    return {c: (v, n, st) for c, v, n, st in rows}
+
+
+def _estimate_avg_on(day: dt.date, ids) -> tuple[Decimal | None, int]:
+    return _weighted_avg((v, n) for v, n, _st in _estimates_by_csp(day, ids).values())
 
 
 def _flow_state(day: dt.date, coverage: dict, label: str) -> tuple[str, str]:
@@ -693,6 +709,108 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
                   "Figures are what the stored data says as of each day; a missing figure is "
                   "shown as a dash, never as zero."],
     }
+
+
+
+# ---------------------------------------------------------------- per-CSP today vs yesterday
+DAY_SORTS = {  # each returns the figure to order by, or None when the CSP has no such figure
+    "accounts_change": lambda r: r["accounts_change"],
+    "new_today": lambda r: r["new_day_today"],
+    "withdrawn_today": lambda r: r["withdrawals_today"],
+    "deposited_today": lambda r: r["deposits_today"],
+    "net_today": lambda r: r["net_today"],
+    "net_change": lambda r: r["net_change"],
+    "name": lambda r: (r["name"] or r["csp_code"]).lower(),
+}
+
+
+def _diff(a, b):
+    return None if a is None or b is None else a - b
+
+
+def csp_day_compare_rows(
+    today: dt.date | None = None, *, search: str = "", sort: str = "accounts_change",
+    descending: bool = True, limit: int = 25, offset: int = 0,
+) -> tuple[list[dict], int, dict]:
+    """Every tracked CSP with the present day against the day before: customer accounts, new
+    accounts, customer withdrawals and deposits (the statement's own figures for each day),
+    deposits minus withdrawals, the SBI average balance and our estimate. Same definitions as
+    `day_compare`, built from a handful of batch queries (not one per CSP). A missing figure is
+    None; a change needs both days. Returns (page of rows, total rows, day-level meta)."""
+    from . import services
+
+    today = today or timezone.localdate()
+    yesterday = today - dt.timedelta(days=1)
+    tracked = _tracked()
+    ids = list(tracked)
+    coverage = services.day_coverage()
+    d_labels = ((today, "today"), (yesterday, "yesterday"))
+
+    accounts = {d: _accounts_as_of(d, ids) for d, _ in d_labels}
+    monthly = {d: {r.csp_id: r for r in _monthly_readings_as_of(d, ids)} for d, _ in d_labels}
+    observed = {d: _observed_by_csp(d, ids) for d, _ in d_labels}
+    estimates = {d: _estimates_by_csp(d, ids) for d, _ in d_labels}
+    flow: dict[dt.date, dict[str, FlowRow]] = {}
+    for d, _ in d_labels:
+        per: dict[str, FlowRow] = {}
+        for fr in _flow_rows(d, d, set(ids)):
+            per[fr.csp] = fr
+        flow[d] = per
+    states = {d: _flow_state(d, coverage, label) for d, label in d_labels}
+    like_for_like = states[today][0] == "complete" and states[yesterday][0] == "complete"
+
+    rows = []
+    for code, csp in tracked.items():
+        a_t, a_y = accounts[today].get(code), accounts[yesterday].get(code)
+        m_t, m_y = monthly[today].get(code), monthly[yesterday].get(code)
+        f_t, f_y = flow[today].get(code), flow[yesterday].get(code)
+        o_t, o_y = observed[today].get(code), observed[yesterday].get(code)
+        e_t, e_y = estimates[today].get(code), estimates[yesterday].get(code)
+        w_t = f_t.withdrawals if f_t else None
+        w_y = f_y.withdrawals if f_y else None
+        p_t = f_t.deposits if f_t else None
+        p_y = f_y.deposits if f_y else None
+        net_t, net_y = _diff(p_t, w_t), _diff(p_y, w_y)
+        rows.append({
+            "csp_code": code, "name": csp.name, "zone": csp.zone,
+            "accounts_today": a_t, "accounts_yesterday": a_y, "accounts_change": _diff(a_t, a_y),
+            "new_mtd_today": m_t.mtd if m_t else None,
+            "new_mtd_yesterday": m_y.mtd if m_y else None,
+            "new_day_today": m_t.ftd if m_t else None,
+            "new_day_yesterday": m_y.ftd if m_y else None,
+            "withdrawals_today": w_t, "withdrawals_yesterday": w_y,
+            "withdrawals_change": _diff(w_t, w_y),
+            "deposits_today": p_t, "deposits_yesterday": p_y, "deposits_change": _diff(p_t, p_y),
+            "net_today": net_t, "net_yesterday": net_y, "net_change": _diff(net_t, net_y),
+            "transactions_today": f_t.n if f_t else None,
+            "transactions_yesterday": f_y.n if f_y else None,
+            "observed_today": o_t[0] if o_t else None,
+            "observed_yesterday": o_y[0] if o_y else None,
+            "observed_change": _diff(o_t[0] if o_t else None, o_y[0] if o_y else None),
+            "estimate_today": e_t[0] if e_t else None,
+            "estimate_yesterday": e_y[0] if e_y else None,
+            "estimate_change": _diff(e_t[0] if e_t else None, e_y[0] if e_y else None),
+            "estimate_status": e_t[2] if e_t else None,
+        })
+    q = search.strip().lower()
+    if q:
+        rows = [r for r in rows if q in r["csp_code"].lower() or q in (r["name"] or "").lower()]
+    key = DAY_SORTS.get(sort, DAY_SORTS["accounts_change"])
+    # a CSP with no such figure goes last whichever way the list is ordered
+    present = sorted((r for r in rows if key(r) is not None), key=key, reverse=descending)
+    rows = present + [r for r in rows if key(r) is None]
+    meta = {
+        "today": today, "yesterday": yesterday, "like_for_like_money": like_for_like,
+        "money_state": {"today": states[today][0], "yesterday": states[yesterday][0],
+                        "today_note": states[today][1], "yesterday_note": states[yesterday][1]},
+        "money_note": (
+            "" if like_for_like else "Not a like-for-like comparison of money: "
+            + "; ".join(states[d][1] for d, _ in d_labels if states[d][0] != "complete") + "."),
+        "notes": ["Today means the present day (India time) and yesterday the day before.",
+                  "A dash means no figure is stored for that CSP and day, never zero.",
+                  "A CSP's change needs both days; with only one day there is no change."],
+    }
+    return rows[offset: offset + limit], len(rows), meta
 
 
 def hourly_activity(hours: int = 48) -> dict:

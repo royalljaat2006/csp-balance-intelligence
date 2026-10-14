@@ -480,3 +480,13 @@ now follow the wall clock like everything else.
   strip starts folded; the choice is remembered in the browser.
 * Money movement figures on the dashboard now cover **tracked CSPs only** everywhere, so the strip,
   the summary cards and the daily table agree.
+
+* **Every CSP, today vs yesterday** (added 2026-10-14). Home, "Your CSPs", has two views: the last
+  7/30/90 days (as before) and **Today vs yesterday**, one row per tracked CSP with customer accounts,
+  new accounts that day, withdrawn, deposited, deposits minus withdrawals, the SBI average balance and
+  our estimate, each for today and yesterday with the change. It is `intelligence.csp_day_compare_rows`
+  (batch queries, same definitions as `day_compare`; the rows add up to the network strip) and
+  `GET /api/v1/bank-flow/csp-day-compare` (`search`, `sort`, `order`, `limit`, `offset`). A CSP with no
+  stored figure for a day shows a dash and no change; CSPs without a figure sort last whichever way the
+  list is ordered. Money for today is "so far", and `like_for_like_money` / `money_note` say when the
+  two days cannot be compared fairly.

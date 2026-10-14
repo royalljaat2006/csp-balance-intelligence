@@ -325,3 +325,32 @@ def day_compare(request: ApiRequest, csp: str = ""):
     return DataEnvelope(
         data=_plain(intelligence.day_compare(csp_codes=codes)), request_id=request.request_id
     )
+
+
+@router.get(
+    "/csp-day-compare",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Every CSP: today (the present IST day) against yesterday",
+    description=(
+        "Per CSP: customer accounts, new accounts, customer withdrawals and deposits, deposits "
+        "minus withdrawals, SBI average balance and our estimate, each for today and for "
+        "yesterday with the change. Same definitions as day-compare. A figure with no stored "
+        "value for that day is null, and a change needs both days. Money for today is 'so far' "
+        "until a statement proves the day complete: see `like_for_like_money` and `money_note`."
+    ),
+)
+def csp_day_compare(
+    request: ApiRequest, search: str = "",
+    sort: Literal[tuple(intelligence.DAY_SORTS)] = "accounts_change",  # type: ignore[valid-type]
+    order: Literal["asc", "desc"] = "desc", limit: int = 50, offset: int = 0,
+):
+    limit = clamp_limit(limit)
+    rows, total, meta = intelligence.csp_day_compare_rows(
+        search=search[:64], sort=sort, descending=order == "desc", limit=limit,
+        offset=max(0, offset),
+    )
+    return DataEnvelope(
+        data=_plain({**meta, "rows": rows, "total": total, "limit": limit, "offset": offset}),
+        request_id=request.request_id,
+    )

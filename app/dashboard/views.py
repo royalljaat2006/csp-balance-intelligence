@@ -1537,6 +1537,15 @@ _SORT_CHOICES = {  # friendly name -> (label, intelligence.SORTS key)
     "difference": ("Deposits minus withdrawals", "net_flow"),
     "name": ("Name (A-Z)", "name"),
 }
+_DAY_SORT_CHOICES = {  # friendly name -> (label, intelligence.DAY_SORTS key)
+    "accounts_change": ("Biggest rise in customer accounts", "accounts_change"),
+    "new_today": ("Most new accounts today", "new_today"),
+    "withdrawn_today": ("Most withdrawn today", "withdrawn_today"),
+    "deposited_today": ("Most deposited today", "deposited_today"),
+    "net_today": ("Deposits minus withdrawals today", "net_today"),
+    "net_change": ("Biggest change in deposits minus withdrawals", "net_change"),
+    "name": ("Name (A-Z)", "name"),
+}
 _METHOD_NAMES = {
     "growth_only": "New accounts alone",
     "flow_only": "Money movement alone",
@@ -1602,13 +1611,21 @@ def home(request):
     q = request.GET.get("q", "")[:64]
     show = request.GET.get("show", "all")
     show = show if show in ("all", "attention") else "all"
-    sort = request.GET.get("sort", "new_accounts")
-    sort = sort if sort in _SORT_CHOICES else "new_accounts"
+    view = "day" if request.GET.get("view") == "day" else "range"
+    choices = _DAY_SORT_CHOICES if view == "day" else _SORT_CHOICES
+    default_sort = "accounts_change" if view == "day" else "new_accounts"
+    sort = request.GET.get("sort", default_sort)
+    sort = sort if sort in choices else default_sort
     order_default = "asc" if sort == "name" else "desc"
     descending = request.GET.get("order", order_default) == "desc"
     page, offset, page_size = _paginate(request, page_size=15)
+    # the range figures (heat map, summary cards) are always built; the list below them is
+    # either those same range rows or, in the "today vs yesterday" view, one row per CSP for
+    # the present day against the day before
     all_rows, _t, _m = bankflow_intelligence.csp_growth(
-        date_from, date_to, search=q, sort=_SORT_CHOICES[sort][1], descending=descending,
+        date_from, date_to, search=q,
+        sort=_SORT_CHOICES[sort if view == "range" else "new_accounts"][1],
+        descending=descending if view == "range" else True,
         limit=10000, offset=0,
     )
     for r in all_rows:
@@ -1618,6 +1635,12 @@ def home(request):
         all_rows = [r for r in all_rows if any(f["severity"] != "low" for f in r["flags"])]
     total = len(all_rows)
     rows = all_rows[offset: offset + page_size]
+    day_meta = None
+    if view == "day":
+        rows, total, day_meta = bankflow_intelligence.csp_day_compare_rows(
+            search=q, sort=choices[sort][1], descending=descending, limit=page_size,
+            offset=offset,
+        )
 
     estimator = dict(summary["estimates"]["estimator"])
     estimator["badge"] = _BADGE.get(estimator["status"], "missing")
@@ -1659,7 +1682,8 @@ def home(request):
         "rows": rows, "total": total, "page": page,
         "total_pages": max(1, -(-total // page_size)),
         "q": q, "show": show, "sort": sort, "order": "desc" if descending else "asc",
-        "sort_choices": [(k, v[0]) for k, v in _SORT_CHOICES.items()],
+        "view": view, "day_meta": day_meta,
+        "sort_choices": [(k, v[0]) for k, v in choices.items()],
         "estimator": estimator, "methods": methods, "sources": sources, "slabs": slabs,
         "slab_cards": [{"code": c, "n": slabs.get(c, 0)} for c in ("NIL", "S1", "S2", "S3", "S4")],
         "month": month, "ESTIMATE_UNAVAILABLE": plain.ESTIMATE_UNAVAILABLE,

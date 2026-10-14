@@ -105,14 +105,48 @@
 
   <!-- ===== CSP table ===== -->
   <section class="sm-panel" id="my-csps" aria-labelledby="csp-h">
-    <div class="sm-panel-head"><h2 id="csp-h">Your CSPs <span class="sm-count">{{ total }}</span></h2></div>
+    <div class="sm-panel-head"><h2 id="csp-h">Your CSPs <span class="sm-count">{{ total }}</span></h2>
+      <div class="sm-range" role="group" aria-label="What to compare">
+        <a class="chip" aria-pressed="{% if view == 'range' %}true{% else %}false{% endif %}" href="?range={{ days }}#my-csps">Last {{ days }} days</a>
+        <a class="chip" aria-pressed="{% if view == 'day' %}true{% else %}false{% endif %}" href="?range={{ days }}&view=day#my-csps">Today vs yesterday</a>
+      </div></div>
+    {% if view == "day" %}
+    <p class="sm-mute" style="margin:0 0 10px;">Each CSP today ({{ day_meta.today|date:"D d M" }}) against yesterday ({{ day_meta.yesterday|date:"D d M" }}). A dash means no figure is stored for that day; a change needs both days.
+      {% if day_meta.money_note %}<strong>{{ day_meta.money_note }}</strong>{% endif %}</p>
+    {% endif %}
     <form class="sm-filters" method="get" action="#my-csps">
       <input type="hidden" name="range" value="{{ days }}">
+      <input type="hidden" name="view" value="{{ view }}">
       <input type="search" name="q" value="{{ q }}" placeholder="Search by name or code" aria-label="Search CSPs">
       <select name="show" aria-label="Which CSPs"><option value="all"{% if show == "all" %} selected{% endif %}>All CSPs</option><option value="attention"{% if show == "attention" %} selected{% endif %}>Needs attention only</option></select>
       <select name="sort" aria-label="Sort by">{% for k, label in sort_choices %}<option value="{{ k }}"{% if k == sort %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
       <button class="sm-btn" type="submit">Show</button>
     </form>
+    {% if view == "day" %}
+    <div class="tbl-scroll sm-tablewrap"><table class="sm-table" data-view="day">
+      <thead><tr>
+        <th>CSP</th><th class="num">Customer accounts</th><th class="num">New accounts that day</th>
+        <th class="num">Withdrawn</th><th class="num">Deposited</th><th class="num">Deposits minus withdrawals</th>
+        <th class="num">SBI-reported average balance</th><th class="num">Our estimated average balance</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr>
+        <td data-label="CSP"><a href="{% url 'dashboard:csp_detail' csp_code=r.csp_code %}" class="sm-csp"><strong>{{ r.name|default:r.csp_code }}</strong><span>{{ r.csp_code }}</span></a></td>
+        <td class="num" data-label="Customer accounts">{{ r.accounts_today|intc }}<div class="sm-fine {{ r.accounts_change|tone }}">{% if r.accounts_change is None %}no change figure{% else %}{{ r.accounts_change|signed }} vs yesterday ({{ r.accounts_yesterday|intc }}){% endif %}</div></td>
+        <td class="num" data-label="New accounts that day">{{ r.new_day_today|intc }}<div class="sm-fine">yesterday {{ r.new_day_yesterday|intc }}</div></td>
+        <td class="num" data-label="Withdrawn">{{ r.withdrawals_today|inr }}<div class="sm-fine">yesterday {{ r.withdrawals_yesterday|inr }}</div></td>
+        <td class="num" data-label="Deposited">{{ r.deposits_today|inr }}<div class="sm-fine">yesterday {{ r.deposits_yesterday|inr }}</div></td>
+        <td class="num {{ r.net_today|tone }}" data-label="Deposits minus withdrawals">{{ r.net_today|signed_inr }}<div class="sm-fine">yesterday {{ r.net_yesterday|signed_inr }}{% if r.net_change is not None %} &middot; change {{ r.net_change|signed_inr }}{% endif %}</div></td>
+        <td class="num" data-label="SBI-reported average balance">{{ r.observed_today|inr }}<div class="sm-fine {{ r.observed_change|tone }}">{% if r.observed_change is None %}yesterday {{ r.observed_yesterday|inr }}{% elif r.observed_change == 0 %}no change since yesterday{% else %}{{ r.observed_change|signed_inr }} vs yesterday{% endif %}</div></td>
+        <td class="num" data-label="Our estimated average balance">{% if r.estimate_today is None %}<span class="sm-mute" title="{{ ESTIMATE_UNAVAILABLE }}">Not available yet</span>{% else %}{{ r.estimate_today|inr }}<div class="sm-fine {{ r.estimate_change|tone }}">{% if r.estimate_change is None %}yesterday {{ r.estimate_yesterday|inr }}{% else %}{{ r.estimate_change|signed_inr }} vs yesterday{% endif %}</div>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8"><span class="sm-mute">No CSPs match.</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
     <div class="tbl-scroll sm-tablewrap"><table class="sm-table">
       <thead><tr>
         <th>CSP</th><th class="num">Customer accounts</th><th class="num">Withdrawn</th><th class="num">Deposited</th>
@@ -134,9 +168,10 @@
       {% empty %}<tr><td colspan="8" class="sm-empty">No CSPs match.</td></tr>{% endfor %}
       </tbody>
     </table></div>
+    {% endif %}
     <div class="sm-pager"><span class="sm-mute">Page {{ page }} of {{ total_pages }}</span>
-      <span>{% if page > 1 %}<a class="chip" href="?range={{ days }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'-1' }}#my-csps">&larr; Previous</a>{% endif %}
-      {% if page < total_pages %}<a class="chip" href="?range={{ days }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'1' }}#my-csps">Next &rarr;</a>{% endif %}</span></div>
+      <span>{% if page > 1 %}<a class="chip" href="?range={{ days }}&view={{ view }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'-1' }}#my-csps">&larr; Previous</a>{% endif %}
+      {% if page < total_pages %}<a class="chip" href="?range={{ days }}&view={{ view }}&q={{ q|urlencode }}&show={{ show }}&sort={{ sort }}&order={{ order }}&page={{ page|add:'1' }}#my-csps">Next &rarr;</a>{% endif %}</span></div>
   </section>
 
   <!-- ===== everything technical lives here ===== -->
