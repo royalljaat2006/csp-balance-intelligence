@@ -90,18 +90,18 @@
     box.innerHTML = "";
 
     if (view === "money") {
-      const has = S.filter((p) => p.pool_credits != null);
+      const has = S.filter((p) => p.withdrawals != null);
       if (!has.length) { box.innerHTML = '<p class="fh-empty">No bank statements cover this period yet.</p>'; legend([]); return; }
-      const vals = has.flatMap((p) => [p.pool_credits, p.pool_debits]);
+      const vals = has.flatMap((p) => [p.withdrawals, p.deposits]);
       const min = 0, max = Math.max(...vals) * 1.08, y = scale(min, max, top, bottom);
       axis(svg, W, top, bottom, min, max, y, inrShort, left);
-      line(svg, S, x, y, "pool_credits", brand, { area: true, base: 0 });
-      line(svg, S, x, y, "pool_debits", accent, { area: true, base: 0 });
+      line(svg, S, x, y, "deposits", brand, { area: true, base: 0 });
+      line(svg, S, x, y, "withdrawals", accent, { area: true, base: 0 });
       xTicks(svg, S, x, H);
-      hit(svg, S, x, bw * 2, bottom, (p) => p.pool_credits == null
+      hit(svg, S, x, bw * 2, bottom, (p) => p.withdrawals == null
         ? `${dShort(p.date)} · no bank statement`
-        : `${dShort(p.date)} · money in ${inrShort(p.pool_credits)} · money out ${inrShort(p.pool_debits)} · money in minus money out ${inrShort(p.net_pool_flow)}${p.flow_status === "complete" ? "" : " · may be incomplete"}`);
-      legend([[brand, "Money in"], [accent, "Money out"]]);
+        : `${dShort(p.date)} · withdrawn ${inrShort(p.withdrawals)} · deposited ${inrShort(p.deposits)} · deposits minus withdrawals ${inrShort(p.net_customer_flow)}${p.flow_status === "complete" ? "" : " · may be incomplete"}`);
+      legend([[brand, "Deposited by customers"], [accent, "Withdrawn by customers"]]);
     } else if (view === "accounts") {
       const has = S.filter((p) => p.total_accounts != null);
       if (!has.length) { box.innerHTML = '<p class="fh-empty">No customer account counts for this period yet.</p>'; legend([]); return; }

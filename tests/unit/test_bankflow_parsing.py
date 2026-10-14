@@ -195,7 +195,7 @@ def test_bare_at_ko_pattern_is_extracted_without_txn_prefix():
         credit=D(0),
     )
     assert n.ko_raw == "1A8502957" and n.channel_raw == "Initial Deposit"
-    assert n.category == "other_product"
+    assert n.category == "deposit"  # seniors, 2026-10-14: initial deposit counts as a deposit
 
 
 def test_customer_account_and_name_are_redacted_but_hash_preserved():

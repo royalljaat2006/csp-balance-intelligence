@@ -510,10 +510,37 @@ def _insert_rows(sf, rows, keys, normalized, resolver: CodeResolver) -> None:
         CodeResolution.objects.bulk_create(resolutions, batch_size=BATCH)
 
 
+def reclassify_stored() -> int:
+    """Bring stored rows in line with the current channel -> category map (for example after
+    "initial deposit" became a deposit) and recompute the reversal flag of the rows that moved.
+    Idempotent; the original description hash and amounts are never touched."""
+    from django.db.models import Q
+
+    from .models import StatementTransaction as Txn
+    from .normalize import CHANNEL_MAP
+
+    moved = 0
+    for normalized, category in {v for v in CHANNEL_MAP.values()}:
+        rows = Txn.objects.filter(channel_normalized=normalized).exclude(category=category)
+        n = rows.update(category=category)
+        if not n:
+            continue
+        moved += n
+        wrong_way = {"withdrawal": Q(debit__gt=0), "deposit": Q(credit__gt=0)}.get(category)
+        reason = {"withdrawal": "withdrawal_channel_debit", "deposit": "deposit_channel_credit"}
+        same = Txn.objects.filter(channel_normalized=normalized)
+        same.update(is_reversal_candidate=False, reversal_reason="")
+        if wrong_way is not None:
+            same.filter(wrong_way).update(is_reversal_candidate=True,
+                                          reversal_reason=reason[category])
+    return moved
+
+
 def reresolve_all() -> dict[str, int]:
     """Re-run code resolution over every stored transaction (e.g. after new CSPs
     appear, or after the variant rule is confirmed) and rebuild aggregates.
     Original ko_raw values are never altered."""
+    reclassified = reclassify_stored()
     resolver = build_resolver()
     changed = 0
     for res in CodeResolution.objects.iterator(chunk_size=BATCH):
@@ -532,4 +559,4 @@ def reresolve_all() -> dict[str, int]:
             )
             changed += 1
     rebuilt = flows.rebuild_aggregates()
-    return {"resolutions_changed": changed, **rebuilt}
+    return {"reclassified": reclassified, "resolutions_changed": changed, **rebuilt}

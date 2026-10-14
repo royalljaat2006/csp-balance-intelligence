@@ -16,11 +16,15 @@ pytestmark = pytest.mark.django_db
 TODAY = timezone.localdate()
 
 
-def flow(code, day, credit, debit):
+def flow(code, day, deposited, withdrawn):
+    """One CSP-day. A pool credit is a customer WITHDRAWAL and a pool debit a customer DEPOSIT."""
     FlowAggregate.objects.create(
         csp_id=code, flow_date=day, resolution_mode="exact_only", txn_count=2,
-        credit_amount=D(credit), debit_amount=D(debit), recon_status="RECONCILED",
-        by_category={"deposit": {"count": 1, "credit": str(credit), "debit": str(debit)}})
+        credit_amount=D(withdrawn), debit_amount=D(deposited), recon_status="RECONCILED",
+        by_category={
+            "withdrawal": {"count": 1, "credit": str(withdrawn), "debit": "0"},
+            "deposit": {"count": 1, "credit": "0", "debit": str(deposited)},
+        })
 
 
 def csp(code):

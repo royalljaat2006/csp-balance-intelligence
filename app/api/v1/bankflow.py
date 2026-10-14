@@ -207,9 +207,10 @@ def _range(days: int, date_from: dt.date | None, date_to: dt.date | None):
     auth=RequireScope(_scope),
     summary="Dashboard headline metrics with source, interval and freshness",
     description=(
-        "PMJDY account growth, attributed pool credits/debits/net flow, SBI-observed Avg Balance "
-        "coverage and estimate coverage/validation status. Pool credit/debit direction is what "
-        "the statement states; the deposit/withdrawal channel split is provisional."
+        "PMJDY account growth, customer withdrawals / deposits / net_customer_flow (deposits "
+        "minus withdrawals; the raw pool_credits / pool_debits / net_pool_flow are kept), "
+        "SBI-observed Avg Balance coverage and estimate coverage/validation status. A pool credit "
+        "is a customer withdrawal and a pool debit a customer deposit (confirmed 2026-10-14)."
     ),
 )
 def dashboard_summary(
@@ -312,7 +313,8 @@ def progress(request: ApiRequest):
     auth=RequireScope(_scope),
     summary="Today (the present IST day) against yesterday, network-wide or for one CSP",
     description=(
-        "Customer accounts, new accounts, money in/out (withdrawals and deposits only), SBI "
+        "Customer accounts, new accounts, customer withdrawals and deposits (a pool credit is a "
+        "withdrawal and a pool debit a deposit; other transaction types are not counted), SBI "
         "average balance and our estimate, each as of today and as of yesterday with the change. "
         "Today's money movement is 'so far' until a statement proves the day complete, and the "
         "response says when a money comparison is not like-for-like. Missing figures are null."

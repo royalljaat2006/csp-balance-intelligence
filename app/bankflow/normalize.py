@@ -1,32 +1,31 @@
 """
 Description normalisation and transaction-semantics classification.
 
-SEMANTICS REVIEW (documented, not assumed) -- see docs/BANK-FLOW.md:
+SEMANTICS -- CONFIRMED by the business seniors on 2026-10-14 (see docs/BANK-FLOW.md):
 
-The statement is of Eko's POOL account. A statement CREDIT is cash entering
-the pool; a DEBIT is cash leaving it. That is pool accounting direction, and it
-is NOT the same thing as the effect on a customer's own balance.
+The statement is of Eko's POOL account. A statement CREDIT raises the pool balance and a DEBIT
+lowers it (proved by the running balance on every row).
 
-Reading the channel labels as the app already reads them (PRD §7.2):
-  * Withdrawal channels  -> customer's account debited, cash paid out by the CSP,
+  * Withdrawal channels (AEPSWDL, RupayWDL, Withdrawal)  -> the customer took cash out at the CSP,
     pool CREDITED.  Customer-balance effect: negative.
-  * Deposit channels     -> customer's account credited, cash taken by the CSP,
-    pool DEBITED.   Customer-balance effect: positive.
-  * Money transfer       -> account-to-account; no defined effect on the CSP's
-    customers' own balances. EXCLUDED from the default definition.
+  * Deposit channels (AEPSDeposit, RupayDeposit, Deposit, and INITIAL DEPOSIT) -> the customer
+    gave cash to the CSP, pool DEBITED.   Customer-balance effect: positive.
+  * Money transfer       -> not a change to the customers' balances. EXCLUDED.
   * Off-us withdrawal    -> customer of ANOTHER bank; no effect on SBI customer
     balances. EXCLUDED.
-  * Loan / initial / SSA deposits -> other products. EXCLUDED by default.
-  * CDM cash deposit / EKO deductions -> pool funding, no KO code. EXCLUDED.
+  * Loan / SSA deposits  -> other products. EXCLUDED. (Initial deposit is NOT one of these: the
+    seniors confirmed it counts as a deposit.)
+  * CDM cash deposit / EKO deductions -> Eko's own pool entries, no CSP. EXCLUDED.
+  * Labels not in the map below (outimps, ppf, yono fi wdl, ...) are NOT customer withdrawals or
+    deposits (seniors, 2026-10-14) and stay unclassified.
 
 For every withdrawal- or deposit-category row the customer-balance effect is
 `debit - credit` (a pool credit on a withdrawal is -x; a pool debit on a deposit
 is +x; a debit on a withdrawal channel, i.e. a reversal, is +x; a credit on a
 deposit channel, i.e. a reversal, is -x).
 
-The channel -> category map below is PROVISIONAL (inferred from labels, not
-from authoritative documentation) and is why every definition stays
-configurable and is evaluated offline only.
+Every definition stays configurable and is evaluated offline (flows.FLOW_DEFINITIONS); the
+default, `customer_wd_dep`, is the confirmed one above.
 
 Privacy: the trailing `-TRANSFER FROM/TO <customer account> <customer name>`
 segment is dropped from `description_redacted`; the full original is retained
@@ -52,7 +51,7 @@ CHANNEL_MAP: dict[str, tuple[str, str]] = {
     "rupayoffuswdl": ("rupay_offus_withdrawal", "offus"),
     "moneytrf": ("money_transfer", "transfer"),
     "loan deposit": ("loan_deposit", "other_product"),
-    "initial deposit": ("initial_deposit", "other_product"),
+    "initial deposit": ("initial_deposit", "deposit"),
     "ssa": ("ssa_deposit", "other_product"),
 }
 

@@ -65,10 +65,14 @@ def _seed_negative_flow():
         flow_date=TODAY - dt.timedelta(days=2),
         resolution_mode="exact_only",
         txn_count=3,
-        credit_amount=D(100),
-        debit_amount=D(900),
+        credit_amount=D(900),
+        debit_amount=D(100),
         recon_status="RECONCILED",
-        by_category={"deposit": {"count": 1, "credit": "100", "debit": "900"}},
+        # customers withdrew 900 and deposited 100: more cash left than came in
+        by_category={
+            "withdrawal": {"count": 2, "credit": "900", "debit": "0"},
+            "deposit": {"count": 1, "credit": "0", "debit": "100"},
+        },
     )
 
 
@@ -245,14 +249,14 @@ def test_home_is_plain_english_outside_advanced_details(staff):
         assert term not in visible, term
     for phrase in (
         "Customer accounts",
-        "Money received into the pool",
-        "Money sent out of the pool",
+        "Withdrawn by customers",
+        "Deposited by customers",
         "SBI-reported average balance",
         "Reliable estimate not available yet",
         "Today in short",
         "Needs attention",
         "Your CSPs",
-        "Money in minus money out",
+        "Deposits minus withdrawals",
     ):
         assert phrase in visible, phrase
     assert "Advanced details" in html and "How reliable are our estimates?" in html
@@ -346,16 +350,16 @@ def test_summary_sentences_use_only_real_numbers():
         },
         "flows": {
             "days_with_data": 5,
-            "pool_credits": D(1000000),
-            "pool_debits": D(400000),
-            "net_pool_flow": D(600000),
+            "withdrawals": D(1000000),
+            "deposits": D(400000),
+            "net_customer_flow": D(-600000),
         },
         "estimates": {"network_estimate": None},
     }
     lines = plain.daily_summary(s, attention_total=2, high=1, days=30)
     assert lines[0] == "There are 3,340 customer accounts, 90 new in the last 30 days."
-    assert "₹10,00,000 came into the pool and ₹4,00,000 went out" in lines[1]
-    assert "₹6,00,000 more came in than went out" in lines[1]
+    assert "Customers withdrew ₹10,00,000 and deposited ₹4,00,000" in lines[1]
+    assert "₹6,00,000 more was withdrawn than deposited" in lines[1]
     assert lines[2].startswith("Reliable estimate not available yet")
     assert lines[3] == "2 items need attention, 1 to check today."
     s["new_accounts"] = {
@@ -393,7 +397,8 @@ def test_friendly_exceptions_never_claim_a_cause_or_use_codes():
 def test_needs_attention_page_filters_paginates_and_links_to_the_csp(staff, viewer, client):
     _seed_negative_flow()
     page = client.get("/dashboard/needs-attention/").content.decode()  # viewer allowed
-    assert "Much more money went out than came in" in page and "/dashboard/csp/N/" in page
+    assert "Customers withdrew much more than they deposited" in page
+    assert "/dashboard/csp/N/" in page
     assert "What to do:" in page and "prompts to look, not conclusions" in page
     assert "NEGATIVE_NET_FLOW" not in page.split("<main", 1)[1].split("<option", 1)[0]
     filtered = client.get("/dashboard/needs-attention/?type=NEGATIVE_NET_FLOW&page=9&range=7")
@@ -404,7 +409,7 @@ def test_needs_attention_page_filters_paginates_and_links_to_the_csp(staff, view
 def test_money_movement_page_shows_day_rows_and_marks_missing_days(staff):
     _seed_negative_flow()
     html = staff.get("/dashboard/money/?range=7").content.decode()
-    assert "Money received into the pool" in html and "Money in minus money out" in html
+    assert "Withdrawn by customers" in html and "Deposits minus withdrawals" in html
     assert "No bank statement for this day" in html and "May be incomplete" in html
     assert "−₹800" in html or "−₹800.00" in html or "800" in html
 

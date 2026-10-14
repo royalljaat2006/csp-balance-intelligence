@@ -60,8 +60,10 @@ def world():
     _bal("B", start - dt.timedelta(days=20), "2000", 250)
     _bal("B", TODAY, "2000", 250)
     for i in range(10):
-        _flow("A", start + dt.timedelta(days=i), credit=1000, debit=400)
-        _flow("B", start + dt.timedelta(days=i), credit=100, debit=900)
+        # a pool credit is a customer withdrawal, a pool debit a deposit (confirmed 2026-10-14):
+        # A: customers deposit more than they withdraw; B: they withdraw far more than they deposit
+        _flow("A", start + dt.timedelta(days=i), credit=400, debit=1000)
+        _flow("B", start + dt.timedelta(days=i), credit=900, debit=100)
     return start
 
 
@@ -96,8 +98,11 @@ def test_summary_flows_are_credits_debits_net_gross_and_exclude_unattributed(wor
                                        credit_amount=D(500), debit_amount=D(500))
     s = intelligence.dashboard_summary(*_range())
     fl = s["flows"]
-    assert fl["pool_credits"] == D(11000) and fl["pool_debits"] == D(13000)
-    assert fl["net_pool_flow"] == D(-2000) and fl["gross_flow"] == D(24000)
+    assert fl["pool_credits"] == D(13000) and fl["pool_debits"] == D(11000)
+    assert fl["net_pool_flow"] == D(2000) and fl["gross_flow"] == D(24000)
+    # the same figures in customer terms: credits are withdrawals, debits are deposits
+    assert fl["withdrawals"] == D(13000) and fl["deposits"] == D(11000)
+    assert fl["net_customer_flow"] == D(-2000)  # customers took out more than they put in
     assert fl["unattributed_amount"] == D(1000)  # reported, never added to any CSP
     assert 0 < fl["unattributed_share"] < 0.1
     assert s["accounts"]["current_total"] == 3090 + 250
@@ -129,7 +134,9 @@ def test_movement_is_daily_and_marks_missing_days_not_zero(world):
     assert m["granularity"] == "daily" and len(m["series"]) == RANGE
     by = {p["date"]: p for p in m["series"]}
     some_day = world + dt.timedelta(days=3)
-    assert by[some_day]["pool_credits"] == D(1100) and by[some_day]["net_pool_flow"] == D(-200)
+    assert by[some_day]["pool_credits"] == D(1300) and by[some_day]["net_pool_flow"] == D(200)
+    assert by[some_day]["withdrawals"] == D(1300) and by[some_day]["deposits"] == D(1100)
+    assert by[some_day]["net_customer_flow"] == D(-200)
     gap = world - dt.timedelta(days=5)
     assert by[gap]["pool_credits"] is None and by[gap]["flow_status"] == "no_data"
     assert m["account_source"] == "pmjdy" and by[TODAY]["total_accounts"] == 3090
@@ -266,8 +273,8 @@ def test_home_requires_login_and_renders_empty_state(client, staff):
 def test_home_keeps_sbi_reported_and_estimated_values_apart(staff, world):
     estimates.compute_daily_estimates(TODAY)
     html = staff.get("/dashboard/?range=30").content.decode()
-    for needle in ("Customer accounts", "Money received into the pool",
-                   "Money sent out of the pool", "SBI-reported average balance",
+    for needle in ("Customer accounts", "Withdrawn by customers",
+                   "Deposited by customers", "SBI-reported average balance",
                    "Reliable estimate not available yet", "Today in short", "Your CSPs",
                    "Advanced details", "Incentive summary", "Classic overview"):
         assert needle in html, needle
@@ -333,7 +340,8 @@ def test_headline_money_counts_only_withdrawals_and_deposits_and_reports_the_res
     # only withdrawal + deposit (the types the estimate uses) are in the headline ...
     assert fl["counted_types"] == ["withdrawal", "deposit"]
     assert fl["pool_credits"] == D(9000) and fl["pool_debits"] == D(2000)
-    assert fl["net_pool_flow"] == D(7000) and fl["txn_count"] == 5
+    assert fl["withdrawals"] == D(9000) and fl["deposits"] == D(2000)
+    assert fl["net_customer_flow"] == D(-7000) and fl["txn_count"] == 5
     # ... the money transfer debit (50,000) does NOT inflate "money out" ...
     assert fl["pool_debits"] < D(50000)
     # ... but nothing is hidden: the other types are reported on their own

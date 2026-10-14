@@ -102,7 +102,7 @@ def test_a_reading_taken_today_never_leaks_into_yesterday():
 def test_no_data_is_a_dash_not_a_zero():
     csp("A")
     r = rows(intelligence.day_compare())
-    for key in ("accounts", "new_accounts_mtd", "money_in", "money_out", "observed_avg",
+    for key in ("accounts", "new_accounts_mtd", "withdrawals", "deposits", "observed_avg",
                 "estimated_avg"):
         assert r[key]["today"] is None and r[key]["yesterday"] is None, key
         assert r[key]["change"] is None and r[key]["direction"] == "unknown", key
@@ -127,8 +127,8 @@ def test_money_counts_only_withdrawals_and_deposits_and_reports_other_types_apar
     flow("A", YESTERDAY, withdrawal=8000, deposit=1000, transfer=40000)
     r = intelligence.day_compare()
     m = rows(r)
-    assert (m["money_in"]["today"], m["money_in"]["yesterday"]) == (D(9000), D(8000))
-    assert (m["money_out"]["today"], m["money_out"]["yesterday"]) == (D(2000), D(1000))
+    assert (m["withdrawals"]["today"], m["withdrawals"]["yesterday"]) == (D(9000), D(8000))
+    assert (m["deposits"]["today"], m["deposits"]["yesterday"]) == (D(2000), D(1000))
     assert m["transactions"]["today"] == 3 and r["other_types"]["today"]["debit"] == D(50000)
 
 
@@ -143,10 +143,10 @@ def test_money_is_marked_not_like_for_like_while_today_is_only_a_day_to_date_cut
     r = intelligence.day_compare()
     assert r["like_for_like_money"] is False and r["money_state"]["today"] == "so_far"
     m = rows(r)
-    assert m["money_in"]["like_for_like"] is False
-    assert "Not a like-for-like" in m["money_in"]["note"]
-    assert "11:00 AM" in m["money_in"]["note"]
-    assert m["money_in"]["change"] == D(-800)  # still shown, but flagged: never hidden
+    assert m["withdrawals"]["like_for_like"] is False
+    assert "Not a like-for-like" in m["withdrawals"]["note"]
+    assert "11:00 AM" in m["withdrawals"]["note"]
+    assert m["withdrawals"]["change"] == D(-800)  # still shown, but flagged: never hidden
 
 
 def test_two_complete_days_are_like_for_like(monkeypatch):
@@ -159,7 +159,8 @@ def test_two_complete_days_are_like_for_like(monkeypatch):
     monkeypatch.setattr(flows, "proven_complete_dates", lambda: {YESTERDAY, TODAY})
     r = intelligence.day_compare()
     assert r["like_for_like_money"] is True
-    assert rows(r)["money_in"]["note"] == "" and rows(r)["money_in"]["like_for_like"] is True
+    assert rows(r)["withdrawals"]["note"] == ""
+    assert rows(r)["withdrawals"]["like_for_like"] is True
 
 
 # ---------------------------------------------------------------- balances and estimates

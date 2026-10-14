@@ -5,7 +5,9 @@ bankflow.intelligence into short sentences a non-technical operations manager ca
 Presentation only. Every number here comes from the payloads it is given; nothing is
 computed, estimated or invented, and technical vocabulary stays in the API / Advanced details.
 
-Terminology (agreed): net pool flow -> "Money in minus money out"; PMJDY account growth ->
+Terminology (agreed; the credit/debit direction was confirmed by the business on 2026-10-14):
+pool credits -> "Withdrawn by customers", pool debits -> "Deposited by customers", net -> "Deposits
+minus withdrawals" (positive = customer money grew); PMJDY account growth ->
 "New customer accounts"; observed Avg Balance -> "SBI-reported average balance"; estimated Avg
 Balance -> "Our estimated average balance"; INSUFFICIENT_EVIDENCE -> "Reliable estimate not
 available yet"; unmatched CSP -> "CSP could not be identified"; exceptions -> "Needs attention".
@@ -32,9 +34,10 @@ SEVERITY_WORDS = {"high": "Check today", "medium": "Check this week", "low": "Fo
 #: type -> (headline, what it means, what to do). Wording avoids jargon and never claims a cause.
 FRIENDLY = {
     "NEGATIVE_NET_FLOW": (
-        "Much more money went out than came in",
-        "A large share of this CSP's money movement went out of the pool instead of coming in. "
-        "That can be normal, so it is a reason to look, not proof of a problem.",
+        "Customers withdrew much more than they deposited",
+        "A large share of this CSP's cash movement was customers taking money out rather than "
+        "putting it in, which can pull balances down. That can be normal, so it is a reason to "
+        "look, not proof of a problem.",
         "Ask the CSP or territory lead what happened this period.",
     ),
     "GROWTH_WITHOUT_FLOW_EVIDENCE": (
@@ -55,9 +58,9 @@ FRIENDLY = {
         "Wait for the next SBI update to confirm, or ask the CSP.",
     ),
     "STATEMENT_COVERAGE_LOW": (
-        "Alerts about money going out are paused",
-        "The bank statements loaded cover too little of this period to compare money in and out "
-        "fairly, so those alerts are held back instead of guessing.",
+        "Alerts about withdrawals are paused",
+        "The bank statements loaded cover too little of this period to compare withdrawals and "
+        "deposits fairly, so those alerts are held back instead of guessing.",
         "Load the missing statements. Alerts resume on their own.",
     ),
     "STALE_OR_MISSING_SOURCE": (
@@ -140,11 +143,12 @@ def daily_summary(summary: dict, attention_total: int, high: int, days: int) -> 
             "count yet to show how many are new."
         )
     if f["days_with_data"]:
-        diff = f["net_pool_flow"]
-        word = "more came in than went out" if diff >= 0 else "more went out than came in"
+        diff = f["net_customer_flow"]
+        word = "more was deposited than withdrawn" if diff >= 0 else (
+            "more was withdrawn than deposited")
         out.append(
-            f"From withdrawals and deposits, {inr(f['pool_credits'])} came into the pool and "
-            f"{inr(f['pool_debits'])} went out: {inr(abs(diff))} {word}."
+            f"Customers withdrew {inr(f['withdrawals'])} and deposited {inr(f['deposits'])} "
+            f"through their CSPs: {inr(abs(diff))} {word}."
         )
     else:
         out.append("No bank statements cover this period yet, so money movement is not shown.")

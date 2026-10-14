@@ -65,16 +65,39 @@ Descriptions contain customer account numbers and names. They are **not stored**
 `description_redacted` keeps reference/channel/KO; `description_hash` (SHA-256 of the full original)
 keeps rows verifiable and de-duplicable. No customer account → CSP mapping exists or is attempted.
 
-## Flow semantics (a hypothesis, documented in `normalize.py`)
+## Flow semantics (CONFIRMED by the business seniors, 2026-10-14; see `normalize.py`)
 
-Pool credit/debit is *pool accounting direction*, not the effect on a CSP's customers' balances.
-Default `customer_wd_dep`: for withdrawal- and deposit-channel rows, customer-balance effect =
-`debit − credit` (withdrawal credited to pool ⇒ negative; deposit debited from pool ⇒ positive;
-a reversal flips sign). Money transfer, off-us withdrawal, loan/initial/SSA deposits and pool funding
-are **excluded** by default. Alternatives (`customer_wd_dep_xfer`, `pool_net`) are selectable offline.
-The channel→category map is inferred from labels and needs business confirmation.
+The statement is Eko's pool account. A **credit** raises the pool balance and a **debit** lowers it
+(the running balance proves it on every row). The seniors confirmed, row type by row type, that:
 
-**The dashboard counts the same types.** The headline money in / money out (Home, Money Movement, the
+| Statement row | Meaning | Pool side | Counted |
+|---|---|---|---|
+| `AEPSWDL`, `RupayWDL`, `Withdrawal` | customer withdrew cash at the CSP | credit | yes, as **withdrawals** |
+| `AEPSDeposit`, `RupayDeposit`, `Deposit`, **`Initial Deposit`** | customer deposited cash with the CSP | debit | yes, as **deposits** |
+| `MoneyTRF` | money transfer | debit | no |
+| `AEPSOffUsWDL`, `RupayOffUsWDL` | customer of another bank | credit | no |
+| `Loan Deposit`, `SSA` | other products | debit | no |
+| `EKO DEDUCTION`, `CSH DEP (CDM)` | Eko's own pool entries, no CSP | debit / credit | no |
+| `outimps`, `ppf`, `yono fi wdl` and anything unrecognised | not customer withdrawals or deposits | - | no |
+
+Customer-balance effect of a counted row = `debit − credit` (a withdrawal credited to the pool is
+negative, a deposit debited from it is positive; a reversal flips the sign). The dashboard and API
+therefore report `withdrawals`, `deposits` and `net_customer_flow = deposits − withdrawals`
+(positive = customers put in more than they took out), and the "customers withdrew more than they
+deposited" alert fires when the net is negative and material. The raw `pool_credits`, `pool_debits`
+and `net_pool_flow = credits − debits` fields are still returned. Alternatives
+(`customer_wd_dep_xfer`, `pool_net`) remain selectable offline.
+
+**KO code lengths (seniors, 2026-10-14).** A CSP code is exactly 8 characters (`1A85XXXX`). A
+**7-character code is impossible**: such a row is a cut-off/corrupt description and stays unattributed.
+A **9-character code** (`1A85XXXX1`) is a **sub-CSP** of the CSP `1A85XXXX` and rolls up to it (the
+ninth character is the sub-CSP's number), which is what the "first 8 characters" rule already does.
+
+**Stored rows.** Rows imported before this confirmation carry the old category for `initial deposit`.
+`build_bank_flows` (run by `worker-bankflow` daily, or by hand) first re-applies the channel map to
+stored rows (`ingest.reclassify_stored`, idempotent) and then rebuilds the flows.
+
+**The dashboard counts the same types.** The headline withdrawals and deposits (Home, Money Movement, the
 per-CSP flow, the alerts and `/api/v1/bank-flow/dashboard-summary`) is the sum of the `withdrawal` and
 `deposit` categories only (`intelligence.COUNTED_CATEGORIES`, taken from the default definition). Every
 other category is reported separately as `flows.other_types` ("not counted here") and is never hidden. On
@@ -186,7 +209,8 @@ API `GET /api/v1/bank-flow/{summary,code-resolution,flows,evaluations,target}` (
 
 1. Avg Balance refresh cadence and effective measurement date are unknown (local data: one refresh in 13 days).
 2. Header Book Balance gap on the sample is unexplained → statements stay `PARTIAL`.
-3. Trailing-character KO rule and the channel→category map are unconfirmed.
+3. ~~Trailing-character KO rule and the channel→category map are unconfirmed~~ -- confirmed by the
+   seniors on 2026-10-14 (see "Flow semantics").
 4. Only one statement date exists; evaluation needs ≥ 8 independent refresh events with overlapping flow data.
 5. Pool flows may not correspond to a CSP's own BSBD balances.
 
@@ -341,10 +365,10 @@ comes from `bankflow/intelligence.py`, which the API calls too:
 | `GET /api/v1/bank-flow/exceptions` | Action Centre items with reason, metrics, evidence coverage, next action |
 | `GET /api/v1/bank-flow/estimates[/summary]`, `/account-count-hypothesis` | estimates and the estimator verdict |
 
-**Names.** Headline flow figures are *pool credits*, *pool debits* and *net pool flow = credits - debits*, which is
-what the statement states. Whether a credit is a customer deposit or a withdrawal depends on the channel mapping,
-still unconfirmed (existing evidence, `normalize.py`: withdrawals credit the pool, deposits debit it), so the
-deposit/withdrawal split is only reported as `provisional_channel_split` and is never applied to the totals.
+**Names.** Until 2026-10-14 the headline figures were *pool credits*, *pool debits* and *net pool flow*
+because the deposit/withdrawal direction was unconfirmed. It is now confirmed (see "Flow semantics"), so the
+dashboard shows *withdrawn by customers* (pool credits), *deposited by customers* (pool debits) and
+*deposits minus withdrawals*; the pool-direction fields are still returned.
 
 **PMJDY counts.** `AccountCountObservation` is insert-only history of the PMJDY tab; the newest row is the current
 count (3,000 -> 3,090 means current 3,090, growth +90). A row is written when the count changes or when the IST day

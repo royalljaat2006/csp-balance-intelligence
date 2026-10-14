@@ -9,10 +9,11 @@ Four things are kept strictly apart in every payload:
   transaction flow       attributed (exact KO match) pool credits/debits from bankflow.FlowAggregate
   estimate               bankflow.DailyEstimate -- model output with its own status
 
-Flow naming: "credits"/"debits" are POOL-account directions (verified from the statement). Which of
-them is a customer deposit or withdrawal depends on the channel mapping, which is still unconfirmed,
-so the headline figures are pool credits, pool debits and net pool flow (credits - debits); the
-provisional channel split is reported separately and labelled as such.
+Flow naming (direction CONFIRMED by the business seniors, 2026-10-14): a pool CREDIT is a customer
+WITHDRAWAL (cash the CSP paid out) and a pool DEBIT is a customer DEPOSIT (cash the CSP took in).
+`withdrawals`, `deposits` and `net_customer_flow` (= deposits - withdrawals; positive means customer
+money grew) are the figures to show. `pool_credits`, `pool_debits` and `net_pool_flow` (credits -
+debits) are kept as the raw pool-direction fields. Only withdrawal and deposit rows are counted.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 from decimal import Decimal
+from typing import Any, NamedTuple
 
 from csp.models import Csp, DailyBalance
 from csp.models import Transaction as CspTransaction
@@ -140,30 +142,51 @@ def account_counts(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]
 
 
 # Only these statement categories feed the estimate (flows.DEFAULT_DEFINITION), so only they make
-# up the headline money in/out and each CSP's flow. Every other category (transfers, off-us
+# up the headline withdrawals/deposits and each CSP's flow. Every other category (transfers, off-us
 # withdrawals, loan/initial/SSA deposits, unrecognised channels) is reported separately as "other
 # types": never added to the headline, never hidden.
 COUNTED_CATEGORIES: tuple[str, ...] = flows.FLOW_DEFINITIONS[flows.DEFAULT_DEFINITION][1] or ()
 
 
-def _split_flow(cats: dict | None) -> tuple[tuple, tuple]:
-    """(credit, debit, count) of the counted categories and of all the others, from one
-    FlowAggregate.by_category."""
-    counted: list = [ZERO, ZERO, 0]
+class FlowRow(NamedTuple):
+    csp: str
+    day: dt.date
+    credit: Decimal        # pool credits of the counted categories
+    debit: Decimal         # pool debits of the counted categories
+    n: int                 # transactions in the counted categories
+    cats: dict             # the stored by_category breakdown
+    other: tuple           # (credit, debit, n) of every category that is not counted
+    withdrawals: Decimal   # cash customers took out, net of reversals
+    deposits: Decimal      # cash customers put in, net of reversals
+
+
+def _split_flow(cats: dict | None) -> tuple[dict, tuple]:
+    """One FlowAggregate.by_category split into the counted categories (with the customer
+    withdrawals and deposits) and everything else."""
+    counted: dict[str, Any] = {"credit": ZERO, "debit": ZERO, "n": 0, "withdrawals": ZERO,
+                               "deposits": ZERO}
     other: list = [ZERO, ZERO, 0]
     for cat, v in (cats or {}).items():
-        t = counted if cat in COUNTED_CATEGORIES else other
-        t[0] += Decimal(v["credit"])
-        t[1] += Decimal(v["debit"])
-        t[2] += int(v["count"])
-    return tuple(counted), tuple(other)
+        cr, db, k = Decimal(v["credit"]), Decimal(v["debit"]), int(v["count"])
+        if cat in COUNTED_CATEGORIES:
+            counted["credit"] += cr
+            counted["debit"] += db
+            counted["n"] += k
+            if cat == "withdrawal":
+                counted["withdrawals"] += cr - db
+            elif cat == "deposit":
+                counted["deposits"] += db - cr
+        else:
+            other[0] += cr
+            other[1] += db
+            other[2] += k
+    return counted, tuple(other)
 
 
 def _flow_rows(date_from: dt.date, date_to: dt.date, ids=None):
-    """Attributed (exact KO match) flow per CSP and day, as
-    (csp, day, credit, debit, n, by_category, other) where credit/debit/n are the counted
-    categories only and `other` is the (credit, debit, n) of everything else. `ids` limits it to
-    those CSPs (the dashboard passes the tracked ones)."""
+    """Attributed (exact KO match) flow per CSP and day as FlowRow. credit/debit/n and the
+    withdrawals/deposits are the counted categories only; `other` is everything else. `ids`
+    limits it to those CSPs (the dashboard passes the tracked ones)."""
     qs = FlowAggregate.objects.filter(
         resolution_mode=flows.MODE_EXACT, flow_date__gte=date_from, flow_date__lte=date_to
     )
@@ -171,21 +194,25 @@ def _flow_rows(date_from: dt.date, date_to: dt.date, ids=None):
         qs = qs.filter(csp_id__in=list(ids))
     rows = qs.values_list("csp_id", "flow_date", "by_category")
     for c, d, cats in rows.iterator():
-        (cr, db, n), other = _split_flow(cats)
-        yield c, d, cr, db, n, cats, other
+        counted, other = _split_flow(cats)
+        yield FlowRow(c, d, counted["credit"], counted["debit"], counted["n"], cats, other,
+                      counted["withdrawals"], counted["deposits"])
 
 
 def flow_by_csp(ids, date_from: dt.date, date_to: dt.date) -> dict[str, dict]:
     ids = set(ids)
     out: dict[str, dict] = {}
-    for c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to):
-        if c not in ids:
+    for fr in _flow_rows(date_from, date_to):
+        if fr.csp not in ids:
             continue
-        r = out.setdefault(c, {"credits": ZERO, "debits": ZERO, "txn_count": 0, "days": set()})
-        r["credits"] += cr
-        r["debits"] += db
-        r["txn_count"] += n
-        r["days"].add(d)
+        r = out.setdefault(fr.csp, {"credits": ZERO, "debits": ZERO, "withdrawals": ZERO,
+                                    "deposits": ZERO, "txn_count": 0, "days": set()})
+        r["credits"] += fr.credit
+        r["debits"] += fr.debit
+        r["withdrawals"] += fr.withdrawals
+        r["deposits"] += fr.deposits
+        r["txn_count"] += fr.n
+        r["days"].add(fr.day)
     return out
 
 
@@ -270,19 +297,21 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
     sources = {s: sum(1 for c in counts.values() if c["source"] == s)
                for s in ("pmjdy", "calling_sheet")}
 
-    credits = debits = other_cr = other_db = ZERO
+    credits = debits = other_cr = other_db = withdrawals = deposits = ZERO
     txns = other_n = 0
     days: set[dt.date] = set()
     cat_split: dict[str, dict] = defaultdict(lambda: {"credit": ZERO, "debit": ZERO})
-    for _c, d, cr, db, n, cats, other in _flow_rows(date_from, date_to, ids):
-        credits += cr
-        debits += db
-        txns += n
-        other_cr += other[0]
-        other_db += other[1]
-        other_n += other[2]
-        days.add(d)
-        for cat, v in (cats or {}).items():
+    for fr in _flow_rows(date_from, date_to, ids):
+        credits += fr.credit
+        debits += fr.debit
+        withdrawals += fr.withdrawals
+        deposits += fr.deposits
+        txns += fr.n
+        other_cr += fr.other[0]
+        other_db += fr.other[1]
+        other_n += fr.other[2]
+        days.add(fr.day)
+        for cat, v in (fr.cats or {}).items():
             cat_split[cat]["credit"] += Decimal(v["credit"])
             cat_split[cat]["debit"] += Decimal(v["debit"])
     range_days = (date_to - date_from).days + 1
@@ -345,6 +374,8 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
             ),
         },
         "flows": {
+            "withdrawals": withdrawals, "deposits": deposits,
+            "net_customer_flow": deposits - withdrawals,
             "pool_credits": credits, "pool_debits": debits, "net_pool_flow": credits - debits,
             "gross_flow": credits + debits, "txn_count": txns,
             "days_with_data": len(days), "proven_complete_days": len(complete),
@@ -364,8 +395,8 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
                 k: {"credit": v["credit"], "debit": v["debit"]} for k, v in cat_split.items()
             },
             "split_note": "Only withdrawal and deposit transactions are counted in the totals. "
-                          "The channel->deposit/withdrawal mapping is unconfirmed; pool "
-                          "credit/debit direction is what the statement states.",
+                          "A pool credit is a customer withdrawal and a pool debit a customer "
+                          "deposit (confirmed by the business, 2026-10-14).",
         },
         "observed_avg_balance": {
             "csps_with_observation": len(obs), "coverage": len(obs) / len(ids) if ids else None,
@@ -387,11 +418,14 @@ def dashboard_summary(date_from: dt.date, date_to: dt.date) -> dict:
 # ---------------------------------------------------------------- movement
 def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
     by_day: dict[dt.date, dict] = {}
-    for _c, d, cr, db, n, _cat, _other in _flow_rows(date_from, date_to, _tracked()):
-        r = by_day.setdefault(d, {"credits": ZERO, "debits": ZERO, "txn_count": 0})
-        r["credits"] += cr
-        r["debits"] += db
-        r["txn_count"] += n
+    for fr in _flow_rows(date_from, date_to, _tracked()):
+        r = by_day.setdefault(fr.day, {"credits": ZERO, "debits": ZERO, "withdrawals": ZERO,
+                                       "deposits": ZERO, "txn_count": 0})
+        r["credits"] += fr.credit
+        r["debits"] += fr.debit
+        r["withdrawals"] += fr.withdrawals
+        r["deposits"] += fr.deposits
+        r["txn_count"] += fr.n
     complete = flows.proven_complete_dates()
     acct = {r["date"]: r for r in pmjdy.daily_network_counts(date_from, date_to)}
     acct_source = "pmjdy" if any(r["total_accounts"] is not None for r in acct.values()) else None
@@ -426,6 +460,9 @@ def network_movement(date_from: dt.date, date_to: dt.date) -> dict:
         o, e = obs.get(day), est.get(day)
         series.append({
             "date": day,
+            "withdrawals": f["withdrawals"] if f else None,
+            "deposits": f["deposits"] if f else None,
+            "net_customer_flow": (f["deposits"] - f["withdrawals"]) if f else None,
             "pool_credits": f["credits"] if f else None,
             "pool_debits": f["debits"] if f else None,
             "net_pool_flow": (f["credits"] - f["debits"]) if f else None,
@@ -572,20 +609,20 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
 
     fl = {}
     for d in (today, yesterday):
-        credit = debit = o_credit = o_debit = ZERO
+        withdrawn = deposited = o_credit = o_debit = ZERO
         n = o_n = 0
         seen = False
-        for _c, _d, cr, db, k, _cats, other in _flow_rows(d, d, idset):
+        for fr in _flow_rows(d, d, idset):
             seen = True
-            credit += cr
-            debit += db
-            n += k
-            o_credit += other[0]
-            o_debit += other[1]
-            o_n += other[2]
+            withdrawn += fr.withdrawals
+            deposited += fr.deposits
+            n += fr.n
+            o_credit += fr.other[0]
+            o_debit += fr.other[1]
+            o_n += fr.other[2]
         state, note = _flow_state(d, coverage, "today" if d == today else "yesterday")
-        fl[d] = {"seen": seen, "credit": credit if seen else None,
-                 "debit": debit if seen else None, "n": n if seen else None,
+        fl[d] = {"seen": seen, "withdrawals": withdrawn if seen else None,
+                 "deposits": deposited if seen else None, "n": n if seen else None,
                  "other_credit": o_credit if seen else None,
                  "other_debit": o_debit if seen else None, "other_n": o_n if seen else None,
                  "state": state, "note": note}
@@ -611,7 +648,7 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
     month_reset = f"{today:%Y-%m}" != f"{yesterday:%Y-%m}"
     flow_note = ""
     if not like_for_like:
-        parts = [fl[d]["note"] for d in (today, yesterday) if fl[d]["state"] != "complete"]
+        parts = [str(fl[d]["note"]) for d in (today, yesterday) if fl[d]["state"] != "complete"]
         flow_note = "Not a like-for-like comparison: " + "; ".join(parts) + "."
 
     rows = [
@@ -624,11 +661,12 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
         row("new_accounts_day", "New accounts opened that day", "count",
             n_t["ftd"] if n_t else None, n_y["ftd"] if n_y else None, good_when_up=True,
             note="Today's figure keeps growing until the day ends."),
-        row("money_in", "Money in (withdrawals and deposits)", "rupees",
-            fl[today]["credit"], fl[yesterday]["credit"], note=flow_note,
+        row("withdrawals", "Withdrawn by customers", "rupees",
+            fl[today]["withdrawals"], fl[yesterday]["withdrawals"], note=flow_note,
             comparable=like_for_like),
-        row("money_out", "Money out (withdrawals and deposits)", "rupees",
-            fl[today]["debit"], fl[yesterday]["debit"], comparable=like_for_like),
+        row("deposits", "Deposited by customers", "rupees",
+            fl[today]["deposits"], fl[yesterday]["deposits"], good_when_up=True,
+            comparable=like_for_like),
         row("transactions", "Transactions counted", "count", fl[today]["n"], fl[yesterday]["n"],
             comparable=like_for_like),
         row("observed_avg", "SBI-reported average balance per account", "rupees",
@@ -681,6 +719,8 @@ SORTS = {
     "current_count": lambda r: r["current_count"] or 0,
     "credits": lambda r: r["credits"] or ZERO,
     "debits": lambda r: r["debits"] or ZERO,
+    "withdrawals": lambda r: r["withdrawals"] or ZERO,
+    "deposits": lambda r: r["deposits"] or ZERO,
     "net_flow": lambda r: r["net_flow"] if r["net_flow"] is not None else Decimal(-(10**15)),
     "estimated_delta": lambda r: (
         r["estimated_delta"] if r["estimated_delta"] is not None else Decimal(-(10**15))
@@ -727,8 +767,11 @@ def _build_rows(date_from: dt.date, date_to: dt.date) -> tuple[list[dict], dict]
             "count_source": a["source"] if a else None,
             "count_observed_at": a["observed_at"] if a else None, "count_freshness": fresh,
             "credits": f["credits"] if f else None, "debits": f["debits"] if f else None,
-            "net_flow": (f["credits"] - f["debits"]) if f else None,
-            "gross_flow": (f["credits"] + f["debits"]) if f else None,
+            "withdrawals": f["withdrawals"] if f else None,
+            "deposits": f["deposits"] if f else None,
+            # deposits minus withdrawals: positive means customer money grew
+            "net_flow": (f["deposits"] - f["withdrawals"]) if f else None,
+            "gross_flow": (f["deposits"] + f["withdrawals"]) if f else None,
             "txn_count": f["txn_count"] if f else None,
             "flow_days": len(f["days"]) if f else 0,
             "flow_coverage": (len(f["days"]) / range_days) if f else 0.0,
@@ -803,12 +846,12 @@ def csp_flags(rows: list[dict], network_coverage: float = 1.0) -> dict[str, list
             if outflow >= min_out and ratio >= min_ratio:
                 high = outflow >= high_out and ratio >= high_ratio
                 add(r, "NEGATIVE_NET_FLOW", "high" if high else "medium",
-                    f"Pool debits exceeded pool credits by {ratio:.0%} of this CSP's activity "
-                    "in the range. This is a pool-direction fact, not a measured change in "
-                    "customer balances.",
+                    f"Customers withdrew more than they deposited: withdrawals exceeded deposits "
+                    f"by {ratio:.0%} of this CSP's activity in the range. This is the net cash "
+                    "movement through the CSP, not a measured change in balances.",
                     "Review recent activity with the CSP / territory lead before concluding.",
-                    rank=float(outflow), net_flow=_f(net), credits=_f(r["credits"]),
-                    debits=_f(r["debits"]), imbalance_pct=round(ratio * 100, 1))
+                    rank=float(outflow), net_flow=_f(net), withdrawals=_f(r["withdrawals"]),
+                    deposits=_f(r["deposits"]), imbalance_pct=round(ratio * 100, 1))
         new_n = r["pmjdy_mtd"] if r["pmjdy_mtd"] is not None else r["count_change"]
         if (evidence_ok and new_n is not None and new_n >= settings.ALERT_NEW_ACCOUNTS
                 and r["flow_days"] == 0):

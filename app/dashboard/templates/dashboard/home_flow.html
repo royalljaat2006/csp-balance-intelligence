@@ -33,14 +33,14 @@
     </article>
 
     <article class="sm-card">
-      <div class="sm-label">Money received into the pool</div>
-      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_credits|inr }}{% else %}&mdash;{% endif %}</div>
+      <div class="sm-label">Withdrawn by customers</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.withdrawals|inr }}{% else %}&mdash;{% endif %}</div>
       <div class="sm-sub flat">{% if fl.days_with_data %}Last {{ days }} days &middot; {{ fl.days_with_data }} of {{ fl.range_days }} days covered{% else %}No bank statements for this period{% endif %}</div>
     </article>
 
     <article class="sm-card">
-      <div class="sm-label">Money sent out of the pool</div>
-      <div class="sm-big">{% if fl.days_with_data %}{{ fl.pool_debits|inr }}{% else %}&mdash;{% endif %}</div>
+      <div class="sm-label">Deposited by customers</div>
+      <div class="sm-big">{% if fl.days_with_data %}{{ fl.deposits|inr }}{% else %}&mdash;{% endif %}</div>
       <div class="sm-sub flat">{% if fl.days_with_data %}Last {{ days }} days &middot; {{ fl.days_with_data }} of {{ fl.range_days }} days covered{% else %}No bank statements for this period{% endif %}</div>
     </article>
 
@@ -60,9 +60,9 @@
   </section>
 
   {% if fl.days_with_data %}
-  <p class="sm-diff {{ fl.net_pool_flow|tone }}">
-    <strong>Money in minus money out: {{ fl.net_pool_flow|signed_inr }}</strong>
-    &mdash; {% if fl.net_pool_flow >= 0 %}more came in than went out{% else %}more went out than came in{% endif %}.
+  <p class="sm-diff {{ fl.net_customer_flow|tone }}">
+    <strong>Deposits minus withdrawals: {{ fl.net_customer_flow|signed_inr }}</strong>
+    &mdash; {% if fl.net_customer_flow >= 0 %}customers deposited more than they withdrew{% else %}customers withdrew more than they deposited{% endif %}.
   </p>
   {% endif %}
 
@@ -96,7 +96,7 @@
   <section class="sm-panel" id="trend" aria-labelledby="trend-h">
     <div class="sm-panel-head"><h2 id="trend-h">Trend</h2>
       <div class="fh-tabs" role="tablist">
-        <button class="chip" role="tab" data-view="money" aria-pressed="true">Money in and out</button>
+        <button class="chip" role="tab" data-view="money" aria-pressed="true">Withdrawals and deposits</button>
         <button class="chip" role="tab" data-view="accounts" aria-pressed="false">Customer accounts</button>
       </div></div>
     <div id="fh-chart" class="fh-chart" role="img" aria-label="Trend chart"></div>
@@ -115,8 +115,8 @@
     </form>
     <div class="tbl-scroll sm-tablewrap"><table class="sm-table">
       <thead><tr>
-        <th>CSP</th><th class="num">Customer accounts</th><th class="num">Money in</th><th class="num">Money out</th>
-        <th class="num">Money in minus money out</th><th class="num">SBI-reported average balance</th>
+        <th>CSP</th><th class="num">Customer accounts</th><th class="num">Withdrawn</th><th class="num">Deposited</th>
+        <th class="num">Deposits minus withdrawals</th><th class="num">SBI-reported average balance</th>
         <th class="num" title="{{ ESTIMATE_UNAVAILABLE }} for CSPs shown as 'Not available yet'">Our estimated average balance</th><th>Status</th>
       </tr></thead>
       <tbody>
@@ -124,9 +124,9 @@
       <tr>
         <td data-label="CSP"><a href="{% url 'dashboard:csp_detail' csp_code=r.csp_code %}" class="sm-csp"><strong>{{ r.name|default:r.csp_code }}</strong><span>{{ r.csp_code }}</span></a></td>
         <td class="num" data-label="Customer accounts">{% if r.current_count is None %}&mdash;{% else %}{{ r.current_count|intc }}{% endif %}<div class="sm-fine {% if r.pmjdy_mtd is not None %}up{% else %}{{ r.count_change|tone }}{% endif %}">{% if r.pmjdy_mtd is not None %}{{ r.pmjdy_mtd|intc }} new this month{% elif r.count_change is not None %}{{ r.count_change|signed }} new{% else %}no earlier count{% endif %}</div></td>
-        <td class="num" data-label="Money in">{% if r.credits is None %}<span class="sm-mute">no data</span>{% else %}{{ r.credits|inr }}{% endif %}</td>
-        <td class="num" data-label="Money out">{% if r.debits is None %}<span class="sm-mute">no data</span>{% else %}{{ r.debits|inr }}{% endif %}</td>
-        <td class="num {{ r.net_flow|tone }}" data-label="Money in minus money out">{{ r.net_flow|signed_inr }}</td>
+        <td class="num" data-label="Withdrawn">{% if r.withdrawals is None %}<span class="sm-mute">no data</span>{% else %}{{ r.withdrawals|inr }}{% endif %}</td>
+        <td class="num" data-label="Deposited">{% if r.deposits is None %}<span class="sm-mute">no data</span>{% else %}{{ r.deposits|inr }}{% endif %}</td>
+        <td class="num {{ r.net_flow|tone }}" data-label="Deposits minus withdrawals">{{ r.net_flow|signed_inr }}</td>
         <td class="num" data-label="SBI-reported average balance">{{ r.observed_avg|inr }}</td>
         <td class="num" data-label="Our estimated average balance">{% if r.est.show %}{{ r.est.value|inr }}<div class="sm-fine">{{ r.est.label }}</div>{% else %}<span class="sm-mute" title="{{ ESTIMATE_UNAVAILABLE }}">Not available yet</span>{% endif %}</td>
         <td data-label="Status"><span class="sm-pill {% if r.status_key == 'ok' %}ok{% else %}attn{% endif %}" title="{{ r.status_text }}">{% if r.status_key == 'ok' %}OK{% else %}Needs attention{% endif %}</span>{% if r.status_key != 'ok' %}<div class="sm-fine">{{ r.status_text }}</div>{% endif %}</td>
@@ -168,7 +168,7 @@
     <div class="sm-adv-block" id="heatmap">
       <h3>Heat map of all CSPs</h3>
       <select id="fh-heat-metric" aria-label="What to colour by">
-        <option value="growth_pct">New customer accounts</option><option value="net_flow">Money in minus money out</option>
+        <option value="growth_pct">New customer accounts</option><option value="net_flow">Deposits minus withdrawals</option>
         <option value="fresh">How recent the account count is</option><option value="delta">Estimated change (checked estimates only)</option></select>
       <div id="fh-heat" class="fh-heat" role="list"></div>
       <div id="fh-heat-legend" class="sm-mute"></div>

@@ -1545,9 +1545,9 @@ _BADGE = {
 }
 _SORT_CHOICES = {  # friendly name -> (label, intelligence.SORTS key)
     "new_accounts": ("Most new accounts", "count_change"),
-    "money_in": ("Most money in", "credits"),
-    "money_out": ("Most money out", "debits"),
-    "difference": ("Money in minus money out", "net_flow"),
+    "withdrawals": ("Most withdrawn by customers", "withdrawals"),
+    "deposits": ("Most deposited by customers", "deposits"),
+    "difference": ("Deposits minus withdrawals", "net_flow"),
     "name": ("Name (A-Z)", "name"),
 }
 _METHOD_NAMES = {
@@ -1576,7 +1576,8 @@ def _cached(prefix: str, days: int, fn):
 
 
 def _chart_payload(movement: dict) -> dict:
-    keep = ("date", "pool_credits", "pool_debits", "net_pool_flow", "txn_count", "flow_status",
+    keep = ("date", "withdrawals", "deposits", "net_customer_flow", "pool_credits",
+            "pool_debits", "net_pool_flow", "txn_count", "flow_status",
             "total_accounts", "account_growth", "observed_avg_balance",
             "estimated_avg_balance")
     return bankflow_intelligence.plain({
@@ -1595,10 +1596,11 @@ def _attention_counts(exc: dict) -> tuple[int, int]:
 
 @login_required
 def home(request):
-    """Simple home for a non-technical operations manager: customer accounts, money in, money
-    out, the estimate only when it is defensible, a plain summary, what needs attention, a trend
-    and a searchable CSP list. Technical detail lives under 'Advanced details'. All numbers come
-    from bankflow.intelligence (the same functions the API uses); this view adds wording only."""
+    """Simple home for a non-technical operations manager: customer accounts, withdrawals and
+    deposits, the estimate only when it is defensible, a plain summary, what needs attention, a
+    trend and a searchable CSP list. Technical detail lives under 'Advanced details'. All numbers
+    come from bankflow.intelligence (the same functions the API uses); this view adds wording
+    only."""
     days = _days_param(request)
     date_from, date_to = bankflow_intelligence.resolve_range(days)
     summary = _cached("fh:summary", days,
@@ -1679,7 +1681,8 @@ def home(request):
 
 @login_required
 def money_movement(request):
-    """Money in, money out and the difference, day by day -- the plain version of the flow data."""
+    """Customer withdrawals, deposits and the difference, day by day -- the plain version of the
+    flow data."""
     days = _days_param(request)
     date_from, date_to = bankflow_intelligence.resolve_range(days)
     summary = _cached("mm:summary", days,
