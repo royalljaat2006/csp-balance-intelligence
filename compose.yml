@@ -104,12 +104,6 @@ services:
     environment:
       WATCH_JOBS: "ingest_calling_sheet,sync_daily_snapshots"
 
-  worker-telegram:
-    <<: *worker-base
-    container_name: ${APP_NAME}-worker-telegram
-    environment:
-      WATCH_JOBS: "poll_telegram"
-
   worker-autopilot:
     <<: *worker-base
     container_name: ${APP_NAME}-worker-autopilot

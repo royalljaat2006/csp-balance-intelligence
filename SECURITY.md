@@ -54,9 +54,9 @@ potential impact. Expect an acknowledgement within 2 business days.
 
 ## Reviewed and found not applicable
 
-- **SSRF**: no user-supplied URL is ever fetched server-side (Nemotron/Sheets/Telegram endpoints
+- **SSRF**: no user-supplied URL is ever fetched server-side (Nemotron/Sheets endpoints
   are all fixed, config-driven, not request-controlled).
-- **File upload**: transaction files arrive via a watched filesystem folder or Telegram, never an
+- **File upload**: transaction files arrive via a watched filesystem folder, never an
   HTTP upload endpoint — no multipart/file-upload attack surface exists in this app.
 - **SQL injection**: all queries go through the Django ORM or parameterized raw SQL
   (`csp/services.py`'s `_query_daily_activity`, `sync_monthly_summary`'s mart query) — no

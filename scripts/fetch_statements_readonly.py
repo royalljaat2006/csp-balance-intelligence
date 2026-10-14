@@ -22,7 +22,7 @@ Usage:
   python scripts/fetch_statements_readonly.py --download --since 2026-08-01
   # Calling Sheet backups (flat folder, if this account may read it):
   python scripts/fetch_statements_readonly.py --list --pattern 'Calling Sheet_*.xlsx' \
-      --remote-dir /home/shumit/sbikisok/_calling_sheet_backups      # add --download to copy
+      --remote-dir /path/to/the/backups/folder      # add --download to copy
 Requires paramiko (`uv pip install paramiko`; not a project dependency).
 """
 

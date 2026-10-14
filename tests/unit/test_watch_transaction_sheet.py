@@ -260,17 +260,22 @@ def test_an_unexpected_error_is_reported_and_the_loop_survives(env, monkeypatch)
 
 
 # ---------------------------------------------------------------- configuration
-def test_configuration_comes_from_the_environment_and_requires_the_data_dir(tmp_path):
+def test_configuration_comes_from_the_environment_and_requires_both_folders(tmp_path):
     with pytest.raises(SystemExit):
         wts.Config.from_env({})
+    with pytest.raises(SystemExit, match="TRANSACTION_SOURCE_DIR"):  # no folder is ever assumed
+        wts.Config.from_env({"TRANSACTION_DATA_DIR_HOST": str(tmp_path)})
+    with pytest.raises(SystemExit, match="TRANSACTION_DATA_DIR_HOST"):
+        wts.Config.from_env({"TRANSACTION_SOURCE_DIR": "/elsewhere"})
     cfg = wts.Config.from_env({
         "TRANSACTION_DATA_DIR_HOST": str(tmp_path), "TRANSACTION_WATCH_POLL_SECONDS": "10",
         "TRANSACTION_WATCH_SETTLE_SECONDS": "5", "TRANSACTION_WATCH_RESYNC_HOURS": "0",
         "TRANSACTION_SOURCE_DIR": "/elsewhere"})
     assert cfg.poll_seconds == 10 and cfg.settle_seconds == 5 and cfg.resync_seconds == 0
     assert cfg.source_dir == Path("/elsewhere") and cfg.incoming == tmp_path / "incoming"
-    default = wts.Config.from_env({"TRANSACTION_DATA_DIR_HOST": str(tmp_path)})
-    assert default.source_dir == Path("/home/shumit/sbikisok") and default.settle_seconds == 45
+    default = wts.Config.from_env({"TRANSACTION_DATA_DIR_HOST": str(tmp_path),
+                                   "TRANSACTION_SOURCE_DIR": "/elsewhere"})
+    assert default.settle_seconds == 45 and default.poll_seconds == 30
 
 
 def test_once_copies_immediately_without_the_settle_wait(env, monkeypatch):

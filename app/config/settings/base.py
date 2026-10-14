@@ -126,7 +126,7 @@ DATABASE_ROUTERS = ["common.db_router.PrimaryReplicaRouter"]
 # --- Cache (Redis in production; in-process LocMemCache everywhere else) ---
 # REDIS_URL blank -> LocMemCache: dev/test/CI need no Redis instance running
 # to pass, matching the existing "blank env var -> graceful degrade" pattern
-# used for NEMOTRON_API_KEY/TELEGRAM_BOT_TOKEN below. production.py switches
+# used for NEMOTRON_API_KEY below. production.py switches
 # to django_redis once REDIS_URL is set — see common/cache.py for the
 # fail-open read/write wrapper every cache call actually goes through
 # (nothing reads/writes `django.core.cache.cache` directly outside that
@@ -266,15 +266,6 @@ TRANSACTION_DATA_DIR = env("TRANSACTION_DATA_DIR", default=str(BASE_DIR / "data"
 NEMOTRON_API_KEY = env("NEMOTRON_API_KEY", default="")
 NEMOTRON_MODEL = env("NEMOTRON_MODEL", default="nvidia/nemotron-3-super-120b-a12b")
 
-# Telegram-based transaction-sheet ingestion (2026-09-18 platform extension).
-# Same "blank means degrade to a no-op" pattern as NEMOTRON_API_KEY above —
-# manage.py poll_telegram / watch_transactions's telegram schedule simply
-# skip polling if TELEGRAM_BOT_TOKEN is unset, rather than failing loudly.
-# TELEGRAM_ALLOWED_CHAT_ID is mandatory whenever the token IS set: without an
-# allow-list, ANY chat that discovers the bot could submit transaction files.
-TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
-TELEGRAM_ALLOWED_CHAT_ID = env("TELEGRAM_CHAT_ID", default="")
-
 # SBI pool-account statement flow validation (bankflow app, docs/BANK-FLOW.md).
 # Analysis-only: nothing in bankflow writes DailyBalance or switches the balance
 # source. The watch folder is only ever READ; files are never moved or deleted.
@@ -301,7 +292,7 @@ API_ANON_THROTTLE_RATE = env("API_ANON_THROTTLE_RATE", default="20/m")
 # Request-size bound (P0 production-hardening fast-pass, 2026-09-21) — made
 # explicit rather than left at Django's own default; no /api/v1 endpoint
 # accepts a file/body anywhere near this size (transaction files arrive via
-# Telegram/watched-folder, never an HTTP upload to this app).
+# the watched incoming/ folder, never an HTTP upload to this app).
 DATA_UPLOAD_MAX_MEMORY_SIZE = env.int("DATA_UPLOAD_MAX_MEMORY_SIZE", default=2_621_440)  # 2.5MB
 
 # --- Logging (Phase 12) ------------------------------------------------------

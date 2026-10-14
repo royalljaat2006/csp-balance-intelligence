@@ -98,12 +98,12 @@ def test_ingest_node_reports_real_completion_and_records():
 
 @pytest.mark.django_db
 def test_ingest_node_reports_real_failure_with_error():
-    log = IngestLog.objects.create(source="telegram", status=IngestLog.Status.FAILED)
+    log = IngestLog.objects.create(source="calling_sheet", status=IngestLog.Status.FAILED)
     log.error_summary = "corrupt workbook"
     log.finished_at = timezone.now()
     log.save()
 
-    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "calling_sheet")
     assert node["status"] == "failed"
     assert node["error"] == "corrupt workbook"
 
@@ -261,30 +261,44 @@ def test_pipeline_page_renders_with_real_initial_snapshot(logged_in_client, csp)
 # ---- not_configured: a disabled source is distinct from a quiet one -----
 
 
+@pytest.fixture
+def source_needing_a_setting(monkeypatch):
+    """No ingest source needs a setting any more, but the
+    'disabled by configuration is not the same as quiet' rule stays: exercise it generically."""
+    monkeypatch.setitem(pipeline_state._CONFIG_REQUIREMENTS, "calling_sheet", "SOME_FEATURE_KEY")
+
+
 @pytest.mark.django_db
-@override_settings(TELEGRAM_BOT_TOKEN="")
-def test_telegram_node_is_not_configured_with_no_history():
-    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+@override_settings(SOME_FEATURE_KEY="")
+def test_a_source_with_a_missing_required_setting_is_not_configured_with_no_history(
+        source_needing_a_setting):
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "calling_sheet")
     assert node["status"] == "not_configured"
 
 
 @pytest.mark.django_db
-@override_settings(TELEGRAM_BOT_TOKEN="")
-def test_telegram_node_prefers_a_real_history_row_over_not_configured():
-    """A real past execution (e.g. from before the token was removed) is a
-    real signal and must not be hidden behind the current config state."""
+@override_settings(SOME_FEATURE_KEY="")
+def test_not_configured_prefers_a_real_history_row(source_needing_a_setting):
+    """A real past execution is a real signal and must not be hidden behind the current
+    config state."""
     IngestLog.objects.create(
-        source="telegram", status=IngestLog.Status.SUCCESS, finished_at=timezone.now()
+        source="calling_sheet", status=IngestLog.Status.SUCCESS, finished_at=timezone.now()
     )
-    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "calling_sheet")
     assert node["status"] == "completed"
 
 
 @pytest.mark.django_db
-@override_settings(TELEGRAM_BOT_TOKEN="123:real-token-shape")
-def test_telegram_node_is_idle_not_not_configured_when_token_is_set():
-    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "telegram")
+@override_settings(SOME_FEATURE_KEY="set")
+def test_a_configured_source_with_no_history_is_idle(source_needing_a_setting):
+    node = next(n for n in pipeline_state.get_snapshot()["nodes"] if n["key"] == "calling_sheet")
     assert node["status"] == "idle"
+
+
+@pytest.mark.django_db
+def test_no_telegram_node_exists_any_more():
+    keys = {n["key"] for n in pipeline_state.get_snapshot()["nodes"]}
+    assert "telegram" not in keys and {"calling_sheet", "transactions"} <= keys
 
 
 # ---- autopilot node: honest about Nemotron configuration -----------------

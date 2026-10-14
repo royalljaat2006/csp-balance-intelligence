@@ -4,7 +4,7 @@
 > foundation and production-hardening passes. Current topology (see `docs/DEPLOYMENT.md`
 > "Services / containers" for the authoritative, up-to-date table): `web` is now N stateless
 > replicas behind an `lb` (nginx) load balancer; the single `worker` container is split into four
-> independently-scalable roles (`worker-ingestion`, `worker-calling-sheet`, `worker-telegram`,
+> independently-scalable roles (`worker-ingestion`, `worker-calling-sheet`,
 > `worker-autopilot`), each running the same `watch_transactions` command scoped via `--jobs`; a
 > `redis` service backs caching, API rate limiting, and the CSP Operations Agent's async job queue
 > (consumed by a new `agent-worker` service, `manage.py run_agent_worker`); an opt-in `pgbouncer`
@@ -30,13 +30,12 @@
         │        worker container          │   │      dbt (dbt/)        │
         │  manage.py watch_transactions     │   │  staging -> marts:     │
         │  (poll loop, PRD §7.2 Option A;   │   │  daily_activity        │
-        │   5 independent schedules)        │   │  (ONUS + Overall),     │
+        │   4 independent schedules)        │   │  (ONUS + Overall),     │
         │       │                            │   │  monthly_summary       │
         │       ▼                            │   │  (verified — 12/12    │
         │  manage.py ingest_transactions     │   │   dbt tests pass)     │
         │  manage.py ingest_calling_sheet    │   └───────────┬─────────────┘
         │  manage.py sync_daily_snapshots   │◀──────────────┘
-        │  manage.py poll_telegram          │
         │  manage.py sync_monthly_summary   │
         │  (dbt mart + csp/projection.py)   │
         └──────────────┬────────────────────┘
@@ -45,8 +44,6 @@
         │  /data (bind mount)         Google Sheets API │
         │   incoming/ processed/     (CALLING SHEET,     │
         │   failed/                   PRD §7.1)          │
-        │  Telegram Bot API — files land in incoming/    │
-        │  too (manage.py poll_telegram), same pipeline  │
         └──────────────────────────────────────────────┘
 
         ┌───────────────────────────────────────────────────────┐
@@ -72,7 +69,7 @@
 | `csp` | The domain models (`Csp`, `DailyBalance`, `Transaction`, `MonthlySummary`, `DailyCspSnapshot`, `IngestLog`) + Django admin, `rules.py` (Rule #19, canonical), `projection.py` (month-end estimate), `comparison.py` (canonical historical-comparison engine — see below), `services.py` (query layer shared by the API **and** the dashboard), management commands `sync_monthly_summary`, `sync_daily_snapshots` + `seed_demo_balances` (dev only) | The only app with migrations besides `api` |
 | `api` | `v1/` (one router module per resource: csps, balances, incentives, projections, transactions, comparisons, reports), shared `auth.py` / `errors.py` / `middleware.py` / `schemas.py`, and the `ApiConsumer`/`ApiKey` models | Owns only credential models; business data is read via `csp.services`/`csp.comparison` |
 | `dashboard` | Server-rendered, staff-login-gated web UI: `views.py`, `templates/dashboard/*.html` (Overview, Trends, **CSP Daily Comparison**, CSP detail, ...), `static/dashboard/{dashboard.css,dashboard.js}` | No models, no API key involved — Django session auth only (see "Two front doors" below) |
-| `ingestion` | Management commands (`ingest_calling_sheet`, `ingest_transactions`, `poll_telegram`, `watch_transactions`) + validation/file-safety/`transaction_ingest.py` (parse+upsert)/`file_ingest.py` (shared validate→parse→upsert→file orchestrator)/`telegram_client.py` (Bot API wrapper) helpers | No models — writes `csp.models` |
+| `ingestion` | Management commands (`ingest_calling_sheet`, `ingest_transactions`, `watch_transactions`) + validation/file-safety/`transaction_ingest.py` (parse+upsert)/`file_ingest.py` (shared validate→parse→upsert→file orchestrator) helpers | No models — writes `csp.models` |
 | `common` | Cross-cutting, currently just `/health` | No models |
 | `autopilot` | Nemotron-backed narration/prioritization: `Insight`, `PriorityCall`, `AnomalyFlag`, `DraftMessage`, `ReviewedIngestRun` models, `nemotron_client.py`, `services.py`, 5 management commands (see "Autopilot" below) | A third consumer of `csp.services`, same rule as `api`/`dashboard` — reads via services, writes only its own tables |
 
@@ -168,20 +165,6 @@ Three consumers read this module and only this module for anything comparison-sh
 KPI strip, the Trends page's today-vs-yesterday transaction panel, and the CSP detail page's
 daily-comparison panel), and — like the rest of the domain layer — nothing else re-derives a
 trend, a movement bucket, or an at-risk reason independently.
-
-## Telegram ingestion (`manage.py poll_telegram`)
-
-A second delivery path for the same transaction-sheet ingestion `manage.py ingest_transactions`
-already does for the watched folder — never a second ingestion engine. `poll_telegram` polls
-the Telegram Bot API (`ingestion/telegram_client.py`), enforces a single-chat allow-list
-(`TELEGRAM_CHAT_ID`; refuses to run without one if a bot token is configured), dedupes on
-Telegram's own content fingerprint (`file_unique_id`) recorded in `IngestLog.source_hash`,
-downloads the file straight into the same watched `incoming/` folder, and hands it to
-`ingestion/file_ingest.py::ingest_transaction_file()` — the exact validate/parse/upsert/file
-orchestrator `ingest_transactions` itself calls. Every Telegram update (file or not, authorized
-or not, duplicate or not) gets an `IngestLog` row so the next poll's offset can be derived from
-`IngestLog` itself, without a second, Telegram-specific state table. Degrades to a no-op if
-`TELEGRAM_BOT_TOKEN` isn't set — same pattern as Autopilot's `NEMOTRON_API_KEY`.
 
 ## Why one image, three containers
 

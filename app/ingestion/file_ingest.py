@@ -2,10 +2,10 @@
 Shared file-ingestion orchestration for transaction .xlsx files — validate,
 parse+upsert (transaction_ingest.ingest_workbook), file to processed/failed,
 and record an IngestLog. The ONE place this happens: manage.py
-ingest_transactions (folder-watch) and manage.py poll_telegram both call
-this — never a second, source-specific copy of the validate/ingest/file
-sequence. `source`/`external_ref`/`source_hash` only label the IngestLog
-row for the audit trail; they change no ingestion behaviour.
+ingest_transactions (folder-watch) calls this — never a second,
+source-specific copy of the validate/ingest/file sequence.
+`source`/`external_ref`/`source_hash` only label the IngestLog row for the
+audit trail; they change no ingestion behaviour.
 """
 
 from __future__ import annotations

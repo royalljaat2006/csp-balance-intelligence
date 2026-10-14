@@ -6,11 +6,11 @@
   "use strict";
 
   const NODE_KEYS = [
-    "calling_sheet", "transactions", "telegram", "postgres", "snapshots", "autopilot",
+    "calling_sheet", "transactions", "postgres", "snapshots", "autopilot",
     "balance_agent", "transaction_agent", "risk_agent", "findings", "actions",
   ];
   const CONNECTOR_MAP = {
-    calling_sheet: ["conn-cs-pg"], transactions: ["conn-tx-pg"], telegram: ["conn-tg-pg"],
+    calling_sheet: ["conn-cs-pg"], transactions: ["conn-tx-pg"],
     postgres: ["conn-pg-snap"],
     snapshots: ["conn-snap-bal", "conn-snap-tx", "conn-snap-risk"],
     balance_agent: ["conn-bal-find"], transaction_agent: ["conn-tx-find"], risk_agent: ["conn-risk-find"],

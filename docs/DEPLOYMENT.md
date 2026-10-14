@@ -25,7 +25,6 @@ instance.
 | `web` (N replicas, no fixed name) | `web` | Django: staff dashboard (`/dashboard`), django-ninja API (`/api/v1`), admin console (`/admin`), `/health`, `/metrics` — gunicorn, static files served by whitenoise. Stateless: no replica-specific state, reachable only through `lb` |
 | `csp-balance-tracker-app-worker-ingestion` | `worker` (`WATCH_JOBS=ingest_transactions`) | Watched-folder transaction ingestion only |
 | `csp-balance-tracker-app-worker-calling-sheet` | `worker` (`WATCH_JOBS=ingest_calling_sheet,sync_daily_snapshots`) | CALLING SHEET poll + daily snapshot rebuild |
-| `csp-balance-tracker-app-worker-telegram` | `worker` (`WATCH_JOBS=poll_telegram`) | Telegram transaction-sheet ingestion only |
 | `csp-balance-tracker-app-worker-autopilot` | `worker` (`WATCH_JOBS=run_autopilot`) | Daily Nemotron autopilot pass only |
 | `csp-balance-tracker-app-agent-worker` | `agent-worker` | Consumes the CSP Operations Agent's async "agents" RQ queue (`manage.py run_agent_worker`) — idles harmlessly if `REDIS_URL` is unset |
 | `csp-balance-tracker-app-redis` | `redis` | Cache / rate-limit / job-queue backend — **never authoritative data**, disposable, no volume |
@@ -125,7 +124,7 @@ files — only the empty `data/incoming|processed|failed/.gitkeep` skeleton, for
 ### R730: syncing from the real transaction sheet (2026-10-06)
 
 On the R730, the real transaction data isn't dropped as discrete files — it's a continuously-updated
-monthly master workbook (e.g. `/home/shumit/sbikisok/Transaction Oct'26.xlsx`) owned by a different
+monthly master workbook (e.g. `<source folder>/Transaction Oct'26.xlsx`) owned by a different
 team. `scripts/sync_transaction_sheet.sh` bridges this: it only *reads* that file (never writes to
 the source directory) and copies the current month's workbook into this app's own `incoming/`, where
 the normal `ingest_transactions` job picks it up as usual. Re-syncing the whole file periodically and
@@ -141,9 +140,10 @@ Run via cron on the host (not inside a container, so it has access to the source
 0 */4 * * * TRANSACTION_DATA_DIR_HOST=/opt/data/csp-balance-tracker /path/to/repo/scripts/sync_transaction_sheet.sh >> /var/log/csp-balance-tracker-txn-sync.log 2>&1
 ```
 
-`TRANSACTION_SOURCE_DIR` (default `/home/shumit/sbikisok`) and `TRANSACTION_SYNC_RETENTION_DAYS`
+`TRANSACTION_SOURCE_DIR` (**required**, no default: the folder that holds the monthly workbook;
+it is configuration on the server, never a path in the code) and `TRANSACTION_SYNC_RETENTION_DAYS`
 (default `14` — how long synced copies are kept in `processed/` before being pruned, since this
-re-syncs the same file repeatedly rather than receiving distinct uploads) are both overridable.
+re-syncs the same file repeatedly rather than receiving distinct uploads).
 
 ### Transaction workbook watchdog (replaces the sync cron, 2026-10-14)
 
@@ -214,7 +214,7 @@ makes sure only one copy ever runs, and the script stays up forever once started
 ```
 
 For the system-level unit, `User=` must be the account the old cron ran as: it needs to **read**
-`/home/shumit/sbikisok` and **write** the data directory.
+the source folder and **write** the data directory.
 
 Healthy states in the log and heartbeat: `up_to_date`, `settling` (the other team is still saving),
 `copied`. `waiting_for_ingest` for more than a few minutes means `worker-ingestion` is not taking files
@@ -276,7 +276,6 @@ independently-scalable services (see `compose.yml`'s `x-worker` anchor and each 
 | `manage.py watch_transactions` | every `worker-*` service (its main process) | continuous — each container's own command, running only the jobs in its `WATCH_JOBS` |
 | `manage.py ingest_transactions` | `worker-ingestion` (its own loop) | continuous, every 5 min (`--interval`, default); also triggered indirectly by `scripts/sync_transaction_sheet.sh` dropping a fresh file into `incoming/` |
 | `manage.py sync_daily_snapshots` | `worker-calling-sheet` (its own loop) | continuous, every 5 min (`--snapshot-interval`, default); can also be run once manually with `--date` |
-| `manage.py poll_telegram` | `worker-telegram` (its own loop) | continuous, every 60s (`--telegram-interval`, default); no-op unless `TELEGRAM_BOT_TOKEN` is set |
 | `scripts/watch_transaction_sheet.py` | host systemd service `csp-transaction-watchdog` (not a container) | continuous (polls every 30 s) — copies the live source workbook into `incoming/` when it has changed and settled; replaces `scripts/sync_transaction_sheet.sh` and its `*/20` cron, see "Transaction workbook watchdog" above |
 | `dbt run` / `dbt test` | any `worker-*` container (dbt-core is in the shared image) | host cron |
 | `manage.py sync_monthly_summary` | `web` or any `worker-*` | host cron, right after `dbt run` |
@@ -302,7 +301,7 @@ works, since dbt-core and the Django app are in the same shared image):
 
 `dbt`'s connection env vars (`DATABASE_HOST=db`, etc.) reach the container the same way the app's
 do — through `.env`, loaded automatically by `env_file:` in compose. `ingest_calling_sheet`,
-`ingest_transactions`, `sync_daily_snapshots`, and `poll_telegram` need no cron entry — they're all
+`ingest_transactions` and `sync_daily_snapshots` need no cron entry — they're all
 schedules inside their own `worker-*` container's long-running `watch_transactions` loop.
 
 ## Deployment commands
@@ -455,9 +454,15 @@ tables only, `bankflow` 0001-0005; no existing table changes), so stopping the n
 git fetch origin && git checkout <this-branch>          # or merge it to main first
 docker compose build web                                 # one image for every service; collectstatic runs at start
 docker compose run --rm --no-deps --entrypoint sh web -c 'cd /app/app && python manage.py migrate'
-docker compose up -d web lb worker-ingestion worker-calling-sheet worker-telegram worker-autopilot agent-worker
+docker compose up -d web lb worker-ingestion worker-calling-sheet worker-autopilot agent-worker
 docker compose up -d worker-bankflow                     # the new, opt-in worker
 ```
+
+**Retired Telegram worker (2026-10-14).** Telegram ingestion was removed from the code, so there is no
+`worker-telegram` service any more. An already-running container from an older deploy is not stopped by the
+commands above; remove it once: `docker rm -f csp-balance-intelligence-worker-telegram` (the name is
+`${APP_NAME}-worker-telegram`). You can also delete `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` from `.env`;
+nothing reads them now. Old `IngestLog` rows with `source=telegram` stay in the database as history.
 
 ### 2. One-time data steps (the worker would also do these within the hour)
 ```bash

@@ -1,7 +1,6 @@
 """
 One-off backfill: historical DailyBalance rows from archived Calling Sheet
-workbooks (e.g. a team's own periodic backup folder on the R730 —
-confirmed source: /home/shumit/sbikisok/_calling_sheet_backups/, files
+workbooks (e.g. a team's own periodic backup folder on the R730, with files
 named "Calling Sheet_YYYYMMDD_HHMMSS.xlsx").
 
 Why: the live `ingest_calling_sheet` command always writes to *today's*

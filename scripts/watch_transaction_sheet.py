@@ -33,7 +33,7 @@ Usage
 
 Settings (environment; the systemd unit reads them from an EnvironmentFile)
   TRANSACTION_DATA_DIR_HOST         required: the app data dir that holds incoming/ and processed/
-  TRANSACTION_SOURCE_DIR            default /home/shumit/sbikisok
+  TRANSACTION_SOURCE_DIR            required: the folder that holds the monthly workbook (read only)
   TRANSACTION_WATCH_POLL_SECONDS    default 30
   TRANSACTION_WATCH_SETTLE_SECONDS  default 45
   TRANSACTION_WATCH_RESYNC_HOURS    default 6   (0 disables the safety re-sync)
@@ -95,8 +95,12 @@ class Config:
         data = env.get("TRANSACTION_DATA_DIR_HOST", "").strip()
         if not data:
             raise SystemExit("TRANSACTION_DATA_DIR_HOST must point at the app data directory")
+        source = env.get("TRANSACTION_SOURCE_DIR", "").strip()
+        if not source:
+            raise SystemExit("TRANSACTION_SOURCE_DIR must point at the folder that holds the "
+                             "monthly transaction workbook")
         return cls(
-            source_dir=Path(env.get("TRANSACTION_SOURCE_DIR", "/home/shumit/sbikisok")),
+            source_dir=Path(source),
             data_dir=Path(data),
             poll_seconds=float(env.get("TRANSACTION_WATCH_POLL_SECONDS", "30")),
             settle_seconds=float(env.get("TRANSACTION_WATCH_SETTLE_SECONDS", "45")),

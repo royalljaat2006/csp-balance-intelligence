@@ -26,7 +26,7 @@ from .models import Csp, DailyBalance, IngestLog, MonthlySummary, Transaction
 # stops reading "fresh" — same threshold /health has always used (FR7).
 _FRESH_AFTER_HOURS = 26
 _DELAYED_AFTER_HOURS = 48
-_INGEST_SOURCES = ["calling_sheet", "transactions", "telegram"]
+_INGEST_SOURCES = ["calling_sheet", "transactions"]
 
 
 def current_month() -> str:
@@ -69,7 +69,6 @@ def get_data_freshness() -> dict:
     return {
         "calling_sheet_last_success": calling_sheet_at,
         "transactions_last_success": last_success["transactions"],
-        "telegram_last_success": last_success["telegram"],
         "overall_status": overall_status,
         "calling_sheet_stale": overall_status != "fresh",
     }

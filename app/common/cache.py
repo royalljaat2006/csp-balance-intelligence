@@ -120,7 +120,7 @@ def try_acquire_lock(key: str, *, ttl: int) -> bool:
     worker role never process the same tick twice. Fails OPEN (returns True
     -> caller proceeds) if the cache backend itself is unavailable: every
     job this guards (ingest_calling_sheet, ingest_transactions,
-    sync_daily_snapshots, poll_telegram, run_autopilot) is independently
+    sync_daily_snapshots, run_autopilot) is independently
     idempotent (see their own docstrings), so "possibly ran twice because
     Redis was briefly down" is safe, while "possibly never ran because
     Redis was briefly down" is not — fail open is the correct direction

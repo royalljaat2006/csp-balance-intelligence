@@ -57,7 +57,7 @@
           </tr>
           {% empty %}
           <tr><td colspan="9">
-            {% include "dashboard/components/empty_state.html" with title="No ingestion runs recorded yet" description="Every calling-sheet/transaction/telegram ingest writes a row here once it runs." %}
+            {% include "dashboard/components/empty_state.html" with title="No ingestion runs recorded yet" description="Every calling-sheet/transaction ingest writes a row here once it runs." %}
           </td></tr>
           {% endfor %}
         </tbody>

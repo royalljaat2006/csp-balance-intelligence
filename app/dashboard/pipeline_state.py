@@ -47,7 +47,6 @@ from django.utils import timezone
 _INGEST_SOURCES = {
     "calling_sheet": ("calling_sheet", "watch:ingest_calling_sheet"),
     "transactions": ("transactions", "watch:ingest_transactions"),
-    "telegram": ("telegram", "watch:poll_telegram"),
 }
 _AGENT_NAMES = ("balance_agent", "transaction_agent", "risk_agent")
 # Settings whose absence means a source is disabled by configuration, not
@@ -56,9 +55,7 @@ _AGENT_NAMES = ("balance_agent", "transaction_agent", "risk_agent")
 # crashes" pattern. "not_configured" is a status this module reports
 # honestly rather than folding into "idle", which would look identical to
 # "configured, just hasn't run yet."
-_CONFIG_REQUIREMENTS = {
-    "telegram": "TELEGRAM_BOT_TOKEN",
-}
+_CONFIG_REQUIREMENTS: dict[str, str] = {}
 
 
 @dataclass
@@ -269,7 +266,6 @@ def get_snapshot() -> dict:
     ingest_nodes = [
         _ingest_node("calling_sheet", "Calling Sheet"),
         _ingest_node("transactions", "Transactions"),
-        _ingest_node("telegram", "Telegram"),
     ]
     snapshots = _snapshots_node()
     postgres = _postgres_node(ingest_nodes, snapshots)
@@ -372,7 +368,6 @@ def _queue_depth() -> int:
 _WORKER_FOR_SOURCE = {
     "calling_sheet": "worker-calling-sheet",
     "transactions": "worker-ingestion",
-    "telegram": "worker-telegram",
 }
 
 

@@ -35,7 +35,7 @@ DATABASES["default"]["CONN_HEALTH_CHECKS"] = True  # noqa: F405
 # stays in force otherwise, so a production deploy with Redis not yet
 # provisioned still starts and runs correctly (degraded to per-process
 # caching only), matching this project's existing "missing integration
-# degrades, never crashes" convention (NEMOTRON_API_KEY, TELEGRAM_BOT_TOKEN).
+# degrades, never crashes" convention (NEMOTRON_API_KEY).
 if REDIS_URL:  # noqa: F405
     _cache_options = {
         "CLIENT_CLASS": "django_redis.client.DefaultClient",

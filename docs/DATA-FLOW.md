@@ -4,13 +4,12 @@
 the live CALLING SHEET (539 CSPs) and the real `Transaction Aug'26 (4).xlsx` (306,035 rows) —
 through a real Docker `web`+`worker`+`db` stack on PostgreSQL 17. No stage is a stub anymore.
 
-**2026-09-18 extension** (historical comparison + Telegram ingestion, see "Extension" section
-below): implemented, unit/integration tested (comparison-engine math, dedup, chat-id allow-list,
-worker scheduling), and manually verified end-to-end against synthetic dev data through a real
-dev server (dashboard tab, Overview KPIs, Trends panel, CSP-detail panel all render and their
-client-side JS was executed against the real rendered output). **Not yet** verified against a
-live Telegram delivery (`TELEGRAM_CHAT_ID` still unset — no message has been sent to the bot) or
-the real 539-CSP dataset over multiple real days — see docs/OPERATIONS.md.
+**2026-09-18 extension** (historical comparison, see "Extension" section below): implemented,
+unit/integration tested (comparison-engine math, worker scheduling), and manually verified
+end-to-end against synthetic dev data through a real dev server (dashboard tab, Overview KPIs,
+Trends panel, CSP-detail panel all render and their client-side JS was executed against the real
+rendered output). **Not yet** verified against the real 539-CSP dataset over multiple real days —
+see docs/OPERATIONS.md.
 
 ```
 Google Sheet "Calling Sheet" (worksheet         Transaction .xlsx (dropped daily)
@@ -93,27 +92,19 @@ Trend/MoM columns read "new" — they populate after a few more days of daily sn
 All of the above encode facts already decided in **PRD.md §5, §7.1, §7.2, §8** — nothing here is a
 new business rule invented during implementation.
 
-## Extension (2026-09-18): historical comparison + Telegram ingestion
+## Extension (2026-09-18): historical comparison
 
 ```
-                 Telegram Bot API                    Google Sheet / Transaction .xlsx
-              (private chat, allow-listed)                  (as above)
-                        │                                       │
-                        ▼                                       │
-          manage.py poll_telegram                               │
-       chat-id allow-list, dedup on                              │
-       file_unique_id, downloads into                            │
-       data/incoming/ ────────────────────────────────────────► │
-                                                                  ▼
-                                                    manage.py ingest_transactions
-                                                    (ingestion/file_ingest.py — the
-                                                     SAME orchestrator, regardless
-                                                     of source="transactions"/"telegram")
-                                                                  │
-                                                                  ▼
-                                                    csp_transaction, csp_ingestlog
-                                                    (source_hash/external_ref record
-                                                     which channel + which file/update)
+                 Google Sheet / Transaction .xlsx
+                      (as above)
+                            │
+                            ▼
+              manage.py ingest_transactions
+              (ingestion/file_ingest.py — the one
+               validate/parse/upsert/file orchestrator)
+                            │
+                            ▼
+              csp_transaction, csp_ingestlog
 
         csp_dailybalance (CALLING SHEET, as above)
                         │
@@ -133,9 +124,6 @@ new business rule invented during implementation.
   (comparison:read)      tab, CSP-detail panel             Trends panel
 ```
 
-- **Telegram delivery** lands in the exact same `data/incoming/` folder `ingest_transactions`
-  already watches, and is handed to the exact same `ingest_transaction_file()` orchestrator —
-  there is only one transaction-ingestion engine regardless of delivery channel.
 - **`DailyCspSnapshot`** is the one genuinely new table: `DailyBalance` and the dbt
   `daily_activity` mart already were the canonical daily balance/transaction history; only a
   *daily* Rule 19 slab classification was missing (`MonthlySummary` is month-grain).

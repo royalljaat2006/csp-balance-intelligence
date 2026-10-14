@@ -5,7 +5,7 @@ scheduler for everything the worker container runs on a timer — one
 process, one place startup/scheduling behaviour lives, rather than a
 second worker process per job.
 
-Five independent schedules, each tracked with its own last-run timestamp
+Four independent schedules, each tracked with its own last-run timestamp
 so a fast one is never starved by a slow one sharing this loop:
 
   - ingest_transactions   — every --interval seconds (default 5 min). The
@@ -27,12 +27,6 @@ so a fast one is never starved by a slow one sharing this loop:
     every CSP, not one per CSP, so running it this often across 539+ CSPs
     is cheap. Always for today's date; historical-date backfill is a
     separate, not-yet-built concern.
-  - poll_telegram         — every --telegram-interval seconds (default 60,
-    same cadence as ingest_calling_sheet). Non-blocking per poll (see
-    telegram_client.get_updates's default timeout=0) so it can't stall the
-    other schedules sharing this loop; degrades to a no-op if
-    TELEGRAM_BOT_TOKEN isn't configured (same pattern as run_autopilot
-    below), so enabling/disabling it needs no code change here either.
   - run_autopilot         — every --autopilot-interval seconds (default
     daily). Nemotron insights/priority-calls/anomaly-review/draft-nudges;
     degrades to a no-op if NEMOTRON_API_KEY isn't configured (see
@@ -40,8 +34,8 @@ so a fast one is never starved by a slow one sharing this loop:
     change here — just the env var.
 
 The loop wakes up every min(interval, calling_sheet_interval,
-snapshot_interval, telegram_interval, autopilot_interval) seconds and runs
-whichever schedules are due.
+snapshot_interval, autopilot_interval) seconds and runs whichever
+schedules are due.
 """
 
 from __future__ import annotations
@@ -70,7 +64,6 @@ _DEFAULT_JOBS = (
     "ingest_transactions",
     "ingest_calling_sheet",
     "sync_daily_snapshots",
-    "poll_telegram",
     "run_autopilot",
 )
 # Bank-flow / estimate pipeline. OPT-IN: runs only when named in --jobs / WATCH_JOBS (the
@@ -97,8 +90,8 @@ def snapshot_due(now: dt.datetime, at: str, last_run_date: dt.date | None) -> bo
 
 class Command(BaseCommand):
     help = (
-        "Poll transactions, CALLING SHEET edits, daily snapshots, Telegram, and "
-        "autopilot — each on its own schedule."
+        "Poll transactions, CALLING SHEET edits, daily snapshots and autopilot — each on "
+        "its own schedule."
     )
 
     def add_arguments(self, parser):
@@ -119,12 +112,6 @@ class Command(BaseCommand):
             type=int,
             default=300,
             help="Seconds between sync_daily_snapshots passes (default: 300 = 5 minutes).",
-        )
-        parser.add_argument(
-            "--telegram-interval",
-            type=int,
-            default=60,
-            help="Seconds between poll_telegram passes (default: 60 = near-live).",
         )
         parser.add_argument(
             "--autopilot-interval",
@@ -160,7 +147,7 @@ class Command(BaseCommand):
             help=(
                 "Comma-separated subset of {{{}}} for this instance to run — the rest are "
                 "skipped entirely (their interval never ticks, no lock contention). Empty "
-                "(default) runs the original five, exactly as before this flag existed; the "
+                "(default) runs the original four, exactly as before this flag existed; the "
                 "bank-flow jobs run only when named here. Lets compose.yml run "
                 "separately-scalable worker roles from the same image/command — see "
                 "docs/DEPLOYMENT.md's worker topology.".format(", ".join(_ALL_JOBS))
@@ -204,7 +191,6 @@ class Command(BaseCommand):
         interval = options["interval"]
         calling_sheet_interval = options["calling_sheet_interval"]
         snapshot_interval = options["snapshot_interval"]
-        telegram_interval = options["telegram_interval"]
         autopilot_interval = options["autopilot_interval"]
         run_once = options["once"]
         jobs_arg = options["jobs"].strip()
@@ -219,8 +205,7 @@ class Command(BaseCommand):
                 f"--jobs: unknown job(s) {sorted(unknown)}; expected a subset of {_ALL_JOBS}"
             )
         tick = min(
-            interval, calling_sheet_interval, snapshot_interval, telegram_interval,
-            autopilot_interval,
+            interval, calling_sheet_interval, snapshot_interval, autopilot_interval,
         )  # <= 60 s by default; also what the 06:00 time-of-day check needs
         logger.info(
             "started",
@@ -228,7 +213,6 @@ class Command(BaseCommand):
             interval_seconds=interval,
             calling_sheet_interval_seconds=calling_sheet_interval,
             snapshot_interval_seconds=snapshot_interval,
-            telegram_interval_seconds=telegram_interval,
             autopilot_interval_seconds=autopilot_interval,
             once=run_once,
             active_jobs=sorted(active_jobs),
@@ -237,14 +221,13 @@ class Command(BaseCommand):
             f"watch_transactions starting (interval={interval}s, "
             f"calling_sheet_interval={calling_sheet_interval}s, "
             f"snapshot_interval={snapshot_interval}s, "
-            f"telegram_interval={telegram_interval}s, once={run_once}, "
+            f"once={run_once}, "
             f"jobs={sorted(active_jobs)})"
         )
 
         last_txn_run = 0.0
         last_calling_sheet_run = 0.0
         last_snapshot_run = 0.0
-        last_telegram_run = 0.0
         last_autopilot_run = 0.0
         last_bf = dict.fromkeys(_BANKFLOW_JOBS, 0.0)
         bf_interval = {
@@ -275,12 +258,6 @@ class Command(BaseCommand):
             ):
                 self._run_locked_job("sync_daily_snapshots")
                 last_snapshot_run = time.time()
-
-            if "poll_telegram" in active_jobs and (
-                run_once or now - last_telegram_run >= telegram_interval
-            ):
-                self._run_locked_job("poll_telegram")
-                last_telegram_run = time.time()
 
             if "run_autopilot" in active_jobs and (
                 run_once or now - last_autopilot_run >= autopilot_interval

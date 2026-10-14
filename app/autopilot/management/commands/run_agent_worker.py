@@ -10,7 +10,7 @@ AppRegistryNotReady — confirmed live (this is how the gap was actually
 found: the first real queued job crash-looped the container with exactly
 that traceback). A management command runs through manage.py's own
 django.setup() first, exactly like every other worker role in this
-project (watch_transactions, poll_telegram, ...), so this is the
+project (watch_transactions, ...), so this is the
 consistent fix rather than a one-off workaround.
 """
 

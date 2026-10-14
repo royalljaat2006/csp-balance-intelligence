@@ -81,7 +81,7 @@ def record_job_run(*, job: str, outcome: str) -> None:
 
 
 def record_external_api_call(*, service: str, outcome: str, duration_seconds: float) -> None:
-    """`service` e.g. "nemotron"/"telegram"/"google_sheets"; `outcome` e.g.
+    """`service` e.g. "nemotron"/"google_sheets"; `outcome` e.g.
     "ok"/"error"/"timeout"."""
     with _lock:
         _external_api_calls_total[(service, outcome)] += 1

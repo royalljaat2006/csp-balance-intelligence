@@ -21,7 +21,7 @@ EnvironmentFile=/etc/csp-transaction-watchdog.env
 ExecStart=/usr/bin/python3 /home/deepanshu/CSP_BALANCE_INTELLIGENCE/scripts/watch_transaction_sheet.py
 Restart=always
 RestartSec=10
-# Hardening that does not get in the way of reading /home/shumit and writing the data dir
+# Hardening that does not get in the way of reading the source folder and writing the data dir
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

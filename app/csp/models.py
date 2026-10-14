@@ -243,7 +243,7 @@ class IngestLog(models.Model):
         DUPLICATE_SKIPPED = "duplicate_skipped", "Duplicate, skipped"
         INVALID_SOURCE = "invalid_source", "Invalid source"
 
-    source = models.CharField(max_length=32)  # calling_sheet | transactions | history | telegram
+    source = models.CharField(max_length=32)  # calling_sheet | transactions | history
     file_name = models.CharField(max_length=255, blank=True)
     file_mtime = models.DateTimeField(null=True, blank=True)
     # Reconciliation (Phase 13) — content-hash/external-ref based dedup, on
@@ -255,14 +255,13 @@ class IngestLog(models.Model):
         max_length=64,
         blank=True,
         help_text=(
-            "Content fingerprint for file-level dedup: sha256 for folder-watch "
-            "files, Telegram's own file_unique_id for Telegram-delivered ones."
+            "Content fingerprint for file-level dedup (sha256 of a folder-watch file)."
         ),
     )
     external_ref = models.CharField(
         max_length=255,
         blank=True,
-        help_text="Telegram update_id, or blank for other sources.",
+        help_text="An external reference for the ingested item, or blank.",
     )
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)

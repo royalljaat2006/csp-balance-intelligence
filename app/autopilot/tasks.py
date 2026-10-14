@@ -16,7 +16,7 @@ inside a dashboard request.
 
 Degrades to running synchronously (today's exact prior behaviour) when no
 Redis is configured — same "missing integration degrades, never crashes"
-convention as NEMOTRON_API_KEY/TELEGRAM_BOT_TOKEN elsewhere in this
+convention as NEMOTRON_API_KEY elsewhere in this
 project. This is a documented limitation, not a silent one: see the
 scalability report's worker/queue design section — a deployment that
 wants real async execution must set REDIS_URL *and* run the `agent-worker`

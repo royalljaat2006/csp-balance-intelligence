@@ -17,7 +17,8 @@
 #   /path/to/scripts/sync_transaction_sheet.sh >> /path/to/sync.log 2>&1
 set -euo pipefail
 
-SOURCE_DIR="${TRANSACTION_SOURCE_DIR:-/home/shumit/sbikisok}"
+: "${TRANSACTION_SOURCE_DIR:?set TRANSACTION_SOURCE_DIR to the folder that holds the monthly workbook}"
+SOURCE_DIR="${TRANSACTION_SOURCE_DIR}"
 : "${TRANSACTION_DATA_DIR_HOST:?set TRANSACTION_DATA_DIR_HOST to the app data directory}"
 DEST_DIR="${TRANSACTION_DATA_DIR_HOST}/incoming"
 PROCESSED_DIR="${TRANSACTION_DATA_DIR_HOST}/processed"

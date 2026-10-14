@@ -1,9 +1,9 @@
 """
-watch_transactions' --once pass must run all five schedules exactly once
+watch_transactions' --once pass must run all four schedules exactly once
 — ingest_transactions, ingest_calling_sheet (near-live CALLING SHEET poll),
-sync_daily_snapshots, poll_telegram, and run_autopilot. The loop itself
+sync_daily_snapshots, and run_autopilot. The loop itself
 (interval sleeping, each schedule's own gate) isn't worth testing since
---once bypasses all five, but "does one pass actually trigger every job,
+--once bypasses all four, but "does one pass actually trigger every job,
 in order, even if one raises" is exactly the kind of wiring that's easy to
 silently break in a refactor.
 """
@@ -17,13 +17,12 @@ _ALL_SCHEDULES = [
     "ingest_transactions",
     "ingest_calling_sheet",
     "sync_daily_snapshots",
-    "poll_telegram",
     "run_autopilot",
 ]
 
 
 @pytest.mark.django_db
-def test_once_runs_all_five_schedules():
+def test_once_runs_all_four_schedules():
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
         call_command("watch_transactions", once=True)
 
@@ -34,7 +33,7 @@ def test_once_runs_all_five_schedules():
 @pytest.mark.django_db
 def test_once_still_runs_the_rest_if_ingest_transactions_raises():
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
-        mock_call.side_effect = [RuntimeError("bad file"), None, None, None, None]
+        mock_call.side_effect = [RuntimeError("bad file"), None, None, None]
         call_command("watch_transactions", once=True)
 
     called_commands = [c.args[0] for c in mock_call.call_args_list]
@@ -44,7 +43,7 @@ def test_once_still_runs_the_rest_if_ingest_transactions_raises():
 @pytest.mark.django_db
 def test_once_still_runs_the_rest_if_calling_sheet_raises():
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
-        mock_call.side_effect = [None, RuntimeError("no credentials"), None, None, None]
+        mock_call.side_effect = [None, RuntimeError("no credentials"), None, None]
         call_command("watch_transactions", once=True)
 
     called_commands = [c.args[0] for c in mock_call.call_args_list]
@@ -54,7 +53,7 @@ def test_once_still_runs_the_rest_if_calling_sheet_raises():
 @pytest.mark.django_db
 def test_once_still_runs_the_rest_if_snapshot_sync_raises():
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
-        mock_call.side_effect = [None, None, RuntimeError("no balances yet"), None, None]
+        mock_call.side_effect = [None, None, RuntimeError("no balances yet"), None]
         call_command("watch_transactions", once=True)
 
     called_commands = [c.args[0] for c in mock_call.call_args_list]
@@ -62,9 +61,9 @@ def test_once_still_runs_the_rest_if_snapshot_sync_raises():
 
 
 @pytest.mark.django_db
-def test_once_still_runs_autopilot_if_telegram_poll_raises():
+def test_once_still_runs_the_last_job_if_the_one_before_it_raises():
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
-        mock_call.side_effect = [None, None, None, RuntimeError("bad token"), None]
+        mock_call.side_effect = [None, None, None, RuntimeError("bad key")]
         call_command("watch_transactions", once=True)
 
     called_commands = [c.args[0] for c in mock_call.call_args_list]
@@ -76,12 +75,12 @@ def test_jobs_flag_restricts_which_schedules_run():
     """--jobs is the horizontal-scaling knob (scalability foundation,
     2026-09-21): an operator running one instance per job type (see
     compose.yml) needs each instance to touch only its own job, never the
-    other four."""
+    other three."""
     with patch("ingestion.management.commands.watch_transactions.call_command") as mock_call:
-        call_command("watch_transactions", once=True, jobs="ingest_transactions,poll_telegram")
+        call_command("watch_transactions", once=True, jobs="ingest_transactions,run_autopilot")
 
     called_commands = [c.args[0] for c in mock_call.call_args_list]
-    assert called_commands == ["ingest_transactions", "poll_telegram"]
+    assert called_commands == ["ingest_transactions", "run_autopilot"]
 
 
 @pytest.mark.django_db
@@ -115,8 +114,8 @@ def test_lock_is_released_after_the_job_so_the_next_tick_can_run():
 
 @pytest.mark.django_db
 def test_fast_schedule_does_not_wait_for_slow_ones():
-    """Over several simulated ticks, the 60s calling-sheet/telegram
-    schedules must keep firing while the 300s/86400s schedules stay quiet
+    """Over several simulated ticks, the 60s calling-sheet
+    schedule must keep firing while the 300s/86400s schedules stay quiet
     until their own interval elapses — proves the loop's sleep tick is
     min(...) rather than (say) the slowest interval, which would starve the
     near-live CALLING SHEET poll this feature exists for. time.time/
@@ -157,11 +156,10 @@ def test_fast_schedule_does_not_wait_for_slow_ones():
         with pytest.raises(KeyboardInterrupt):
             call_command(
                 "watch_transactions", interval=300, calling_sheet_interval=60,
-                snapshot_interval=300, telegram_interval=60, autopilot_interval=86400,
+                snapshot_interval=300, autopilot_interval=86400,
             )
 
     assert calls.count("ingest_calling_sheet") >= 3  # fired on (nearly) every tick
-    assert calls.count("poll_telegram") >= 3  # same 60s cadence as calling-sheet
     assert calls.count("ingest_transactions") == 1  # 300s hasn't elapsed yet
     assert calls.count("sync_daily_snapshots") == 1  # 300s hasn't elapsed yet
     assert calls.count("run_autopilot") == 1  # 86400s hasn't elapsed yet

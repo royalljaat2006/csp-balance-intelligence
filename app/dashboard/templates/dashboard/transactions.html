@@ -8,7 +8,7 @@
     <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Ingestion &amp; ledger</div>
     <h1>Transactions</h1>
     <p class="sub">Transaction intelligence and ingestion visibility — the allow-listed ONUS/Overall ledger
-      (<code>ingestion/xlsx_validation.py</code>) plus the Telegram and watched-folder ingestion audit trail.</p>
+      (<code>ingestion/xlsx_validation.py</code>) plus the watched-folder ingestion audit trail.</p>
   </header>
 
   <p class="sub" style="margin-top:-10px;">
@@ -52,9 +52,8 @@
   </div>
 
   <section class="panel">
-    {% include "dashboard/components/section_header.html" with title="Ingestion health" hint="Telegram + watched-folder audit trail" %}
+    {% include "dashboard/components/section_header.html" with title="Ingestion health" hint="watched-folder audit trail" %}
     <div class="kv-grid">
-      <div class="kv"><span class="k">Last Telegram file</span><span class="v">{% if last_telegram %}{{ last_telegram.started_at|timesince }} ago{% else %}&mdash;{% endif %}</span></div>
       <div class="kv"><span class="k">Last ingestion run</span><span class="v">{% if last_transactions_run %}{{ last_transactions_run.started_at|timesince }} ago{% else %}&mdash;{% endif %}</span></div>
       <div class="kv"><span class="k">Freshness</span><span class="v">{% include "dashboard/components/status_badge.html" with status=freshness.overall_status %}</span></div>
     </div>

@@ -172,9 +172,6 @@ def _system_health_context(*, db_ok: bool = True, action_result: str | None = No
             settings.GOOGLE_SERVICE_ACCOUNT_FILE and settings.CALLING_SHEET_ID
         ),
         "Nemotron AI": bool(settings.NEMOTRON_API_KEY),
-        "Telegram ingestion": bool(
-            settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ALLOWED_CHAT_ID
-        ),
     }
 
     return {
@@ -1207,7 +1204,7 @@ def csp_detail(request, csp_code: str):
 
 @login_required
 def transactions(request):
-    """Transaction Intelligence + Telegram/ingestion monitoring — every
+    """Transaction Intelligence + ingestion monitoring — every
     number here reads real ledger/audit tables (Transaction, IngestLog)
     via csp.services, never a second transaction-counting engine. The
     transaction table itself is server-paginated (never all rows loaded
@@ -1241,21 +1238,12 @@ def transactions(request):
         date_from=today - dt.timedelta(days=29), date_to=today
     )
 
-    # Ingestion health — real IngestLog rows, both delivery channels.
+    # Ingestion health — real IngestLog rows.
     recent_logs = list(
-        IngestLog.objects.filter(source__in=("transactions", "telegram")).order_by(
-            "-started_at"
-        )[:10]
-    )
-    last_telegram = (
-        IngestLog.objects.filter(source="telegram", status=IngestLog.Status.SUCCESS)
-        .order_by("-started_at")
-        .first()
+        IngestLog.objects.filter(source="transactions").order_by("-started_at")[:10]
     )
     last_transactions_run = (
-        IngestLog.objects.filter(source__in=("transactions", "telegram"))
-        .order_by("-started_at")
-        .first()
+        IngestLog.objects.filter(source="transactions").order_by("-started_at").first()
     )
 
     # Server-side pagination — never load the full ledger client-side.
@@ -1306,7 +1294,6 @@ def transactions(request):
                 for r in activity_series_30d
             ],
             "recent_logs": recent_logs,
-            "last_telegram": last_telegram,
             "last_transactions_run": last_transactions_run,
             "txn_rows": txn_rows,
             "txn_total": txn_total,

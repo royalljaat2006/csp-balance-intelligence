@@ -12,8 +12,8 @@ Full product spec: [PRD.md](PRD.md). Deeper docs: [docs/ARCHITECTURE.md](docs/AR
 
 ```
 Google Sheet (CALLING) ──▶ ingest_calling_sheet ──┐
-Watched folder / Telegram ──▶ ingest_transactions ┼─▶ PostgreSQL ──▶ dbt ──▶ sync_monthly_summary
-                          (poll_telegram feeds the same folder)   (calc layer)  (projection)
+Watched folder ──────────▶ ingest_transactions ┼─▶ PostgreSQL ──▶ dbt ──▶ sync_monthly_summary
+                                                          (calc layer)  (projection)
         (all run inside the `worker` container, on independent schedules)          │
                                                           csp/comparison.py ◀───────┤ (daily snapshots)
                                                                     │
@@ -28,8 +28,8 @@ Watched folder / Telegram ──▶ ingest_transactions ┼─▶ PostgreSQL ─
   top movers, at-risk flags) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#two-front-doors-one-domain-layer).
 - **API** (`/api/v1/`): no end-user login. Consumers authenticate with an `X-API-Key` header.
 - **Admin** (`/admin/`): Django admin console for Eko ops to browse data and ingestion health.
-- **Ingestion**: daily batch (CALLING SHEET, watched folder) plus near-live Telegram delivery to a
-  private bot chat — see [docs/DATA-FLOW.md](docs/DATA-FLOW.md).
+- **Ingestion**: CALLING SHEET (near-live) and a watched transaction folder — see
+  [docs/DATA-FLOW.md](docs/DATA-FLOW.md).
 - **Three containers, one image**: `web` (dashboard+API+admin), `worker` (ingestion loop), `db` (Postgres).
 
 ## Project layout
@@ -80,7 +80,6 @@ See [.env.example](.env.example) for the full list with comments. Key ones:
 | `DATABASE_URL` | Postgres connection string (falls back to SQLite if unset, dev only) |
 | `GOOGLE_SERVICE_ACCOUNT_FILE_HOST`, `CALLING_SHEET_ID` | CALLING SHEET ingestion (PRD §7.1) |
 | `TRANSACTION_DATA_DIR_HOST` | Host folder bind-mounted as `/data` in `worker` (PRD §7.2) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram-delivered transaction sheets — blank token disables it entirely; see docs/OPERATIONS.md "Getting the Telegram chat_id" |
 | *(API keys)* | Not env vars — per-consumer, DB-backed. Issue with `manage.py create_api_key` (docs/API-CONSUMERS.md) |
 | `APP_PORT` | Host port — **admin-assigned**, see docs/DEPLOYMENT.md |
 
@@ -185,7 +184,6 @@ S2 160 · S3 86 · S4 18), ₹375.8 Cr total balance. Rule #19 math cross-checke
 own reference figures. See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the stage-by-stage detail.
 
 **2026-09-18 extension** (historical comparison engine, CSP Daily Comparison dashboard tab,
-`/api/v1/comparisons*`, Telegram ingestion): implemented and unit/integration tested, manually
-verified against synthetic data through a real dev server. Not yet verified against live
-Telegram traffic (`TELEGRAM_CHAT_ID` still needs to be set) or against 2+ months of the real
+`/api/v1/comparisons*`): implemented and unit/integration tested, manually verified against
+synthetic data through a real dev server. Not yet verified against 2+ months of the real
 539-CSP historical dataset (backfill not yet done) — see docs/DATA-FLOW.md's "Extension" section.

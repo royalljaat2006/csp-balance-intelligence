@@ -3,9 +3,8 @@ manage.py ingest_transactions — PRD §8 FR2.
 
 Finds .xlsx files in the watched incoming/ folder and hands each one to
 ingestion/file_ingest.py's ingest_transaction_file() — the shared
-validate/parse/upsert/file orchestrator also used by manage.py
-poll_telegram, so folder-watch and Telegram-delivered files run through
-exactly the same pipeline.
+validate/parse/upsert/file orchestrator, so every file in incoming/ runs
+through exactly the same pipeline.
 """
 
 from __future__ import annotations

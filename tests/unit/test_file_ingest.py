@@ -1,7 +1,6 @@
 """
 ingest_transaction_file — the shared validate/parse/upsert/file orchestrator
-behind both manage.py ingest_transactions (folder-watch) and manage.py
-poll_telegram (Telegram-delivered). ingest_workbook's own row-level
+behind manage.py ingest_transactions (folder-watch). ingest_workbook's own row-level
 behaviour is covered by test_transaction_ingest.py; this file is about the
 orchestration around it: file safety (moved, never deleted), IngestLog
 status/field population, and source/external_ref/source_hash labeling.
@@ -62,9 +61,9 @@ def test_success_moves_file_and_records_ingest_log(paths):
 def test_labels_source_external_ref_and_source_hash(paths):
     file_path = _make_workbook(paths, [_row()])
     log = ingest_transaction_file(
-        paths, file_path, source="telegram", external_ref="123", source_hash="UNIQUE_ABC"
+        paths, file_path, source="transactions", external_ref="123", source_hash="UNIQUE_ABC"
     )
-    assert log.source == "telegram"
+    assert log.source == "transactions"
     assert log.external_ref == "123"
     assert log.source_hash == "UNIQUE_ABC"
 

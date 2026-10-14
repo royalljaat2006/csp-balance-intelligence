@@ -36,7 +36,7 @@ def health_ready(request):
     CALLING SHEET ingest is, via csp.services.get_data_freshness() — the
     same canonical freshness check the dashboard's own freshness indicator
     reads, so the two surfaces can never disagree about what "fresh"
-    means. Does not itself call out to Google Sheets, Telegram, or the
+    means. Does not itself call out to Google Sheets or the
     filesystem. A load balancer should stop routing to a replica that
     fails this, without killing the process (that's liveness's job).
     """

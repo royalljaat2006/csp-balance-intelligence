@@ -89,7 +89,7 @@ def test_invalid_page_falls_back_to_one(logged_in_client, db):
 @pytest.mark.django_db
 def test_ingestion_health_shows_real_ingest_logs(logged_in_client, db):
     IngestLog.objects.create(
-        source="telegram", file_name="Sep.xlsx", status=IngestLog.Status.SUCCESS,
+        source="transactions", file_name="Sep.xlsx", status=IngestLog.Status.SUCCESS,
         rows_read=100, rows_valid=95, rows_rejected=5,
     )
     response = logged_in_client.get("/dashboard/transactions/")
