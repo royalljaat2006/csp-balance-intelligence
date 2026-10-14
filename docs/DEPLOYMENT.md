@@ -183,9 +183,37 @@ journalctl -u csp-transaction-watchdog -n 30 --no-pager
 cat data/transaction_watchdog.json
 ```
 
-No administrator rights? Use the user-level unit `scripts/systemd/csp-transaction-watchdog.user.service`
-(instructions are in its header: `systemctl --user ...`, plus a one-off `sudo loginctl enable-linger`).
-The `User=` in the system unit must be the account the old cron ran as: it needs to **read**
+**No administrator rights?** On the R730 the `deepanshu` account may run only a few fixed `sudo` commands
+(copying into `/etc` and `sudoedit` are refused), so install the **user-level** service instead. It needs
+no `sudo` at all and runs as the logged-in user:
+
+```bash
+cd /home/deepanshu/CSP_BALANCE_INTELLIGENCE && git pull
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/csp-transaction-watchdog.user.service ~/.config/systemd/user/csp-transaction-watchdog.service
+cp scripts/systemd/csp-transaction-watchdog.env.example ~/.config/csp-transaction-watchdog.env
+nano ~/.config/csp-transaction-watchdog.env          # check TRANSACTION_DATA_DIR_HOST
+systemctl --user daemon-reload
+systemctl --user enable --now csp-transaction-watchdog
+systemctl --user status csp-transaction-watchdog --no-pager
+cat data/transaction_watchdog.json                    # the heartbeat
+loginctl enable-linger "$USER"                        # keeps it running after logout and across reboots
+loginctl show-user "$USER" -p Linger                  # should say Linger=yes
+```
+
+If `loginctl enable-linger` is refused, ask an administrator to run it once for `deepanshu`; until then the
+service stops when the last login session ends. If `systemctl --user` itself is not available (no user
+manager in that session), use the keep-alive cron below.
+
+**Keep-alive cron (last resort, no systemd).** One cron line starts the watchdog if it is not running; `flock`
+makes sure only one copy ever runs, and the script stays up forever once started. This replaces the
+`*/20` sync line with a once-a-minute "is it alive" line:
+
+```cron
+* * * * * flock -n $HOME/.csp-txn-watchdog.lock /usr/bin/python3 /home/deepanshu/CSP_BALANCE_INTELLIGENCE/scripts/watch_transaction_sheet.py --env-file $HOME/.config/csp-transaction-watchdog.env >> $HOME/txn_watchdog.log 2>&1
+```
+
+For the system-level unit, `User=` must be the account the old cron ran as: it needs to **read**
 `/home/shumit/sbikisok` and **write** the data directory.
 
 Healthy states in the log and heartbeat: `up_to_date`, `settling` (the other team is still saving),
@@ -194,7 +222,7 @@ from `incoming/` (it was switched off, or `ingest_transactions` is failing). `wa
 this month's workbook does not exist yet. The `dbt run` and `sync_monthly_summary` cron lines are
 unchanged: they still run on their own schedule.
 
-Roll back: `sudo systemctl disable --now csp-transaction-watchdog` and put the cron line back.
+Roll back: `systemctl --user disable --now csp-transaction-watchdog` (or `sudo systemctl disable --now ...` for the system unit) and put the old cron line back.
 
 ## Volumes
 

@@ -281,3 +281,16 @@ def test_once_copies_immediately_without_the_settle_wait(env, monkeypatch):
     monkeypatch.setenv("TRANSACTION_SOURCE_DIR", str(source))
     assert wts.main(["--once"]) == 0
     assert (data / "incoming" / "transaction_sync.xlsx").read_bytes() == b"now"
+
+
+def test_an_env_file_is_read_and_real_environment_variables_win(tmp_path):
+    f = tmp_path / "watchdog.env"
+    lines = ["# a comment", "", "TRANSACTION_DATA_DIR_HOST=/from/file",
+             "TRANSACTION_SOURCE_DIR = '/quoted/dir'", "TRANSACTION_WATCH_POLL_SECONDS=5"]
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env = {"TRANSACTION_WATCH_POLL_SECONDS": "99"}
+    wts.load_env_file(f, env)
+    assert env["TRANSACTION_DATA_DIR_HOST"] == "/from/file"
+    assert env["TRANSACTION_SOURCE_DIR"] == "/quoted/dir"
+    assert env["TRANSACTION_WATCH_POLL_SECONDS"] == "99"      # the real environment wins
+    assert wts.Config.from_env(env).data_dir == Path("/from/file")

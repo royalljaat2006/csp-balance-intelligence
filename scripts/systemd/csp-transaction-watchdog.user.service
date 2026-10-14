@@ -1,12 +1,12 @@
 # Same watchdog as a USER-level service, for when sudo is not available. Runs as the logged-in user.
 #
-#   mkdir -p ~/.config/systemd/user ~/.config
+#   mkdir -p ~/.config/systemd/user
 #   cp scripts/systemd/csp-transaction-watchdog.user.service ~/.config/systemd/user/csp-transaction-watchdog.service
 #   cp scripts/systemd/csp-transaction-watchdog.env.example ~/.config/csp-transaction-watchdog.env
 #   nano ~/.config/csp-transaction-watchdog.env
 #   systemctl --user daemon-reload && systemctl --user enable --now csp-transaction-watchdog
-#   # keep it running after logout / across reboots (needs an administrator ONCE):
-#   sudo loginctl enable-linger "$USER"
+#   # keep it running after logout / across reboots (try without sudo first):
+#   loginctl enable-linger "$USER"
 [Unit]
 Description=CSP Balance Tracker - transaction workbook watchdog (read-only on the source)
 
@@ -17,7 +17,6 @@ ExecStart=/usr/bin/python3 %h/CSP_BALANCE_INTELLIGENCE/scripts/watch_transaction
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=default.target

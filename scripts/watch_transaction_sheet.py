@@ -28,6 +28,8 @@ Standard library only: it runs under the system python3, no virtualenv. See docs
 Usage
   watch_transaction_sheet.py            run forever (what the systemd unit does)
   watch_transaction_sheet.py --once     look once, copy now if the workbook changed (no settle wait)
+  watch_transaction_sheet.py --env-file F   read KEY=VALUE settings from F first (same file the
+                                        systemd unit uses), for starting it without systemd
 
 Settings (environment; the systemd unit reads them from an EnvironmentFile)
   TRANSACTION_DATA_DIR_HOST         required: the app data dir that holds incoming/ and processed/
@@ -270,6 +272,18 @@ class Watcher:
             self._log(f"could not write the heartbeat: {exc}")
 
 
+def load_env_file(path: str | Path, env: dict | None = None) -> dict:
+    """Read simple KEY=VALUE lines (comments and blanks ignored; real environment variables win)."""
+    env = os.environ if env is None else env
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        env.setdefault(key.strip(), value.strip().strip("\"'"))
+    return env
+
+
 def run_forever(watcher: Watcher) -> int:
     stop = threading.Event()
 
@@ -294,7 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--once", action="store_true",
                     help="look once and copy now if the workbook changed (skips the settle wait)")
+    ap.add_argument("--env-file", help="read KEY=VALUE settings from this file first")
     args = ap.parse_args(argv)
+    if args.env_file:
+        load_env_file(args.env_file)
     watcher = Watcher(Config.from_env())
     if args.once:
         state = watcher.step(settle_seconds=0)
