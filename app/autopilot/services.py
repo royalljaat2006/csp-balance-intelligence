@@ -13,6 +13,7 @@ docstring for why that's a deliberate boundary, not an oversight.
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import structlog
 from csp.models import IngestLog, MonthlySummary
@@ -60,7 +61,7 @@ def _candidate_rows(month: str, limit: int = 50) -> list[dict]:
                 "net_new_accounts": g["net_new"] if g else None,
             }
         )
-    rows.sort(key=lambda r: r["gap"])
+    rows.sort(key=lambda r: float(cast(float, r["gap"])))
     return rows[:limit]
 
 

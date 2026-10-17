@@ -72,7 +72,7 @@ def test_an_identical_poll_writes_nothing_and_keeps_the_cache():
 
     _poll(_sheet("100"))
     assert get_generation() == first  # nothing changed: cached figures stay valid
-    log = IngestLog.objects.filter(source="calling_sheet").latest("started_at")
+    log = IngestLog.objects.filter(source="calling_sheet").latest("pk")
     assert log.rows_upserted == 0
 
 

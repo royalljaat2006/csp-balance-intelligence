@@ -167,16 +167,17 @@ def get_csp_account_growth(csp: Csp) -> list[dict]:
         .values("balance_date", "account_count")
     )
     out = []
-    prev_count = None
+    prev_count: int | None = None
     for r in rows:
+        count = r["account_count"] or 0
         out.append(
             {
                 "date": r["balance_date"],
-                "account_count": r["account_count"],
-                "net_new": (r["account_count"] - prev_count) if prev_count is not None else None,
+                "account_count": count,
+                "net_new": (count - prev_count) if prev_count is not None else None,
             }
         )
-        prev_count = r["account_count"]
+        prev_count = count
     return out
 
 
@@ -195,12 +196,13 @@ def get_all_csps_account_growth() -> dict[str, dict]:
     for r in rows:
         csp_code = r["csp_id"]
         prev_count = prev_count_by_csp.get(csp_code)
+        count = r["account_count"] or 0
         out[csp_code] = {
             "date": r["balance_date"],
-            "account_count": r["account_count"],
-            "net_new": (r["account_count"] - prev_count) if prev_count is not None else None,
+            "account_count": count,
+            "net_new": (count - prev_count) if prev_count is not None else None,
         }
-        prev_count_by_csp[csp_code] = r["account_count"]
+        prev_count_by_csp[csp_code] = count
     return out
 
 

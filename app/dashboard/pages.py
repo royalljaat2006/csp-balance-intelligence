@@ -10,6 +10,7 @@ bankflow.estimates / explain / outlook / sbi_comparison / review / readiness.
 from __future__ import annotations
 
 import datetime as dt
+from functools import partial
 from urllib.parse import urlencode
 
 from bankflow import csp_view, explain, outlook, readiness, review, sbi_comparison
@@ -418,10 +419,9 @@ def warm() -> None:
     frm, to = bankflow_intelligence.resolve_range(days)
     for staff in (False, True):
         cache_aside(f"ui:readiness:{days}:{today}:{int(staff)}", ttl=_ttl(),
-                    fn=lambda s=staff: readiness.data_readiness(days=days, today=today,
-                                                                is_staff=s))
+                    fn=partial(readiness.data_readiness, days=days, today=today, is_staff=staff))
         cache_aside(f"ui:review:{days}:{today}:{int(staff)}", ttl=_ttl(),
-                    fn=lambda s=staff: review.review_queue(days, is_staff=s, today=today))
+                    fn=partial(review.review_queue, days, is_staff=staff, today=today))
     cache_aside(f"ui:readiness:{days}:{today}", ttl=_ttl(),
                 fn=lambda: readiness.data_readiness(days=days, today=today))
     cache_aside(f"ui:review:{days}:{today}", ttl=_ttl(),
