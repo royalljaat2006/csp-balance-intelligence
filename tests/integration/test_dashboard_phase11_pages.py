@@ -119,4 +119,7 @@ def test_csp_detail_shows_this_csps_agent_findings(logged_in_client, csp, task):
 @pytest.mark.django_db
 def test_csp_detail_shows_account_level_not_available_state(logged_in_client, csp):
     response = logged_in_client.get(f"/dashboard/csp/{csp.csp_code}/")
-    assert "Not available" in response.content.decode()
+    body = response.content.decode()
+    # there is no account-level registry: the page shows CSP-level figures only and says
+    # when something does not exist yet
+    assert "Customer accounts" in body and "No SBI value on file" in body

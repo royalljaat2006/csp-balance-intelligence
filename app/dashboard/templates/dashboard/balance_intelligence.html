@@ -1,199 +1,49 @@
-{% extends "dashboard/base.html" %}
-{% load humanize %}
-{% block title %}Balance Intelligence — Eko Operations{% endblock %}
-{% block content %}
-<div class="wrap stagger">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Network-wide</div>
-    <h1>Balance Intelligence</h1>
-    <p class="sub">Deep analysis of CSP balances — daily and monthly movement, slab transitions, and where
-      the network's balance is concentrated. Reuses the exact same comparison engine as Daily Comparison.</p>
-  </header>
-
-  <section class="panel" style="padding:12px 16px;">
-    <form method="get" class="date-range-form">
-      <label>Mode
-        <select name="mode">
-          <option value="overall" {% if mode == "overall" %}selected{% endif %}>Overall</option>
-          <option value="onus" {% if mode == "onus" %}selected{% endif %}>ONUS</option>
-        </select>
-      </label>
-      <label>Window
-        <select name="window">
-          <option value="7" {% if window_days == 7 %}selected{% endif %}>7 days</option>
-          <option value="30" {% if window_days == 30 %}selected{% endif %}>30 days</option>
-          <option value="60" {% if window_days == 60 %}selected{% endif %}>60 days</option>
-        </select>
-      </label>
-      <button type="submit">Apply</button>
-      <span class="hint">{{ mode|upper }} mode &middot; trailing {{ window_days }} days</span>
-    </form>
-  </section>
-
-  <div class="stats cols-3">
-    <div class="stat" style="cursor:default;">
-      <div class="label">Network avg balance</div>
-      <div class="value" id="stat-avg-mab">—</div>
-      <div class="foot">across CSPs reporting this month</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Growing today</div>
-      <div class="value" data-count="{{ daily_trend_counts.GROWTH }}">0</div>
-      <div class="foot">vs. yesterday, {{ mode }} mode</div>
-    </div>
-    <div class="stat accent" style="cursor:default;">
-      <div class="label">Declining today</div>
-      <div class="value" data-count="{{ daily_trend_counts.DECLINE }}">0</div>
-      <div class="foot">vs. yesterday, {{ mode }} mode</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Avg month-over-month
-        <span class="info-tip"><span class="tip-icon">?</span><span class="tip-bubble">Mean of every reporting CSP's own MoM change — computed by the dbt calculation layer, not recomputed here.</span></span>
-      </div>
-      <div class="value">{% if avg_mom_pct is not None %}{{ avg_mom_pct }}%{% else %}&mdash;{% endif %}</div>
-      <div class="foot">{{ month }}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Slab upgrades today</div>
-      <div class="value" data-count="{{ slab_upgrades }}">0</div>
-      <div class="foot">moved to a higher slab vs. yesterday</div>
-    </div>
-    <div class="stat accent" style="cursor:default;">
-      <div class="label">Slab downgrades today</div>
-      <div class="value" data-count="{{ slab_downgrades }}">0</div>
-      <div class="foot">moved to a lower slab vs. yesterday</div>
-    </div>
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Incentive slabs · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Incentive slabs</h1>
+    <p class="lede">Where CSPs stand against the SBI Rule #19 slabs, who is close to the next slab and who is below the minimum. These are the production figures from the Calling Sheet; estimates are not used here.</p>
   </div>
-
-  <div class="panel-grid">
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Daily average balance" hint=window_hint %}
-      <div id="balance-trend-chart"></div>
-    </section>
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Slab distribution" hint=mode_hint %}
-      <div id="slab-donut"></div>
-    </section>
+  <div class="row">
+    <div class="seg" role="group" aria-label="Window"><a href="?window=7&mode={{ mode }}"{% if window_days == 7 %} aria-current="true"{% endif %}>7 days</a><a href="?window=30&mode={{ mode }}"{% if window_days == 30 %} aria-current="true"{% endif %}>30 days</a><a href="?window=60&mode={{ mode }}"{% if window_days == 60 %} aria-current="true"{% endif %}>60 days</a></div>
+    <div class="seg" role="group" aria-label="Transaction types"><a href="?window={{ window_days }}&mode=overall"{% if mode == "overall" %} aria-current="true"{% endif %}>All approved types</a><a href="?window={{ window_days }}&mode=onus"{% if mode == "onus" %} aria-current="true"{% endif %}>On-us only</a></div>
   </div>
-
-  <div class="panel-grid">
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="CSP performance distribution" hint="movement strength, today vs. yesterday" %}
-      <div id="movement-donut"></div>
-    </section>
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Slab movement" hint="today vs. yesterday" %}
-      <div class="kv-grid">
-        <div class="kv"><span class="k">Upgraded</span><span class="v" style="color:var(--good);">{{ slab_upgrades }}</span></div>
-        <div class="kv"><span class="k">Downgraded</span><span class="v" style="color:var(--nil);">{{ slab_downgrades }}</span></div>
-      </div>
-      <div class="modal-section-label">By slab</div>
-      <div class="kv-grid">
-        {% for s in slab_summaries %}
-        <div class="kv">
-          <span class="k">{% include "dashboard/components/slab_badge.html" with slab=s.slab %}</span>
-          <span class="v">{{ s.count }} CSP{{ s.count|pluralize }}{% if s.avg_balance is not None %}<span class="hint" style="display:block;font-size:10.5px;">avg &#8377;{{ s.avg_balance|floatformat:0|intcomma }}</span>{% endif %}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-  </div>
-
-  <div class="cols">
-    <div style="display:flex; flex-direction:column; gap:20px;">
-      <section class="panel">
-        {% include "dashboard/components/section_header.html" with title="Near next slab" hint=near_slab_hint %}
-        <div class="qw-list">
-          {% for c in near_next_slab %}
-          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
-            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab }}</span></span>
-            <span class="qw-amt"><span class="n" data-inr="{{ c.gap_to_next_slab }}"></span><span class="l">to next slab</span></span>
-          </a>
-          {% empty %}<p class="sub">No CSPs currently within {{ near_next_slab_threshold }} of the next slab.</p>{% endfor %}
-        </div>
-      </section>
-
-      <section class="panel">
-        {% include "dashboard/components/section_header.html" with title="Below minimum" hint="in NIL today" %}
-        <div class="qw-list">
-          {% for c in below_minimum %}
-          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
-            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }}</span></span>
-            <span class="qw-amt"><span class="n" data-inr="{{ c.current_value }}"></span></span>
-          </a>
-          {% empty %}<p class="sub">No CSPs below the minimum today.</p>{% endfor %}
-        </div>
-      </section>
-    </div>
-
-    <div style="display:flex; flex-direction:column; gap:20px;">
-      <section class="panel">
-        {% include "dashboard/components/section_header.html" with title="Largest balance increases" hint="today vs. yesterday" %}
-        <div class="qw-list">
-          {% for c in largest_increases %}
-          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
-            <span class="qw-rank">{{ forloop.counter }}</span>
-            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span></span>
-            <span class="qw-amt"><span class="n" style="color:var(--good);" data-inr-signed="{{ c.abs_change }}"></span></span>
-          </a>
-          {% empty %}<p class="sub">No increases to report.</p>{% endfor %}
-        </div>
-      </section>
-
-      <section class="panel">
-        {% include "dashboard/components/section_header.html" with title="Largest balance decreases" hint="today vs. yesterday" %}
-        <div class="qw-list">
-          {% for c in largest_decreases %}
-          <a class="qw-item" href="{% url 'dashboard:csp_detail' csp_code=c.csp_code %}">
-            <span class="qw-rank">{{ forloop.counter }}</span>
-            <span class="qw-main"><span class="qw-name">{{ c.csp_name|default:c.csp_code }}</span><span class="qw-code">{{ c.csp_code }} &middot; {{ c.current_slab|default:"—" }}</span></span>
-            <span class="qw-amt"><span class="n" style="color:var(--nil);" data-inr-signed="{{ c.abs_change }}"></span></span>
-          </a>
-          {% empty %}<p class="sub">No decreases to report.</p>{% endfor %}
-        </div>
-      </section>
-    </div>
-  </div>
-
 </div>
 {% endblock %}
+{% block content %}
+<section class="grid g4" aria-label="Key figures">
+  {% include "dashboard/components/stat.html" with label="CSPs with a monthly figure" value=overview.csp_with_data|intc hint="Tracked CSPs that have a production monthly figure." %}
+  {% include "dashboard/components/stat.html" with label="At or below the minimum (NIL)" value=overview.in_nil_count|intc hint="Not earning an incentive this month." %}
+  {% include "dashboard/components/stat.html" with label="Moved to a higher slab today" value=slab_upgrades|intc hint="Compared with yesterday." %}
+  {% include "dashboard/components/stat.html" with label="Moved to a lower slab today" value=slab_downgrades|intc hint="Compared with yesterday." %}
+</section>
 
-{% block extra_scripts %}
-<script>
-  const NETWORK_BALANCE_SERIES = {{ network_balance_series|safe }};
-  const SLAB_DISTRIBUTION = {{ overview.slab_distribution|safe }};
-  const MOVEMENT_COUNTS = {{ movement_counts|safe }};
+<section class="card"><header><div><h2>Network average balance</h2><p>Average per account across reporting CSPs, {{ window_hint }}.</p></div></header>
+  <div class="body">{{ charts.network|json_script:"chart-network" }}{% include "dashboard/components/chart.html" with id="chart-network" %}</div></section>
 
-  document.querySelectorAll(".stat .value[data-count]").forEach((el) => window.countUp(el, +el.dataset.count));
-  document.querySelectorAll('[data-inr]').forEach(el => { el.textContent = window.fmtINR(+el.dataset.inr); });
-  document.querySelectorAll('[data-inr-signed]').forEach(el => {
-    const v = +el.dataset.inrSigned;
-    el.textContent = (v > 0 ? "+" : "") + window.fmtINR(v);
-  });
+<section class="card"><header><div><h2>By slab</h2><p>Today, {{ mode }} view. Averages are per account.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Slab</th><th class="num">CSPs</th><th class="num">Average balance</th><th class="num">Average change</th><th class="num">Growing</th><th class="num">Declining</th></tr></thead><tbody>
+    {% for s in slab_summaries %}<tr><td><b>{{ s.slab }}</b></td><td class="num">{{ s.count|intc }}</td><td class="num">{{ s.avg_balance|inr }}</td><td class="num">{{ s.avg_pct_change|pct1 }}</td><td class="num">{{ s.growing_count|intc }}</td><td class="num">{{ s.declining_count|intc }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <footer>NIL: up to ₹2,500 or under 200 accounts. S1 to S4 are the incentive bands. Average month-on-month change across CSPs: {{ avg_mom_pct|pct1 }}.</footer></section>
 
-  const lastAvg = NETWORK_BALANCE_SERIES.length ? NETWORK_BALANCE_SERIES[NETWORK_BALANCE_SERIES.length - 1].value : null;
-  document.getElementById("stat-avg-mab").textContent = window.fmtINR(lastAvg);
+<section class="grid g2">
+  <div class="card"><header><div><h2>Close to the next slab</h2><p>{{ near_slab_hint }}.</p></div></header>
+    <div class="body flush table-wrap">{% if near_next_slab %}<table class="t"><thead><tr><th>CSP</th><th>Slab</th><th class="num">Needed per account</th></tr></thead><tbody>
+      {% for r in near_next_slab %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}">{{ r.csp_name }}</a><span class="sub mono">{{ r.csp_code }}</span></td><td>{{ r.current_slab }}</td><td class="num">{{ r.gap_to_next_slab|inr }}</td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No CSP is this close today" %}{% endif %}</div></div>
+  <div class="card"><header><div><h2>Below the minimum</h2><p>In the NIL slab today.</p></div></header>
+    <div class="body flush table-wrap">{% if below_minimum %}<table class="t"><thead><tr><th>CSP</th><th class="num">Month to date</th><th class="num">Needed per account</th></tr></thead><tbody>
+      {% for r in below_minimum %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}">{{ r.csp_name }}</a><span class="sub mono">{{ r.csp_code }}</span></td><td class="num">{{ r.mtd_avg_so_far|inr }}</td><td class="num">{{ r.gap_to_min|inr }}</td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No CSP is below the minimum today" %}{% endif %}</div></div>
+</section>
 
-  window.renderTrendChart(document.getElementById("balance-trend-chart"), NETWORK_BALANCE_SERIES, {
-    label: "Network average balance", valueFormat: window.fmtINR, color: "var(--good)",
-    emptyText: "No daily balance history on file yet.",
-  });
-
-  window.renderDonutChart(document.getElementById("slab-donut"), [
-    {label: "NIL", value: SLAB_DISTRIBUTION.NIL || 0, color: "var(--nil)"},
-    {label: "S1", value: SLAB_DISTRIBUTION.S1 || 0, color: "var(--s1)"},
-    {label: "S2", value: SLAB_DISTRIBUTION.S2 || 0, color: "var(--s2)"},
-    {label: "S3", value: SLAB_DISTRIBUTION.S3 || 0, color: "var(--s3)"},
-    {label: "S4", value: SLAB_DISTRIBUTION.S4 || 0, color: "var(--s4)"},
-  ], {valueFormat: window.fmtNum, centerLabel: "CSPs"});
-
-  window.renderDonutChart(document.getElementById("movement-donut"), [
-    {label: "Strong growth", value: MOVEMENT_COUNTS.STRONG_GROWTH || 0, color: "var(--good)"},
-    {label: "Moderate growth", value: MOVEMENT_COUNTS.MODERATE_GROWTH || 0, color: "var(--good-soft)"},
-    {label: "Stable", value: MOVEMENT_COUNTS.STABLE || 0, color: "var(--muted)"},
-    {label: "Moderate decline", value: MOVEMENT_COUNTS.MODERATE_DECLINE || 0, color: "var(--accent)"},
-    {label: "Sharp decline", value: MOVEMENT_COUNTS.SHARP_DECLINE || 0, color: "var(--nil)"},
-  ], {valueFormat: window.fmtNum, centerLabel: "CSPs", emptyText: "No comparison data yet."});
-</script>
+<section class="grid g2">
+  <div class="card"><header><div><h2>Largest increases today</h2></div></header>
+    <div class="body flush table-wrap">{% if largest_increases %}<table class="t"><tbody>{% for r in largest_increases %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}">{{ r.csp_name }}</a></td><td class="num">{{ r.abs_change|signed_inr }}</td><td class="num">{{ r.pct_change|pct1 }}</td></tr>{% endfor %}</tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No comparison available yet" text="Two days of readings are needed." %}{% endif %}</div></div>
+  <div class="card"><header><div><h2>Largest decreases today</h2></div></header>
+    <div class="body flush table-wrap">{% if largest_decreases %}<table class="t"><tbody>{% for r in largest_decreases %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}">{{ r.csp_name }}</a></td><td class="num">{{ r.abs_change|signed_inr }}</td><td class="num">{{ r.pct_change|pct1 }}</td></tr>{% endfor %}</tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No comparison available yet" text="Two days of readings are needed." %}{% endif %}</div></div>
+</section>
 {% endblock %}

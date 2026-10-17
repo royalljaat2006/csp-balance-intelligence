@@ -24,11 +24,14 @@ def day_compare_key() -> str:
 
 
 def _compute_attention_count() -> int:
-    from bankflow import intelligence
+    """What the Review page opens with: data categories that are open, plus CSP alerts that are
+    high or medium. Same functions the page uses, so the badge and the page cannot disagree."""
+    from bankflow import intelligence, review
 
     frm, to = intelligence.resolve_range(30)
     items = intelligence.exceptions(frm, to, limit=100000)["items"]
-    return sum(1 for i in items if i["severity"] in ("high", "medium"))
+    alerts = sum(1 for i in items if i["csp_code"] and i["severity"] in ("high", "medium"))
+    return alerts + review.review_queue(30)["open"]
 
 
 def _compute_day_compare() -> dict:

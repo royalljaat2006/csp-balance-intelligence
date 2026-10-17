@@ -354,3 +354,118 @@ def csp_day_compare(
         data=_plain({**meta, "rows": rows, "total": total, "limit": limit, "offset": offset}),
         request_id=request.request_id,
     )
+
+
+@router.get(
+    "/data-readiness",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Data readiness: from 'received' to 'can support an estimate'",
+    description=(
+        "Six stages (received, file checks, duplicates, CSP and type identification, counted vs "
+        "excluded, estimates) plus a verdict that keeps 'imports ran without a technical "
+        "failure' apart from 'complete enough for a reliable estimate'. Read-only."
+    ),
+)
+def data_readiness(request: ApiRequest, days: int = 30):
+    from bankflow import readiness
+
+    return DataEnvelope(
+        data=_plain(readiness.data_readiness(days=min(max(days, 1), 90))),
+        request_id=request.request_id,
+    )
+
+
+@router.get(
+    "/review",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Everything that needs a person's review",
+    description=(
+        "Unlinked or ambiguous CSP codes, unrecognised labels, possible duplicates and reversals, "
+        "missing or stale account counts, statement coverage gaps, late rows and failed imports, "
+        "each with what happened, the impact and the next step. Read-only: nothing here changes a "
+        "figure, and flagged rows are never counted automatically."
+    ),
+)
+def review(request: ApiRequest, days: int = 30):
+    from bankflow import review as review_mod
+
+    return DataEnvelope(
+        data=_plain(review_mod.review_queue(min(max(days, 1), 90))), request_id=request.request_id
+    )
+
+
+@router.get(
+    "/estimate-explanation/{csp_code}",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Why a CSP's estimate has its value",
+    description=(
+        "The stored baseline and its receipt date, the account counts, the combined baseline "
+        "(average x count), eligible deposits and withdrawals since the baseline, and the stored "
+        "estimate with its method and status. Movement is shown as evidence and is not added to "
+        "the estimate. 404 for an unknown CSP."
+    ),
+)
+def estimate_explanation(request: ApiRequest, csp_code: str):
+    from bankflow import explain
+    from django.http import Http404
+
+    data = explain.explain_estimate(csp_code.strip()[:16])
+    if data is None:
+        raise Http404(f"No CSP with code {csp_code}.")
+    return DataEnvelope(data=_plain(data), request_id=request.request_id)
+
+
+@router.get(
+    "/sbi-comparison",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Predicted vs SBI-reported values and the validation gate",
+    description=(
+        "One row per SBI refresh: predicted, SBI-reported, difference in rupees per account and "
+        "percentage variance (N/A when the reported value is zero), with carry-forward alongside; "
+        "aggregate and simple-average variance; results per refresh event and monthly cycle; and "
+        "each acceptance criterion with its observation. The gate is never 'validated' on its "
+        "own: a separate approval is required and none is recorded."
+    ),
+)
+def sbi_comparison(
+    request: ApiRequest, only_count_changed: bool = True, search: str = "",
+    limit: int = 50, offset: int = 0,
+):
+    from bankflow import sbi_comparison as cmp_mod
+
+    limit = clamp_limit(limit)
+    return DataEnvelope(
+        data=_plain(cmp_mod.sbi_comparison(
+            only_count_changed=only_count_changed, search=search[:32], limit=limit,
+            offset=max(0, offset))),
+        request_id=request.request_id,
+    )
+
+
+@router.get(
+    "/month-end-outlook",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="Shadow month-to-date average and month-end projection",
+    description=(
+        "From the stored daily estimates only: every calendar day counts once, a day without an "
+        "estimate carries the previous one forward, and the projection carries the latest "
+        "estimate over the remaining days. Informational and provisional; separate from the "
+        "production MAB and from SBI-reported values."
+    ),
+)
+def month_end_outlook(
+    request: ApiRequest, month: str = "", search: str = "", limit: int = 25, offset: int = 0
+):
+    from bankflow import outlook
+
+    limit = clamp_limit(limit)
+    return DataEnvelope(
+        data=_plain(outlook.month_end_outlook(
+            month or None, search=search[:32], limit=limit, offset=max(0, offset))),
+        request_id=request.request_id,
+    )

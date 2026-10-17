@@ -41,10 +41,11 @@ def test_renders_with_no_csps(logged_in_client, db):
 def test_csp_with_no_data_still_gets_a_row(logged_in_client, db):
     Csp.objects.create(csp_code="1A850700", name="Never Reported")
     response = logged_in_client.get("/dashboard/csps/")
-    rows = {r["csp_code"]: r for r in response.context["rows"]}
+    rows = {r["code"]: r for r in response.context["rows"]}
     assert "1A850700" in rows
-    assert rows["1A850700"]["reporting_status"] == "not_reporting"
-    assert rows["1A850700"]["current_balance"] is None
+    assert rows["1A850700"]["status"] == "NOT_COMPUTED"  # no estimate, said so
+    assert rows["1A850700"]["sbi_avg"] is None and rows["1A850700"]["est"] is None
+    assert "No estimate" in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -56,12 +57,13 @@ def test_csp_reporting_today_shows_reporting_status(logged_in_client, db):
         source=DailyBalance.Source.CALLING_SHEET,
     )
     response = logged_in_client.get("/dashboard/csps/")
-    rows = {r["csp_code"]: r for r in response.context["rows"]}
-    assert rows["1A850701"]["reporting_status"] == "reporting"
-    assert rows["1A850701"]["current_balance"] == 3000.0
+    rows = {r["code"]: r for r in response.context["rows"]}
+    assert rows["1A850701"]["sbi_avg"] == decimal.Decimal("3000")
+    assert rows["1A850701"]["sbi_date"] == today
 
 
 @pytest.mark.django_db
-def test_invalid_mode_falls_back_to_overall(logged_in_client, db):
-    response = logged_in_client.get("/dashboard/csps/?mode=bogus")
-    assert response.context["mode"] == "overall"
+def test_invalid_filters_fall_back_to_defaults(logged_in_client, db):
+    response = logged_in_client.get("/dashboard/csps/?show=bogus&sort=bogus&order=sideways")
+    assert response.context["show"] == "all" and response.context["sort"] == "name"
+    assert response.status_code == 200

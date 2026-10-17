@@ -1,175 +1,74 @@
-{% extends "dashboard/base.html" %}
-{% load static %}
-{% block title %}Data Pipeline — Eko Operations{% endblock %}
-{% block content %}
-<div class="wrap stagger pipeline-page">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>System</div>
-    <h1>Data Pipeline</h1>
-    <p class="sub">Live visualization of real ingestion and agent execution state — every node, number,
-      and event below is read directly from PostgreSQL/Redis at the moment it's shown. Nothing here is
-      simulated.</p>
-  </header>
-
-  <div class="pipeline-toolbar">
-    <div class="mode-switch" role="group" aria-label="View mode">
-      <button type="button" id="pl-mode-live" class="active" aria-pressed="true">Live</button>
-      <button type="button" id="pl-mode-history" aria-pressed="false">History</button>
-    </div>
-    <span class="freshness-pill connecting" id="pl-connection">
-      <span class="dot" id="pl-connection-dot"></span>
-      <span id="pl-connection-text">Connecting&hellip;</span>
-    </span>
+{% extends "dashboard/base.html" %}{% load static %}
+{% block title %}Live pipeline · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / Live pipeline</div>
+  <h1>Live pipeline</h1>
+  <p class="lede">Where each job is right now, read straight from the database and cache as it is shown. Nothing here is simulated. Staff only.</p></div>
+  <div class="row">
+    <div class="seg" role="group" aria-label="View"><button type="button" id="pl-mode-live" aria-pressed="true">Live</button><button type="button" id="pl-mode-history" aria-pressed="false">History</button></div>
+    <span class="fresh warn" id="pl-connection"><i class="dot"></i><span id="pl-connection-text">Connecting&hellip;</span></span>
   </div>
-
-  <div class="stats cols-4" id="pl-counters">
-    <div class="stat" style="cursor:default;"><div class="label">CSPs processed today</div><div class="value" id="pl-counter-csps">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Transactions today</div><div class="value" id="pl-counter-txns">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Snapshots today</div><div class="value" id="pl-counter-snapshots">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Active / queued jobs</div><div class="value" id="pl-counter-jobs">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Failed today</div><div class="value" id="pl-counter-failed">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">AI findings today</div><div class="value" id="pl-counter-findings">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Pending approvals</div><div class="value" id="pl-counter-approvals">—</div></div>
-    <div class="stat" style="cursor:default;"><div class="label">Total CSPs</div><div class="value" id="pl-counter-total-csps">—</div></div>
-  </div>
-
-  <section class="panel pipeline-diagram-panel">
-    <div class="panel-head"><h2>Pipeline</h2><span class="hint" id="pl-generated-at"></span></div>
-    <div class="pl-approval-banner" id="pl-approval-banner" hidden>
-      <span class="pl-dot"></span>
-      <span id="pl-approval-banner-text"></span>
-      <a href="{% url 'dashboard:approvals' %}">Review &rarr;</a>
-    </div>
-    <div class="pipeline-diagram" id="pipeline-diagram">
-      <svg id="pipeline-svg" viewBox="0 0 1120 760" preserveAspectRatio="xMidYMin meet" aria-hidden="true">
-        <!-- Each connector is paired with a .pl-particle circle riding the
-             identical path via native SVG animateMotion. The motion itself
-             always runs (cheap for 11 small circles); only opacity is
-             gated on the connector's real "flowing" state (CSS sibling
-             selector below), so a particle is only ever visible while real
-             data is actually moving through that edge. -->
-        <path id="conn-cs-pg" class="pl-connector" d="M180,70 L560,70 L560,190"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M180,70 L560,70 L560,190"/></circle>
-        <path id="conn-tx-pg" class="pl-connector" d="M560,70 L560,190"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,70 L560,190"/></circle>
-        <path id="conn-pg-snap" class="pl-connector" d="M560,250 L560,330"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,250 L560,330"/></circle>
-        <path id="conn-snap-bal" class="pl-connector" d="M560,390 L180,390 L180,470"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,390 L180,390 L180,470"/></circle>
-        <path id="conn-snap-tx" class="pl-connector" d="M560,390 L560,470"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,390 L560,470"/></circle>
-        <path id="conn-snap-risk" class="pl-connector" d="M560,390 L940,390 L940,470"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M560,390 L940,390 L940,470"/></circle>
-        <path id="conn-bal-find" class="pl-connector" d="M180,530 L560,530 L560,610"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M180,530 L560,530 L560,610"/></circle>
-        <path id="conn-tx-find" class="pl-connector" d="M560,530 L560,610"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1s" repeatCount="indefinite" path="M560,530 L560,610"/></circle>
-        <path id="conn-risk-find" class="pl-connector" d="M940,530 L560,530 L560,610"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="1.4s" repeatCount="indefinite" path="M940,530 L560,530 L560,610"/></circle>
-        <path id="conn-find-act" class="pl-connector" d="M560,670 L560,700"/>
-        <circle class="pl-particle" r="4"><animateMotion dur="0.8s" repeatCount="indefinite" path="M560,670 L560,700"/></circle>
-        <!-- Autopilot reads Postgres on its own independent schedule (daily,
-             not driven by the ingestion/snapshot/agent flow) -- dashed and
-             routed clear of the main flow to show that honestly, not as a
-             step in the same sequence. -->
-        <path id="conn-pg-autopilot" class="pl-connector pl-connector-independent" d="M620,220 L940,220 L940,330"/>
-        <circle class="pl-particle pl-particle-independent" r="4"><animateMotion dur="1.8s" repeatCount="indefinite" path="M620,220 L940,220 L940,330"/></circle>
-      </svg>
-      <div class="pl-node" data-node="calling_sheet" style="left:20px; top:20px;">
-        <div class="pl-node-label">Calling Sheet</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="transactions" style="left:400px; top:20px;">
-        <div class="pl-node-label">Transactions</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="postgres" style="left:400px; top:190px;">
-        <div class="pl-node-label">PostgreSQL</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="snapshots" style="left:400px; top:330px;">
-        <div class="pl-node-label">Daily Snapshots</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node pl-node-independent" data-node="autopilot" style="left:780px; top:330px;" title="Runs on its own daily schedule, independent of the ingestion/snapshot/agent flow">
-        <div class="pl-node-label">AI Autopilot</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="balance_agent" style="left:20px; top:470px;">
-        <div class="pl-node-label">Balance Agent</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="transaction_agent" style="left:400px; top:470px;">
-        <div class="pl-node-label">Transaction Agent</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="risk_agent" style="left:780px; top:470px;">
-        <div class="pl-node-label">Risk Agent</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="findings" style="left:400px; top:610px;">
-        <div class="pl-node-label">AI Findings</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-      <div class="pl-node" data-node="actions" style="left:400px; top:700px;">
-        <div class="pl-node-label">Action / Approval</div>
-        <div class="pl-node-status"><span class="pl-dot"></span><span class="pl-status-text">Idle</span></div>
-        <div class="pl-node-meta"></div>
-      </div>
-    </div>
-    <p class="sub" style="margin-top:8px;">Click any node for its real recent execution history. Verification
-      outcomes for each finding are shown on the <a href="{% url 'dashboard:verification' %}" style="color:var(--brand);">Verification</a> page.</p>
-  </section>
-
-  <div class="panel-grid">
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Current operation" hint="What the system is doing right now" %}
-      <div id="pl-current-operation"><p class="sub">Connecting to the live stream&hellip;</p></div>
-    </section>
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Live activity" hint="Real events, most recent first" %}
-      <div class="pipeline-timeline" id="pl-timeline"></div>
-    </section>
-  </div>
-
-  <section class="panel" id="pl-history-panel" style="display:none;">
-    <div class="panel-head"><h2>Execution history</h2></div>
-    <div class="tbl-scroll">
-      <table>
-        <thead><tr><th>When</th><th>Node</th><th>Status</th><th class="num">Duration</th><th>Detail</th></tr></thead>
-        <tbody id="pl-history-rows"></tbody>
-      </table>
-    </div>
-    <div class="pager">
-      <span id="pl-history-page-label"></span>
-      <div class="pager-btns">
-        <button type="button" id="pl-history-prev">&larr; Prev</button>
-        <button type="button" id="pl-history-next">Next &rarr;</button>
-      </div>
-    </div>
-  </section>
-
 </div>
 {% endblock %}
+{% block content %}
+<section class="grid g4" aria-label="Today">
+  <div class="card stat"><div class="label"><span>CSPs processed today</span></div><div class="value" id="pl-counter-csps">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>Transactions today</span></div><div class="value" id="pl-counter-txns">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>Snapshots today</span></div><div class="value" id="pl-counter-snapshots">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>Active / queued jobs</span></div><div class="value" id="pl-counter-jobs">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>Failed today</span></div><div class="value" id="pl-counter-failed">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>AI findings today</span></div><div class="value" id="pl-counter-findings">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>Waiting for approval</span></div><div class="value" id="pl-counter-approvals">&mdash;</div></div>
+  <div class="card stat"><div class="label"><span>CSPs in total</span></div><div class="value" id="pl-counter-total-csps">&mdash;</div></div>
+</section>
 
-{% block extra_scripts %}
+<div id="pl-approval-banner" hidden>{% include "dashboard/components/callout.html" with tone="warn" title="Paused for a person. " text="Some actions are waiting for approval." %}
+  <p class="small" style="margin-top:6px"><a href="{% url 'dashboard:approvals' %}">Open approvals</a> &middot; <span id="pl-approval-banner-text"></span></p></div>
+
+<section class="card" id="pipeline-diagram">
+  <header><div><h2>Jobs</h2><p>In the order data flows. Select a job for its recent runs. <span id="pl-generated-at"></span></p></div></header>
+  <div class="body stack">
+    {% for group, nodes in groups %}
+    <div><h3 class="small muted" style="margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">{{ group }}</h3>
+      <div class="nodes">
+        {% for key, label in nodes %}
+        <button type="button" class="node" data-node="{{ key }}">
+          <span class="node-top"><b class="pl-node-label">{{ label }}</b><span class="badge pl-status-badge"><span class="pl-status-text">Idle</span></span></span>
+          <span class="node-meta pl-node-meta small muted"></span>
+        </button>
+        {% endfor %}
+      </div></div>
+    {% endfor %}
+    <p class="small muted">Verification outcomes for each finding are on <a href="{% url 'dashboard:verification' %}">Verification</a>. The assistants run on their own daily schedule, separate from the data feeds.</p>
+  </div>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>Current operation</h2><p>What the system is doing right now.</p></div></header><div class="body" id="pl-current-operation"><p class="muted">Connecting to the live stream&hellip;</p></div></div>
+  <div class="card"><header><div><h2>Live activity</h2><p>Real events, newest first.</p></div></header><div class="body"><ul class="timeline" id="pl-timeline"></ul></div></div>
+</section>
+
+<section class="card" id="pl-history-panel" hidden>
+  <header><div><h2>Execution history</h2></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>When</th><th>Job</th><th>Status</th><th class="num">Duration</th><th>Detail</th></tr></thead><tbody id="pl-history-rows"></tbody></table></div>
+  <div class="pager"><span id="pl-history-page-label"></span><span class="btns"><button type="button" class="btn sm" id="pl-history-prev">&larr; Previous</button><button type="button" class="btn sm" id="pl-history-next">Next &rarr;</button></span></div>
+</section>
+
+<dialog id="pl-dialog" class="dialog" aria-labelledby="pl-dialog-title">
+  <div class="row between" style="margin-bottom:10px"><h2 id="pl-dialog-title" style="font-size:16px"></h2><button type="button" class="btn sm" id="pl-dialog-close">Close</button></div>
+  <div id="pl-dialog-body"></div>
+</dialog>
+
+{{ initial_snapshot|json_script:"pipeline-initial-snapshot" }}
+{{ initial_timeline|json_script:"pipeline-initial-timeline" }}
+{% endblock %}
+{% block scripts %}
 <script>
-  window.PIPELINE_INITIAL_SNAPSHOT = {{ initial_snapshot_json|safe }};
-  window.PIPELINE_INITIAL_TIMELINE = {{ initial_timeline_json|safe }};
   window.PIPELINE_URLS = {
     events: "{% url 'dashboard:pipeline_events' %}",
     history: "{% url 'dashboard:pipeline_history' %}",
-    nodeDetail: "{% url 'dashboard:pipeline_node_detail' node_key='__NODE__' %}",
+    nodeDetail: "{% url 'dashboard:pipeline_node_detail' node_key='__NODE__' %}"
   };
 </script>
 <script src="{% static 'dashboard/pipeline.js' %}"></script>

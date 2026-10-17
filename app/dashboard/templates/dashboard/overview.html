@@ -1,0 +1,132 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Overview · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p class="lede">Where CSP balances stand, how far the numbers can be trusted, and what needs a person's attention. Today is {{ today|date:"l, j F Y" }} (India time).</p>
+  </div>
+</div>
+{% endblock %}
+{% block content %}
+{% url 'dashboard:csp_directory' as csp_dir_url %}
+{% if ready.verdict.reliable == "ok" %}
+  {% include "dashboard/components/callout.html" with tone="ok" title="Data looks complete. " text="Imports ran cleanly and coverage is sufficient for reliable estimates." %}
+{% elif ready.verdict.technical == "ok" %}
+  <div class="callout warn" role="note">{% include "dashboard/_icon.html" with name="warn" %}<div><b>Imports are running, but estimates are provisional.</b>
+    {{ ready.verdict.reasons.0|default:"Estimates are not yet checked against SBI refreshes." }}
+    <a href="{% url 'dashboard:data_readiness' %}">See what is missing</a></div></div>
+{% else %}
+  <div class="callout bad" role="alert">{% include "dashboard/_icon.html" with name="bad" %}<div><b>A data feed needs attention.</b> {{ ready.verdict.technical_text }}{% if ready.stages.0.problems %} Out of date or never received: {{ ready.stages.0.problems|join:"; " }}.{% endif %}
+    <a href="{% url 'dashboard:data_readiness' %}">Open data readiness</a></div></div>
+{% endif %}
+
+{% for n in notes %}{% include "dashboard/components/callout.html" with tone=n.level text=n.text %}{% endfor %}
+
+<section aria-label="Key figures" class="grid g3">
+  {% include "dashboard/components/stat.html" with label="CSPs in scope" value=metrics.tracked|intc hint="Active CSPs on the current Calling Sheet roster." href=csp_dir_url go="See all CSPs" %}
+  {% include "dashboard/components/stat.html" with label="Valid SBI baselines" value=metrics.with_baseline|intc unit=metrics.baseline_unit hint="CSPs with an SBI-reported average balance on file (per account)." href=csp_dir_url go="Open CSP list" %}
+  <div class="card stat">
+    <div class="label"><span>Estimates</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Informational" %}</div>
+    <div class="value">{{ metrics.reliable|intc }}<small>reliable</small></div>
+    <div class="hint">{{ metrics.provisional|intc }} provisional (not yet checked against SBI) &middot; {{ metrics.unavailable|intc }} with no estimate</div>
+    {% if user.is_staff %}<a class="go" href="{% url 'dashboard:bank_flow' %}">Compare with SBI &rarr;</a>{% endif %}
+  </div>
+  <div class="card stat">
+    <div class="label"><span>Data freshness</span>{% include "dashboard/components/badge.html" with tone=fr.calling_sheet.state|state_tone text=fr.calling_sheet.state|capfirst %}</div>
+    <div class="value" style="font-size:22px">{% if fr.calling_sheet.last_success %}{{ fr.calling_sheet.last_success|timesince }} ago{% else %}Never{% endif %}</div>
+    <div class="hint">Calling Sheet last read. Bank statements: {% if fr.transactions.last_flow_date %}newest day {{ fr.transactions.last_flow_date|date:"j M" }}{% else %}none yet{% endif %}.</div>
+    <a class="go" href="{% url 'dashboard:data_readiness' %}">Data readiness &rarr;</a>
+  </div>
+  <div class="card stat">
+    <div class="label"><span>New customer accounts</span>{% if new_accounts.available %}{% include "dashboard/components/badge.html" with tone="info" text="Observed" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Not captured" %}{% endif %}</div>
+    {% if new_accounts.available %}
+    <div class="value">{{ new_accounts.mtd|intc }}<small>so far in {{ new_accounts.month_label }}</small></div>
+    <div class="hint">{{ new_accounts.today|intc }} on the latest day &middot; month target {{ new_accounts.target|intc }} &middot; {{ new_accounts.csps_reporting|intc }} CSPs reporting. {{ accounts.current_total|intc }} customer accounts in total.</div>
+    {% else %}
+    <div class="value">&mdash;</div>
+    <div class="hint">New customer accounts for {{ new_accounts.month_label }} have not been captured yet, so no number is shown. {{ accounts.current_total|intc }} customer accounts in total.</div>
+    {% endif %}
+  </div>
+  <a class="card stat" href="{% url 'dashboard:needs_attention' %}?c=codes">
+    <div class="label"><span>Unlinked statement rows</span>{% if cats.codes.count %}{% include "dashboard/components/badge.html" with tone="warn" text="Excluded" %}{% else %}{% include "dashboard/components/badge.html" with tone="ok" text="None" %}{% endif %}</div>
+    <div class="value">{{ cats.codes.count|intc }}<small>rows</small></div>
+    <div class="hint">{{ cats.codes.amount|inr }}{% if metrics.unattributed_share %} &middot; {{ metrics.unattributed_share|pct0 }} of statement value{% endif %}. Left out of every CSP's figures.</div>
+  </a>
+  <a class="card stat" href="{% url 'dashboard:csp_comparisons' %}">
+    <div class="label"><span>Large balance movements</span></div>
+    <div class="value">{{ metrics.big_up|intc }}<small>up</small> &nbsp;{{ metrics.big_down|intc }}<small>down</small></div>
+    <div class="hint">Of {{ metrics.compared|intc }} CSPs: SBI-reported average moved more than 10% since yesterday.</div>
+    <div class="go">Day by day &rarr;</div>
+  </a>
+  <a class="card stat" href="{% url 'dashboard:needs_attention' %}?c=counts">
+    <div class="label"><span>Missing or stale account counts</span>{% if cats.counts.count %}{% include "dashboard/components/badge.html" with tone="warn" text="Review" %}{% else %}{% include "dashboard/components/badge.html" with tone="ok" text="None" %}{% endif %}</div>
+    <div class="value">{{ cats.counts.count|intc }}<small>CSPs</small></div>
+    <div class="hint">Missing, zero, or not read for more than 3 days. The last known count is used meanwhile.</div>
+  </a>
+  <a class="card stat" href="{% url 'dashboard:month_end' %}">
+    <div class="label"><span>Month-to-date estimate</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Estimate" %}</div>
+    <div class="value">{{ outlook.network.mtd_average|inr }}</div>
+    <div class="hint">Average per account, {{ outlook.month_label }}, {{ outlook.csps_with_outlook|intc }} CSPs. Not an SBI figure.</div>
+    <div class="go">Month-end outlook &rarr;</div>
+  </a>
+  <a class="card stat" href="{% url 'dashboard:month_end' %}">
+    <div class="label"><span>Projected month-end average</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Projection" %}</div>
+    <div class="value">{{ outlook.network.projected_average|inr }}</div>
+    <div class="hint">Latest estimate carried over the remaining {{ outlook.days_remaining }} days. Provisional.</div>
+    <div class="go">See assumptions &rarr;</div>
+  </a>
+  <div class="card stat">
+    <div class="label"><span>Items to review</span></div>
+    <div class="value">{{ review.open|add:attention_total|intc }}</div>
+    <div class="hint">{{ review.open }} data categor{{ review.open|pluralize:"y,ies" }} open and {{ attention_total }} CSP alert{{ attention_total|pluralize }}.</div>
+    <a class="go" href="{% url 'dashboard:needs_attention' %}">Open the review list &rarr;</a>
+  </div>
+</section>
+
+<section class="grid g-main">
+  <div class="card">
+    <header><div><h2>Needs attention</h2><p>Most important first. Nothing here changes a figure; each item says what to do.</p></div></header>
+    <div class="body flush">
+      {% if open_categories or attention_cards %}
+      <div class="table-wrap"><table class="t">
+        <tbody>
+        {% for c in open_categories %}
+        <tr><td><b>{{ c.title }}</b><span class="sub">{{ c.impact }}</span></td>
+            <td class="num">{{ c.count|intc }}</td>
+            <td class="num"><a class="btn sm" href="{% url 'dashboard:needs_attention' %}?c={{ c.key }}">Review</a></td></tr>
+        {% endfor %}
+        {% for c in attention_cards %}
+        <tr><td><b>{{ c.title }}</b> <a href="{% url 'dashboard:csp_detail' c.csp_code %}">{{ c.name|default:c.csp_code }}</a>
+            <span class="sub">{{ c.action }}</span></td>
+            <td>{% include "dashboard/components/badge.html" with tone=c.severity|sev_tone text=c.severity_label %}</td>
+            <td class="num"><a class="btn sm" href="{% url 'dashboard:csp_detail' c.csp_code %}">Open CSP</a></td></tr>
+        {% endfor %}
+        </tbody></table></div>
+      {% else %}
+        {% include "dashboard/components/empty.html" with title="Nothing needs attention right now" text="Every check on the data and every CSP alert is clear for the last 30 days." %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <header><div><h2>Data on its way to an estimate</h2><p>Six stages, from received to estimated.</p></div></header>
+    <div class="body">
+      <ol class="stack" style="list-style:none;margin:0;padding:0;gap:10px">
+      {% for s in ready.stages %}
+        <li class="row between" style="flex-wrap:nowrap;align-items:flex-start"><span><b>{{ s.number }}.</b> {{ s.title }}</span>
+          {% include "dashboard/components/badge.html" with tone=s.status text=s.status|status_word %}</li>
+      {% endfor %}
+      </ol>
+    </div>
+    <footer><a href="{% url 'dashboard:data_readiness' %}">Open data readiness &rarr;</a></footer>
+  </div>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>Average balance per account</h2><p>SBI-reported values step when SBI refreshes them; the estimate is shadow output and is not a balance.</p></div></header>
+    <div class="body">{{ charts.average|json_script:"chart-average" }}{% include "dashboard/components/chart.html" with id="chart-average" %}</div></div>
+  <div class="card"><header><div><h2>Customer money movement</h2><p>Eligible withdrawals and deposits from bank statements, per day.</p></div></header>
+    <div class="body">{{ charts.money|json_script:"chart-money" }}{% include "dashboard/components/chart.html" with id="chart-money" %}</div></div>
+</section>
+{% endblock %}

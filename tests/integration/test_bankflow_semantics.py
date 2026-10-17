@@ -107,3 +107,25 @@ def test_a_withdrawal_reversal_is_netted_into_withdrawals(tmp_path, csp):
     fl = intelligence.dashboard_summary(*intelligence.resolve_range(30))["flows"]
     assert fl["withdrawals"] == D(3700) and fl["deposits"] == 0
     assert fl["net_customer_flow"] == D(-3700)
+
+
+def test_yono_withdrawal_is_held_out_until_approved_and_stored_rows_are_reclassified(csp):
+    """`yono withdrawal` is a different label from `yono fi wdl` and is not counted until it is
+    independently verified. Rows stored under the old mapping move to "unclassified"."""
+    n = normalize_row(other("62850748548500089290", "YONO WITHDRAWAL", KO), "",
+                      debit=D(0), credit=D(50))
+    assert n.category == "unclassified" and n.channel_normalized == "unknown:yono withdrawal"
+    assert not n.is_reversal_candidate
+
+    # a row stored by the earlier mapping (withdrawal) is moved out by reclassify_stored()
+    from bankflow.models import StatementFile
+    sf = StatementFile.objects.create(file_hash="h" * 64, filename="x.xls", status="imported")
+    StatementTransaction.objects.create(
+        row_key="k" * 64, first_statement=sf, row_index=1, txn_date="2026-10-01",
+        credit=D(50), balance=D(50), description_hash="d" * 64, channel_normalized="yono_withdrawal",
+        category="withdrawal", side="credit", is_reversal_candidate=False,
+    )
+    assert reclassify_stored() >= 1
+    row = StatementTransaction.objects.get(row_key="k" * 64)
+    assert row.category == "unclassified" and row.channel_normalized == "unknown:yono withdrawal"
+    assert reclassify_stored() == 0  # idempotent

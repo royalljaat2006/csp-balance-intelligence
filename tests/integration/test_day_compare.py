@@ -223,20 +223,22 @@ def staff(client):
 
 
 @pytest.mark.parametrize("url", [
-    "/dashboard/", "/dashboard/money/", "/dashboard/needs-attention/",
+    "/dashboard/", "/dashboard/money/", "/dashboard/needs-attention/", "/dashboard/csps/",
+    "/dashboard/month-end/",
 ])
 def test_the_strip_is_on_every_data_page(staff, url):
     # first visit, nothing cached yet: the page renders at once with a placeholder ...
     cold = staff.get(url).content.decode()
-    assert 'id="dc-lazy"' in cold and 'data-shell-lazy="1"' in cold and 'data-dc-key=' not in cold
+    assert 'id="dc-slot"' in cold and "data-shell-url=" in cold and 'data-dc-key=' not in cold
     # ... and the shell endpoint (what the page fetches next) returns the strip
     strip = staff.get("/dashboard/shell/").json()["strip_html"]
     assert "Today vs yesterday" in strip and 'data-dc-key="accounts"' in strip, url
-    assert f"{TODAY:%a %d %b}" in strip and f"{YESTERDAY:%a %d %b}" in strip
+    assert f"{TODAY:%a} {TODAY.day} {TODAY:%b}" in strip
+    assert f"{YESTERDAY:%a} {YESTERDAY.day} {YESTERDAY:%b}" in strip
     # every later visit finds it cached and has the strip inline: no placeholder, no fetch
     warm = staff.get(url).content.decode()
-    assert 'data-dc-key="accounts"' in warm and 'id="dc-lazy"' not in warm, url
-    assert 'data-shell-lazy' not in warm
+    assert 'data-dc-key="accounts"' in warm and 'id="dc-slot"' not in warm, url
+    assert "data-shell-url=" not in warm
 
 
 def test_the_shell_endpoint_needs_a_login_and_is_not_cached_by_shared_proxies(staff, client):

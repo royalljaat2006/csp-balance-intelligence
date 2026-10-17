@@ -1,0 +1,1 @@
+<div class="callout {{ tone }}" role="{% if tone == 'bad' %}alert{% else %}note{% endif %}">{% include "dashboard/_icon.html" with name=tone|default:"info" %}<div>{% if title %}<b>{{ title }}</b>{% endif %}{{ text }}</div></div>

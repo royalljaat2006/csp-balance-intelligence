@@ -1,20 +1,30 @@
 {% extends "dashboard/base.html" %}
-{% block title %}More — CSP Balance Tracker{% endblock %}
-{% block content %}
-<div class="wrap sm">
-  <header class="sm-head">
-    <div>
-      <h1>More</h1>
-      <p class="sub">Reports, incentives, messages and tools. Everything that used to be in the menu is here.</p>
-    </div>
-  </header>
-  {% for g in groups %}
-  <section class="sm-panel" aria-labelledby="g{{ forloop.counter }}">
-    <h2 id="g{{ forloop.counter }}">{{ g.title }}</h2>
-    <ul class="sm-tools">
-      {% for i in g.items %}<li><a href="{{ i.href }}"><strong>{{ i.label }}</strong><span>{{ i.desc }}</span></a></li>{% endfor %}
-    </ul>
-  </section>
-  {% endfor %}
+{% block title %}Operations · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Operations</h1>
+    <p class="lede">Health, history and supporting tools. {% if user.is_staff %}You are signed in as staff, so every tool is listed.{% else %}You have read-only access; staff tools are not shown.{% endif %}</p>
+  </div>
 </div>
+{% endblock %}
+{% block content %}
+{% for g in groups %}
+<section class="card" aria-labelledby="g{{ forloop.counter }}">
+  <header><div><h2 id="g{{ forloop.counter }}">{{ g.title }}</h2></div></header>
+  <div class="body flush"><div class="table-wrap"><table class="t"><tbody>
+    {% for i in g.items %}<tr><td class="name"><a href="{{ i.href }}"><b>{{ i.label }}</b></a></td><td class="muted">{{ i.desc }}</td></tr>{% endfor %}
+  </tbody></table></div></div>
+</section>
+{% endfor %}
+<section class="card">
+  <header><div><h2>Your access</h2></div></header>
+  <div class="body">
+    <dl class="kv left" style="grid-template-columns:140px 1fr">
+      <dt>Signed in as</dt><dd>{{ user.get_username }} &mdash; {% if user.is_staff %}staff{% else %}viewer{% endif %}</dd>
+      <dt>You can</dt><dd>{% if user.is_staff %}See every page, start the listed manual runs on System health, approve or reject draft messages, and open the administration console.{% else %}See Overview, data readiness, CSP balances, money movement, review items and the month-end outlook.{% endif %}</dd>
+      <dt>You cannot</dt><dd>{% if user.is_staff %}Change a balance, a slab or an estimate. Nothing in this application edits those.{% else %}Start runs, approve messages, or see technical error text and the SBI comparison.{% endif %}</dd>
+    </dl>
+  </div>
+</section>
 {% endblock %}

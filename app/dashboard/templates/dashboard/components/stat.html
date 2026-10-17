@@ -1,0 +1,7 @@
+{% comment %}label, value, unit, hint, href, go, badge_tone, badge_text{% endcomment %}
+{% if href %}<a class="card stat" href="{{ href }}">{% else %}<div class="card stat">{% endif %}
+  <div class="label"><span>{{ label }}</span>{% if badge_text %}{% include "dashboard/components/badge.html" with tone=badge_tone text=badge_text %}{% endif %}</div>
+  <div class="value">{{ value }}{% if unit %}<small>{{ unit }}</small>{% endif %}</div>
+  {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+  {% if href and go %}<div class="go">{{ go }} &rarr;</div>{% endif %}
+{% if href %}</a>{% else %}</div>{% endif %}

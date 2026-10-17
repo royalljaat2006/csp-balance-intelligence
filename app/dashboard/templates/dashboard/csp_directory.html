@@ -1,195 +1,95 @@
-{% extends "dashboard/base.html" %}
-{% load humanize %}
-{% block title %}CSP Directory — Eko Operations{% endblock %}
-{% block content %}
-<div class="wrap stagger">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Network-wide</div>
-    <h1>CSP Directory</h1>
-    <p class="sub">Browse every CSP known to the tracker, whether or not it has reported yet —
-      {{ total_csps|intcomma }} total. Same today-vs-yesterday comparison engine as Daily Comparison.</p>
-  </header>
-
-  <section class="panel" style="padding:12px 16px;">
-    <form method="get" class="date-range-form">
-      <label>Mode
-        <select name="mode">
-          <option value="overall" {% if mode == "overall" %}selected{% endif %}>Overall</option>
-          <option value="onus" {% if mode == "onus" %}selected{% endif %}>ONUS</option>
-        </select>
-      </label>
-      <button type="submit">Apply</button>
-    </form>
-  </section>
-
-  <section class="panel" id="directory-table">
-    <div class="panel-head">
-      <h2>All CSPs</h2>
-      <span class="hint" id="table-count"></span>
-    </div>
-    <div class="controls">
-      <input class="search" id="search" type="search" placeholder="Search by name, code, or mobile&hellip;" aria-label="Search CSPs">
-      <button class="chip" data-slab="ALL" aria-pressed="true">All slabs</button>
-      <button class="chip" data-slab="NIL" aria-pressed="false">NIL</button>
-      <button class="chip" data-slab="S1" aria-pressed="false">S1</button>
-      <button class="chip" data-slab="S2" aria-pressed="false">S2</button>
-      <button class="chip" data-slab="S3" aria-pressed="false">S3</button>
-      <button class="chip" data-slab="S4" aria-pressed="false">S4</button>
-      <button class="chip" data-reporting="ALL" aria-pressed="true">All</button>
-      <button class="chip" data-reporting="reporting">Reporting</button>
-      <button class="chip" data-reporting="not_reporting">Not reporting</button>
-      <button type="button" class="icon-btn" id="export-csv-btn" title="Export to CSV" aria-label="Export CSV" style="margin-left:auto;">&#8681;</button>
-    </div>
-    <div class="tbl-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th data-key="name">CSP <span class="arrow">&darr;</span></th>
-            <th data-key="current_balance" class="num">Current balance <span class="arrow">&darr;</span></th>
-            <th data-key="previous_balance" class="num">Yesterday balance <span class="arrow">&darr;</span></th>
-            <th data-key="mtd_mab" class="num">Monthly average <span class="arrow">&darr;</span></th>
-            <th data-key="pct_change" class="num">Change % <span class="arrow">&darr;</span></th>
-            <th data-key="slab">Slab <span class="arrow">&darr;</span></th>
-            <th data-key="account_count" class="num">Accounts <span class="arrow">&darr;</span></th>
-            <th data-key="txn_count_today" class="num">Transactions <span class="arrow">&darr;</span></th>
-            <th data-key="reporting_status">Status <span class="arrow">&darr;</span></th>
-            <th data-key="last_sync">Last sync <span class="arrow">&darr;</span></th>
-          </tr>
-        </thead>
-        <tbody id="tbl-body"></tbody>
-      </table>
-    </div>
-    <div class="pager">
-      <span id="pager-info"></span>
-      <div class="pager-btns"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button></div>
-    </div>
-  </section>
-
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}CSP balances · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>CSP balances</h1>
+    <p class="lede">Every CSP on the roster with its SBI-reported average balance, our estimate and how far that estimate can be trusted. All averages are per account.</p>
+  </div>
+  <div class="seg" role="group" aria-label="View">
+    <a href="?"{% if view == "balances" %} aria-current="true"{% endif %}>Balances and estimates</a>
+    <a href="?view=day"{% if view == "day" %} aria-current="true"{% endif %}>Today vs yesterday</a>
+  </div>
 </div>
-
-{{ rows|json_script:"directory-data" }}
 {% endblock %}
+{% block content %}
+{% if view == "day" %}
+<section class="card">
+  <div class="body">
+    <form class="filters" method="get" role="search"><input type="hidden" name="view" value="day">
+      <label>Find a CSP<input type="search" name="q" value="{{ q }}" placeholder="Name or code" style="min-width:240px"></label>
+      <label>Sort by<select name="sort" data-autosubmit>{% for k, v in sorts.items %}<option value="{{ k }}"{% if k == sort %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Order<select name="order" data-autosubmit><option value="desc"{% if order == "desc" %} selected{% endif %}>Highest first</option><option value="asc"{% if order == "asc" %} selected{% endif %}>Lowest first</option></select></label>
+      <button class="btn primary" type="submit">Apply</button>
+    </form>
+    <p class="small muted" style="margin-top:10px">{{ total|intc }} CSPs. Today is {{ meta.today|date:"D j M" }} and yesterday {{ meta.yesterday|date:"D j M" }}. A dash means no figure is stored for that day. {% if meta.money_note %}{{ meta.money_note }}{% endif %}</p>
+  </div>
+  {% if rows %}
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>CSP</th><th class="num">Accounts</th><th class="num">New accounts (day)</th><th class="num">Withdrawn</th><th class="num">Deposited</th><th class="num">Deposits minus withdrawals</th><th class="num">SBI-reported average</th><th class="num">Our estimate</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr data-csp="{{ r.csp_code }}">
+      <td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}"><b>{{ r.name|default:r.csp_code }}</b></a><span class="sub mono">{{ r.csp_code }}</span></td>
+      <td class="num">{{ r.accounts_today|intc }}<span class="sub">yesterday {{ r.accounts_yesterday|intc }}{% if r.accounts_change is not None %} ({{ r.accounts_change|signed }}){% endif %}</span></td>
+      <td class="num">{{ r.new_day_today|intc }}<span class="sub">yesterday {{ r.new_day_yesterday|intc }}</span></td>
+      <td class="num">{{ r.withdrawals_today|inr }}<span class="sub">yesterday {{ r.withdrawals_yesterday|inr }}</span></td>
+      <td class="num">{{ r.deposits_today|inr }}<span class="sub">yesterday {{ r.deposits_yesterday|inr }}</span></td>
+      <td class="num">{{ r.net_today|signed_inr }}<span class="sub">yesterday {{ r.net_yesterday|signed_inr }}</span></td>
+      <td class="num">{{ r.observed_today|inr }}<span class="sub">yesterday {{ r.observed_yesterday|inr }}</span></td>
+      <td class="num">{% if r.estimate_today is not None %}{{ r.estimate_today|inr }}{% else %}&mdash;{% endif %}<span class="sub">{{ r.estimate_status|est_label }}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% include "dashboard/components/pager.html" %}
+  {% else %}
+  {% include "dashboard/components/empty.html" with title="No CSP matches" text="Try a different name or code." href="?view=day" go="Clear search" %}
+  {% endif %}
+</section>
+<p class="small muted">Money for today is "so far" until its statement is proven complete, so it is not a like-for-like comparison with yesterday. Only eligible withdrawals and deposits, matched exactly to a CSP, are counted.</p>
 
-{% block extra_scripts %}
-<script>
-  const DIRECTORY_ROWS = JSON.parse(document.getElementById("directory-data").textContent);
-  const SLAB_CLASS = { NIL: "nil", S1: "s1", S2: "s2", S3: "s3", S4: "s4" };
-
-  function slabPill(slab) {
-    if (!slab) return "&mdash;";
-    return `<span class="pill ${SLAB_CLASS[slab] || ""}">${slab}</span>`;
-  }
-  function reportingBadge(status) {
-    return status === "reporting"
-      ? `<span class="status-badge fresh">Reporting</span>`
-      : `<span class="status-badge missing">Not reporting</span>`;
-  }
-  function changeCell(pct) {
-    if (pct == null) return "&mdash;";
-    const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
-    return `<span class="trend-tag ${cls}">${pct > 0 ? "+" : ""}${pct}%</span>`;
-  }
-
-  function initDirectoryTable(rows) {
-    const pageSize = 25;
-    const state = { q: "", slab: "ALL", reporting: "ALL", sortKey: "name", sortDir: 1, page: 0 };
-    const tbody = document.getElementById("tbl-body");
-    const countEl = document.getElementById("table-count");
-    const pagerInfo = document.getElementById("pager-info");
-    const prevBtn = document.getElementById("prev");
-    const nextBtn = document.getElementById("next");
-
-    function filtered() {
-      const q = state.q.trim().toLowerCase();
-      let out = rows.filter((c) => {
-        if (state.slab !== "ALL" && c.slab !== state.slab) return false;
-        if (state.reporting !== "ALL" && c.reporting_status !== state.reporting) return false;
-        if (!q) return true;
-        return (c.name || "").toLowerCase().includes(q) || c.csp_code.toLowerCase().includes(q) || (c.mobile || "").includes(q);
-      });
-      out.sort((a, b) => {
-        let av = a[state.sortKey], bv = b[state.sortKey];
-        if (av == null) av = state.sortDir === 1 ? Infinity : -Infinity;
-        if (bv == null) bv = state.sortDir === 1 ? Infinity : -Infinity;
-        if (typeof av === "string") return av.localeCompare(bv) * state.sortDir;
-        return (av - bv) * state.sortDir;
-      });
-      return out;
-    }
-
-    function render() {
-      const list = filtered();
-      countEl.textContent = list.length + " match" + (list.length === 1 ? "" : "es");
-      const start = state.page * pageSize;
-      const page = list.slice(start, start + pageSize);
-
-      tbody.innerHTML = page.map((c) => `
-        <tr>
-          <td><a class="name-link" href="${cspDetailUrl(c.csp_code)}">${c.name || c.csp_code}</a><span class="code">${c.csp_code}</span></td>
-          <td class="mono">${window.fmtINR(c.current_balance)}</td>
-          <td class="mono">${window.fmtINR(c.previous_balance)}</td>
-          <td class="mono">${window.fmtINR(c.mtd_mab)}</td>
-          <td class="mono">${changeCell(c.pct_change)}</td>
-          <td>${slabPill(c.slab)}</td>
-          <td class="mono">${window.fmtNum(c.account_count)}</td>
-          <td class="mono">${c.txn_count_today == null ? "&mdash;" : window.fmtNum(c.txn_count_today)}</td>
-          <td>${reportingBadge(c.reporting_status)}</td>
-          <td class="mono">${c.last_sync || "&mdash;"}</td>
-        </tr>`).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px;">No CSPs match this filter.</td></tr>`;
-
-      document.querySelectorAll("thead th[data-key]").forEach((th) => {
-        th.classList.toggle("sorted", th.dataset.key === state.sortKey);
-        const arrow = th.querySelector(".arrow");
-        if (arrow) arrow.textContent = th.dataset.key === state.sortKey ? (state.sortDir === 1 ? "↑" : "↓") : "↓";
-      });
-
-      const pages = Math.max(1, Math.ceil(list.length / pageSize));
-      pagerInfo.textContent = `Page ${state.page + 1} of ${pages}`;
-      prevBtn.disabled = state.page <= 0;
-      nextBtn.disabled = state.page >= pages - 1;
-    }
-
-    document.getElementById("search").addEventListener("input", (e) => { state.q = e.target.value; state.page = 0; render(); });
-    document.querySelectorAll(".chip[data-slab]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".chip[data-slab]").forEach((b) => b.setAttribute("aria-pressed", "false"));
-        btn.setAttribute("aria-pressed", "true");
-        state.slab = btn.dataset.slab; state.page = 0; render();
-      });
-    });
-    document.querySelectorAll(".chip[data-reporting]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".chip[data-reporting]").forEach((b) => b.setAttribute("aria-pressed", "false"));
-        btn.setAttribute("aria-pressed", "true");
-        state.reporting = btn.dataset.reporting; state.page = 0; render();
-      });
-    });
-    document.querySelectorAll("thead th[data-key]").forEach((th) => {
-      th.addEventListener("click", () => {
-        if (state.sortKey === th.dataset.key) state.sortDir *= -1;
-        else { state.sortKey = th.dataset.key; state.sortDir = 1; }
-        render();
-      });
-    });
-    prevBtn.addEventListener("click", () => { state.page--; render(); });
-    nextBtn.addEventListener("click", () => { state.page++; render(); });
-
-    document.getElementById("export-csv-btn").addEventListener("click", () => {
-      window.exportRowsToCsv("csp-directory.csv", filtered(), [
-        {key: "csp_code", label: "CSP Code"}, {key: "name", label: "Name"},
-        {key: "current_balance", label: "Current Balance"}, {key: "previous_balance", label: "Yesterday Balance"},
-        {key: "mtd_mab", label: "Monthly Average"}, {key: "pct_change", label: "Change %"},
-        {key: "slab", label: "Slab"}, {key: "account_count", label: "Accounts"},
-        {key: "txn_count_today", label: "Transactions"}, {key: "reporting_status", label: "Status"},
-        {key: "last_sync", label: "Last Sync"},
-      ]);
-      window.toast("Directory exported.", {type: "success"});
-    });
-
-    render();
-  }
-
-  initDirectoryTable(DIRECTORY_ROWS);
-</script>
+{% else %}
+<section class="card">
+  <div class="body">
+    <form class="filters" method="get" role="search">
+      <label>Find a CSP<input type="search" name="q" value="{{ q }}" placeholder="Name or code" style="min-width:240px"></label>
+      <label>Show<select name="show" data-autosubmit>{% for k, v in filters.items %}<option value="{{ k }}"{% if k == show %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Sort by<select name="sort" data-autosubmit>{% for k, v in sorts.items %}<option value="{{ k }}"{% if k == sort %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Order<select name="order" data-autosubmit><option value="asc"{% if order == "asc" %} selected{% endif %}>Lowest first</option><option value="desc"{% if order == "desc" %} selected{% endif %}>Highest first</option></select></label>
+      <button class="btn primary" type="submit">Apply</button>
+      {% if q or show != "all" %}<a class="btn" href="?">Clear</a>{% endif %}
+    </form>
+    <p class="small muted" style="margin-top:10px">{{ total|intc }} of {{ all_total|intc }} CSPs shown &middot; {{ counts.review|intc }} need review &middot; {{ counts.reliable|intc }} reliable estimate{{ counts.reliable|pluralize }} &middot; {{ counts.provisional|intc }} provisional &middot; {{ counts.none|intc }} with no estimate.</p>
+  </div>
+  {% if rows %}
+  <div class="table-wrap"><table class="t">
+    <caption class="sr">CSPs with SBI-reported and estimated average balance per account</caption>
+    <thead><tr>
+      <th scope="col">CSP</th><th scope="col" class="num">Accounts</th><th scope="col" class="num">SBI-reported average</th>
+      <th scope="col" class="num">Our estimate</th><th scope="col" class="num">Today vs yesterday</th>
+      <th scope="col" class="num">Month to date</th><th scope="col" class="num">Month-end projection</th>
+      <th scope="col">Data status</th><th scope="col" class="num">Review</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="name"><a href="{% url 'dashboard:csp_detail' r.code %}"><b>{{ r.name|default:r.code }}</b></a><span class="sub mono">{{ r.code }}</span></td>
+      <td class="num">{% if r.accounts %}{{ r.accounts|intc }}{% else %}<span class="badge bad">{% include "dashboard/_icon.html" with name="bad" %}Missing</span>{% endif %}
+        {% if r.accounts_stale and r.accounts %}<span class="sub" title="The account count has not been read recently">{% if r.accounts_age is None %}never read{% else %}read {{ r.accounts_age|ago_days }}{% endif %}</span>{% endif %}</td>
+      <td class="num">{{ r.sbi_avg|inr }}{% if r.sbi_date %}<span class="sub">as of {{ r.sbi_date|date:"j M" }}</span>{% endif %}</td>
+      <td class="num">{% if r.est is not None %}{{ r.est|inr }}{% else %}&mdash;{% endif %}<span class="sub">{{ r.status|est_label }}</span></td>
+      <td class="num">{% if r.move_pct is None %}<span class="muted">No comparison</span>{% else %}{{ r.move_pct|pct1 }}<span class="sub">{{ r.move_abs|signed_inr }}</span>{% endif %}</td>
+      <td class="num">{% if r.mtd is not None %}{{ r.mtd|inr }}<span class="sub">{{ r.days_counted }} days</span>{% else %}&mdash;{% endif %}</td>
+      <td class="num">{% if r.projected is not None %}{{ r.projected|inr }}{% else %}&mdash;{% endif %}</td>
+      <td>{% if r.status == "VALIDATED" %}{% include "dashboard/components/badge.html" with tone="ok" text="Reliable" %}{% elif r.status == "UNAVAILABLE" or r.status == "NOT_COMPUTED" %}{% include "dashboard/components/badge.html" with tone="" text="No estimate" %}{% else %}{% include "dashboard/components/badge.html" with tone="shadow" text="Provisional" %}{% endif %}</td>
+      <td class="num">{% if r.review_items %}<a href="{% url 'dashboard:csp_detail' r.code %}#review">{% include "dashboard/components/badge.html" with tone="warn" text=r.review_items %}</a>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% include "dashboard/components/pager.html" %}
+  {% else %}
+  {% include "dashboard/components/empty.html" with title="No CSP matches" text="Try a different name or code, or clear the filters." href="?" go="Clear filters" %}
+  {% endif %}
+</section>
+<p class="small muted">Provisional means the estimate has not been checked against SBI refreshes; where the method is carry-forward it equals the last SBI-reported value. A dash means no figure exists. Production balances, slabs and incentives are unaffected by anything on this page.</p>
+{% endif %}
 {% endblock %}

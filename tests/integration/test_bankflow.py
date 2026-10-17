@@ -441,7 +441,7 @@ def test_api_endpoints_shape(client, api_key, tmp_path, csps):
 
 def test_dashboard_is_staff_only(client, db):
     User = get_user_model()
-    url = "/dashboard/bank-flow/"
+    url = "/dashboard/sbi-comparison/"
     assert client.get(url).status_code == 302  # anonymous -> login
     User.objects.create_user("viewer", password="x", is_staff=False)
     client.login(username="viewer", password="x")
@@ -456,14 +456,14 @@ def test_dashboard_labels_status_and_predictions_honestly(client, db, tmp_path, 
     User = get_user_model()
     User.objects.create_user("staff", password="x", is_staff=True)
     client.login(username="staff", password="x")
-    empty = client.get("/dashboard/bank-flow/").content.decode()
-    assert "NOT EVALUATED" in empty and "VALIDATION PASSED" in empty  # legend text + statuses
+    empty = client.get("/dashboard/sbi-comparison/").content.decode()
+    assert "NOT EVALUATED" in empty and "No validation run yet" in empty
 
     _write(tmp_path, "a.xls", make_statement(sample_rows()))
     run_import(tmp_path)
     evaluate(EvalConfig())
-    html = client.get("/dashboard/bank-flow/").content.decode()
+    html = client.get("/dashboard/sbi-comparison/").content.decode()
     assert "INSUFFICIENT EVIDENCE" in html
-    assert "RECONCILED" in html
-    assert "anything after the 8th character is dropped" in html  # the confirmed format rule
-    assert "1A852455" in html
+    ready = client.get("/dashboard/readiness/").content.decode()
+    assert "Newest statement: ledger check" in ready
+    assert "nine-character code belongs to its eight-character parent" in ready  # the format rule

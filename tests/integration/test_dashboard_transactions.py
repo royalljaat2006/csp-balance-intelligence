@@ -134,7 +134,7 @@ def stale_daily_activity_mart(db):
                  cash_out_pool, net_flow, onus_txn_count, onus_txn_amount,
                  onus_withdrawal_count, onus_withdrawal_amount, onus_deposit_count,
                  onus_deposit_amount, onus_cash_in_pool, onus_cash_out_pool, onus_net_flow)
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             rows,
         )
@@ -158,8 +158,8 @@ def test_kpi_cards_use_the_present_day_as_today_even_when_the_mart_is_older(
     assert response.context["txn_count_today"] is None  # not the older day's 6, and not 0
 
     body = response.content.decode()
-    assert "no data yet" in body and "have not arrived yet" in body
-    assert latest.strftime("%d %b") in body  # "the newest day on file is ..."
+    assert "No workbook data for today yet" in body and "arrives when" in body
+    assert f"{latest.day} {latest:%b}" in body  # "the newest day on file is ..."
 
 
 @pytest.mark.django_db
@@ -190,7 +190,7 @@ def test_kpi_cards_say_today_when_mart_is_genuinely_current(logged_in_client, cs
                  cash_out_pool, net_flow, onus_txn_count, onus_txn_amount,
                  onus_withdrawal_count, onus_withdrawal_amount, onus_deposit_count,
                  onus_deposit_amount, onus_cash_in_pool, onus_cash_out_pool, onus_net_flow)
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             ("1A850800", str(today), 1, 500, 0, 0, 1, 500, 500, 0, 500, 0, 0, 0, 0, 0, 0, 0, 0, 0),
         )
@@ -212,9 +212,8 @@ def test_type_distribution_json_is_valid_json_serializable(logged_in_client, csp
     body = response.content.decode()
     # The json_script block must actually be valid JSON, not a Python repr
     # leaking Decimal(...) syntax into the page (would break the chart JS).
-    start = body.index('id="type-distribution-data"')
+    start = body.index('id="chart-types"')
     start = body.index(">", start) + 1
     end = body.index("</script>", start)
     parsed = json.loads(body[start:end])
-    assert parsed[0]["txn_type"] == "Deposit"
-    assert parsed[0]["amount"] == 500.0
+    assert parsed["series"][0]["points"][0] == ["Deposit", 1]

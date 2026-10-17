@@ -1,219 +1,123 @@
-{% extends "dashboard/base.html" %}
-{% block title %}{{ csp.name|default:csp.csp_code }} — CSP Balance Tracker{% endblock %}
-{% block content %}
-<div class="wrap stagger">
-
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}{{ csp.name|default:csp.csp_code }} · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
   <div>
-    <a class="back-link" href="{% url 'dashboard:home' %}">&larr; All CSPs</a>
-    <div class="eyebrow" style="margin-top:10px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>{{ csp.csp_code }}</div>
-    <h1>{{ csp.name|default:csp.csp_code }}</h1>
-    <p class="sub">
-      {% if csp.mobile %}{{ csp.mobile }}{% endif %}{% if csp.email %} &middot; {{ csp.email }}{% endif %}
-      {% if not row %}<br><em>No monthly summary yet for {{ month }} — the calculation pipeline may not have run for this CSP this month.</em>{% endif %}
+    <div class="crumbs"><a href="{% url 'dashboard:csp_directory' %}">CSP balances</a> / {{ csp.csp_code }}</div>
+    <h1>{{ csp.name|default:csp.csp_code }} <span class="mono muted">{{ csp.csp_code }}</span></h1>
+    <p class="lede">
+      {% if x.has_estimate %}{% include "dashboard/components/badge.html" with tone=x.estimate.status|est_tone text=x.estimate.status|est_label %}{% endif %}
+      {% if x.account_count.below_gate %}{% include "dashboard/components/badge.html" with tone="info" text="Below the 200-account gate" %}{% endif %}
+      {% if x.account_count.stale %}{% include "dashboard/components/badge.html" with tone="warn" text="Account count stale" %}{% endif %}
+      {% if not x.csp.tracked %}{% include "dashboard/components/badge.html" with tone="warn" text="Not on the current roster" %}{% endif %}
     </p>
   </div>
-
-  {% if csp_day_compare %}{% include "dashboard/components/day_compare.html" with dc=csp_day_compare %}{% endif %}
-
-  {% if row %}
-  <section class="panel">
-    <div class="panel-head"><h2>{{ month }} summary</h2>
-      <span class="pill {{ row.slab|lower }}">{{ row.slab }}</span>
-    </div>
-    <div class="kv-grid">
-      <div class="kv"><span class="k">Accounts</span><span class="v">{{ row.account_count }}</span></div>
-      <div class="kv"><span class="k">Avg balance / a/c</span><span class="v"><span data-fmt="inr" data-val="{{ row.mtd_mab }}"></span></span></div>
-      <div class="kv"><span class="k">Incentive rate</span><span class="v">{{ row.incentive_rate_pa }}% p.a.</span></div>
-      <div class="kv"><span class="k">Gap to minimum</span><span class="v"><span data-fmt="inr" data-val="{{ row.gap_to_min }}"></span></span></div>
-      <div class="kv"><span class="k">Gap to next slab</span><span class="v">{% if row.gap_to_next_slab is not None %}<span data-fmt="inr" data-val="{{ row.gap_to_next_slab }}"></span>{% else %}&mdash;{% endif %}</span></div>
-      <div class="kv"><span class="k">Deposit needed (total)</span><span class="v">{% if row.amount_to_deposit is not None %}<span data-fmt="cr" data-val="{{ row.amount_to_deposit }}"></span>{% else %}&mdash;{% endif %}</span></div>
-      <div class="kv"><span class="k">Projected month-end</span><span class="v">{% if row.projected_mab is not None %}<span data-fmt="inr" data-val="{{ row.projected_mab }}"></span>{% else %}&mdash;{% endif %}</span></div>
-      <div class="kv"><span class="k">Trend (7d)</span><span class="v">{{ row.trend_flag|default:"new"|capfirst }}</span></div>
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Daily comparison</h2>
-      <span class="hint">{{ daily_comparison.current_date }} vs {{ daily_comparison.comparison_date|default:"—" }}</span>
-    </div>
-    <form method="get" style="margin-bottom:12px;">
-      <div class="mode-switch" role="group" aria-label="Comparison mode" style="display:inline-flex; width:fit-content;">
-        <button type="submit" name="mode" value="overall" class="{% if mode == "overall" %}active{% endif %}">Overall</button>
-        <button type="submit" name="mode" value="onus" class="{% if mode == "onus" %}active{% endif %}">ONUS</button>
-      </div>
-    </form>
-    {% include "dashboard/components/csp_comparison_summary.html" with daily_comparison=daily_comparison trend_intel=trend_intel only %}
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Data quality</h2></div>
-    <div class="kv-grid">
-      <div class="kv"><span class="k">Today's reading</span><span class="v">{% include "dashboard/components/status_badge.html" with status=daily_comparison.current_data_status %}</span></div>
-      <div class="kv"><span class="k">Comparison baseline</span><span class="v">{% include "dashboard/components/status_badge.html" with status=daily_comparison.comparison_data_status %}</span></div>
-      <div class="kv"><span class="k">Days with MTD data</span><span class="v">{{ slab_history|length }} of trailing 60</span></div>
-      <div class="kv"><span class="k">Source</span><span class="v">{{ current_balance.source|default:"—" }}</span></div>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Slab history</h2>
-      <span class="hint">MTD-so-far average, trailing 60 days</span>
-    </div>
-    <div id="slab-history-chart"></div>
-    {% if not slab_history %}
-    <p class="sub" style="margin-top:10px;">No daily snapshots on file yet for this CSP &mdash;
-      populated by <code>manage.py sync_daily_snapshots</code>.</p>
-    {% endif %}
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Transaction activity</h2>
-      <span class="hint">ONUS-family transactions per day (PRD §7.2)</span>
-    </div>
-    <div id="activity-chart"></div>
-  </section>
-
-  {% if balance_series|length > 1 %}
-  <section class="panel">
-    <div class="panel-head"><h2>Balance history</h2></div>
-    <div id="balance-chart"></div>
-  </section>
-  {% else %}
-  <section class="panel">
-    <div class="panel-head"><h2>Balance history</h2></div>
-    <p class="sub">Only {{ balance_series|length }} daily snapshot recorded so far — a trend line will
-      appear here once the CALLING SHEET has been ingested for a few more days.</p>
-  </section>
-  {% endif %}
-
-  {% if account_growth_series|length > 1 %}
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Account growth</h2>
-      <span class="hint">
-        {% if latest_net_new is not None %}
-          {% if latest_net_new > 0 %}<span class="trend-tag up">+{{ latest_net_new }}</span> since previous reading
-          {% elif latest_net_new < 0 %}<span class="trend-tag down">{{ latest_net_new }}</span> since previous reading
-          {% else %}no change since previous reading{% endif %}
-        {% endif %}
-      </span>
-    </div>
-    <div id="account-growth-chart"></div>
-    <p class="sub">Net change in total accounts (opens minus closes) day over day — not a count of accounts
-      opened. Day-to-day gaps reflect days the CALLING SHEET wasn't ingested, not zero activity.</p>
-  </section>
-  {% else %}
-  <section class="panel">
-    <div class="panel-head"><h2>Account growth</h2></div>
-    <p class="sub">Only {{ account_growth_series|length }} daily account-count reading recorded so far — a
-      growth trend will appear here once the CALLING SHEET has been ingested for a few more days.</p>
-  </section>
-  {% endif %}
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Recent transactions</h2>
-      <span class="hint">{{ txn_total }} total on file</span>
-    </div>
-    <div class="tbl-scroll">
-      <table>
-        <thead><tr><th>When</th><th>Type</th><th class="num">Amount</th><th>Direction</th></tr></thead>
-        <tbody>
-          {% for t in recent_txns %}
-          <tr>
-            <td class="mono" style="text-align:left;">{{ t.txn_datetime|date:"d M, H:i" }}</td>
-            <td>{{ t.txn_type }}</td>
-            <td class="mono"><span data-fmt="inr" data-val="{{ t.amount }}"></span></td>
-            <td>{{ t.direction }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">No transactions on file for this CSP yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Individual accounts</h2></div>
-    {% include "dashboard/components/empty_state.html" with title="Not available" description="Per-account balances and identifiers are not connected to this system yet — only this CSP's pooled/aggregate figures above are currently tracked. This is not an error; individual-account intelligence is a planned future capability." %}
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>AI findings &amp; actions</h2>
-      <span class="hint"><a href="{% url 'dashboard:agent_findings' %}" style="color:var(--brand);">All findings</a> &middot; <a href="{% url 'dashboard:actions' %}" style="color:var(--brand);">All actions</a></span>
-    </div>
-    <p class="sub">{% include "dashboard/components/trust_badge.html" with kind="ai_finding" %} — a specialist agent's claim about this CSP, shown with its verification outcome. Never treated as fact until verified.</p>
-    <div class="tbl-scroll" style="margin-top:6px;">
-      <table>
-        <thead><tr><th>When</th><th>Finding</th><th>Verification</th></tr></thead>
-        <tbody>
-          {% for f in agent_findings_for_csp %}
-          <tr>
-            <td class="mono" style="text-align:left;">{{ f.created_at|date:"d M, H:i" }}</td>
-            <td>{{ f.finding_type }} <span class="hint">({{ f.source_agent }})</span></td>
-            <td>{% include "dashboard/components/status_badge.html" with status=f.verification_status %}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px;">No agent findings for this CSP yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div class="tbl-scroll" style="margin-top:14px;">
-      <table>
-        <thead><tr><th>When</th><th>Action</th><th>Status</th></tr></thead>
-        <tbody>
-          {% for a in agent_actions_for_csp %}
-          <tr>
-            <td class="mono" style="text-align:left;">{{ a.created_at|date:"d M, H:i" }}</td>
-            <td>{{ a.get_action_type_display }} <span class="hint">{{ a.description|truncatechars:60 }}</span></td>
-            <td>{% include "dashboard/components/status_badge.html" with status=a.status %}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px;">No agent actions for this CSP yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+  <a class="btn primary" href="{% url 'dashboard:csp_explain' csp.csp_code %}">Why this estimate?</a>
 </div>
 {% endblock %}
+{% block content %}
+<section class="grid g4" aria-label="Key figures">
+  <div class="card stat"><div class="label"><span>Customer accounts</span></div>
+    <div class="value">{{ x.account_count.current|default:csp.account_count|intc }}</div>
+    <div class="hint">{% if x.account_count.last_reading %}Read {{ x.account_count.reading_age_days|ago_days }} ({{ x.account_count.last_reading|date:"j M" }}).{% else %}No reading on file.{% endif %}
+      {% if x.account_count.change %} Changed by {{ x.account_count.change|signed }} since the SBI value arrived.{% endif %}
+      {% if growth.pmjdy_mtd is not None %} {{ growth.pmjdy_mtd|intc }} new this month{% if growth.pmjdy_target %} (target {{ growth.pmjdy_target|intc }}){% endif %}.{% endif %}</div></div>
+  <div class="card stat"><div class="label"><span>SBI-reported average</span>{% include "dashboard/components/badge.html" with tone="info" text="Observed" %}</div>
+    <div class="value">{{ x.baseline.per_account_average|inr }}</div>
+    <div class="hint">Per account. {% if x.baseline.received_on %}Received {{ x.baseline.received_on|date:"j M Y" }}.{% else %}Nothing received yet.{% endif %}</div></div>
+  <div class="card stat"><div class="label"><span>Our estimate</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Estimate" %}</div>
+    <div class="value">{% if x.has_estimate and x.estimate.per_account_average is not None %}{{ x.estimate.per_account_average|inr }}{% else %}&mdash;{% endif %}</div>
+    <div class="hint">{% if x.has_estimate %}{{ x.estimate.reason_words }}{% else %}{{ x.message }}{% endif %}</div></div>
+  <div class="card stat"><div class="label"><span>Month to date / month-end</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Projection" %}</div>
+    <div class="value" style="font-size:22px">{% if outlook %}{{ outlook.mtd_average|inr }} <small>/ {{ outlook.projected_average|inr }}</small>{% else %}&mdash;{% endif %}</div>
+    <div class="hint">{% if outlook %}Average of {{ outlook.days_counted }} days{% if outlook.days_carried_forward %} ({{ outlook.days_carried_forward }} carried forward){% endif %}; the latest estimate is carried over the {{ outlook.days_remaining }} days left. Provisional.{% else %}No estimate stored for this month.{% endif %}</div></div>
+</section>
 
-{% block extra_scripts %}
-<script>
-  document.querySelectorAll('[data-fmt="inr"]').forEach(el => { el.textContent = window.fmtINR(+el.dataset.val); });
-  document.querySelectorAll('[data-fmt="cr"]').forEach(el => { el.textContent = window.fmtCr(+el.dataset.val); });
+{% if x.flags %}
+<section class="stack" aria-label="Flags">
+  {% for f in x.flags %}{% include "dashboard/components/callout.html" with tone=f.level text=f.text %}{% endfor %}
+</section>
+{% endif %}
 
-  const activitySeries = {{ activity_series|safe }};
-  window.renderTrendChart(document.getElementById("activity-chart"), activitySeries, {
-    label: "Daily transactions", valueFormat: window.fmtNum,
-    emptyText: "No transaction activity recorded for this CSP yet.",
-  });
+{% if csp_day_compare %}{% include "dashboard/components/day_compare.html" with dc=csp_day_compare %}{% endif %}
 
-  const slabHistorySeries = {{ slab_history_series|safe }};
-  window.renderTrendChart(document.getElementById("slab-history-chart"), slabHistorySeries, {
-    label: "MTD-so-far average", valueFormat: window.fmtINR,
-    emptyText: "No daily snapshots on file yet for this CSP.",
-  });
+<section class="card">
+  <header><div><h2>Average balance per account</h2><p>The SBI-reported value steps when SBI refreshes it. The estimate is shadow output: it is not a confirmed balance and is not used for Rule #19.</p></div></header>
+  <div class="body">{{ charts.average|json_script:"chart-average" }}{% include "dashboard/components/chart.html" with id="chart-average" %}</div>
+</section>
 
-  const balanceSeries = {{ balance_series|safe }};
-  if (balanceSeries.length > 1) {
-    window.renderTrendChart(document.getElementById("balance-chart"), balanceSeries, {
-      label: "Daily average balance", valueFormat: window.fmtINR,
-    });
-  }
+<section class="grid g2">
+  <div class="card"><header><div><h2>Eligible deposits and withdrawals</h2><p>Only approved withdrawal and deposit types, matched exactly to this CSP. Today is incomplete until its statement is proven complete.</p></div></header>
+    <div class="body">{{ charts.movement|json_script:"chart-movement" }}{% include "dashboard/components/chart.html" with id="chart-movement" %}</div></div>
+  <div class="card"><header><div><h2>Customer accounts</h2><p>Account count by day, from the Calling Sheet.</p></div></header>
+    <div class="body">{{ charts.accounts|json_script:"chart-accounts" }}{% include "dashboard/components/chart.html" with id="chart-accounts" %}</div></div>
+</section>
 
-  const accountGrowthSeries = {{ account_growth_series|safe }};
-  if (accountGrowthSeries.length > 1) {
-    window.renderTrendChart(document.getElementById("account-growth-chart"), accountGrowthSeries, {
-      label: "Total accounts", valueFormat: window.fmtNum,
-    });
-  }
-</script>
+<section class="grid g2">
+  <div class="card"><header><div><h2>SBI baseline history</h2><p>Each row is a new SBI-reported value and the day it was first seen.</p></div></header>
+    <div class="body flush table-wrap">
+      {% if series.refreshes %}<table class="t"><thead><tr><th>Received</th><th class="num">Average per account</th><th class="num">Change</th><th class="num">Accounts then</th></tr></thead><tbody>
+        {% for r in series.refreshes %}<tr><td>{{ r.received_on|date:"j M Y" }}</td><td class="num">{{ r.value|inr }}</td><td class="num">{% if r.change is not None %}{{ r.change|signed_inr }}{% else %}&mdash;{% endif %}</td><td class="num">{{ r.account_count|intc }}</td></tr>{% endfor %}
+      </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No SBI value on file" text="History builds up as the Calling Sheet is read." %}{% endif %}</div></div>
+  <div class="card"><header><div><h2>Account count changes</h2></div></header>
+    <div class="body flush table-wrap">
+      {% if series.count_changes %}<table class="t"><thead><tr><th>Date</th><th class="num">From</th><th class="num">To</th><th class="num">Change</th></tr></thead><tbody>
+        {% for c in series.count_changes %}<tr><td>{{ c.date|date:"j M Y" }}</td><td class="num">{{ c.from|intc }}</td><td class="num">{{ c.to|intc }}</td><td class="num">{{ c.change|signed }}</td></tr>{% endfor %}
+      </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="The account count has not changed" text="Only changes seen in the stored readings are listed." %}{% endif %}</div></div>
+</section>
+
+<section class="card" id="review">
+  <header><div><h2>Review items</h2><p>Open items for this CSP. Clearing an item never changes a figure.</p></div></header>
+  <div class="body">
+    {% for c in review_flags %}<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span><b>{{ c.title }}</b><span class="sub small muted" style="display:block">{{ c.meaning }} {{ c.action }}</span></span>{% include "dashboard/components/badge.html" with tone=c.severity|sev_tone text=c.severity_label %}</div>{% endfor %}
+    {% if not review_flags and not x.account_count.stale %}<p class="muted">Nothing to review for this CSP in the last 30 days.</p>{% endif %}
+    {% if x.account_count.stale %}<p>The account count is stale or missing. The last known count is still used. <a href="{% url 'dashboard:needs_attention' %}?c=counts">See all stale counts</a>.</p>{% endif %}
+  </div>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>Data gaps</h2><p>Statement days in the last 60 that are missing or not proven complete.</p></div></header>
+    <div class="body">{% if series.gaps %}<ul style="margin:0;padding-left:18px">{% for g in series.gaps|slice:":14" %}<li>{{ g.date|date:"D j M" }} &mdash; {{ g.state }}</li>{% endfor %}</ul>{% if series.gaps|length > 14 %}<p class="small muted">and {{ series.gaps|length|add:"-14" }} more.</p>{% endif %}{% else %}<p class="muted">No gaps in the last 60 days.</p>{% endif %}</div></div>
+  <div class="card"><header><div><h2>Transactions not counted</h2><p>Rows matched to this CSP that do not affect the estimate.</p></div></header>
+    <div class="body flush table-wrap">{% if series.excluded %}<table class="t"><thead><tr><th>Type</th><th>Why</th><th class="num">Rows</th><th class="num">Amount</th></tr></thead><tbody>
+      {% for e in series.excluded %}<tr><td>{{ e.label|default:e.category }}</td><td class="small">{% if e.category == "unclassified" %}No approved label{% else %}Excluded by rule{% endif %}</td><td class="num">{{ e.count|intc }}</td><td class="num">{{ e.amount|inr }}</td></tr>{% endfor %}
+    </tbody></table>{% else %}<div class="body muted">Nothing was excluded for this CSP in the last 60 days.</div>{% endif %}</div></div>
+</section>
+
+<section class="card">
+  <header><div><h2>Comparison with SBI refreshes</h2><p>Predicted from the previous reading and the account counts, against what SBI then reported. {{ sbi.total_rows }} refresh{{ sbi.total_rows|pluralize:"es" }} on record.</p></div></header>
+  <div class="body flush table-wrap">
+    {% if sbi.rows %}<table class="t"><thead><tr><th>SBI refresh</th><th class="num">Predicted</th><th class="num">SBI-reported</th><th class="num">Difference</th><th class="num">Variance</th></tr></thead><tbody>
+      {% for r in sbi.rows %}<tr><td>{{ r.event_date|date:"j M Y" }}<span class="sub">accounts {{ r.previous_count|intc }} &rarr; {{ r.new_count|intc }}</span></td><td class="num">{{ r.predicted|inr }}</td><td class="num">{{ r.reported|inr }}</td><td class="num">{{ r.difference|signed_inr }}</td><td class="num">{% if r.pct_variance is None %}N/A{% else %}{{ r.pct_variance|pct1 }}{% endif %}</td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No SBI refresh to compare yet" text="At least two different SBI values are needed. This is insufficient evidence, not a pass." %}{% endif %}</div>
+</section>
+
+<section class="card">
+  <header><div><h2>Production position (Calling Sheet)</h2><p>These are the production figures for {{ month }}. Estimates on this page do not change them.</p></div>{% include "dashboard/components/badge.html" with tone="info" text="Production" %}</header>
+  <div class="body">
+    {% if summary %}
+    <dl class="kv"><dt>Month-to-date average</dt><dd>{{ summary.mtd_mab|inr }}</dd>
+      <dt>Rule #19 slab now</dt><dd>{{ summary.slab }}{% if not summary.is_eligible %} (under 200 accounts){% endif %}</dd>
+      <dt>Projected month-end average</dt><dd>{{ summary.projected_mab|inr }}</dd>
+      <dt>Projected slab</dt><dd>{{ summary.projected_slab|default:"—" }}</dd>
+      <dt>Needed to reach the minimum</dt><dd>{{ summary.gap_to_min|inr }}</dd>
+      <dt>Needed to reach the next slab</dt><dd>{{ summary.gap_to_next_slab|inr }}</dd>
+      <dt>Projected annual incentive</dt><dd>{{ summary.projected_incentive_annual|inr }}</dd></dl>
+    <p class="small muted" style="margin-top:8px">An incentive figure is an estimate, not a confirmed payable amount.</p>
+    {% else %}<p class="muted">No monthly summary has been calculated for {{ month }} yet.</p>{% endif %}
+  </div>
+</section>
+
+{% if user.is_staff %}
+<section class="card">
+  <header><div><h2>Assistant findings and history</h2><p>Staff only. Findings are suggestions; each action waits for a person's approval.</p></div></header>
+  <div class="body flush table-wrap">
+    {% if agent_findings_for_csp or agent_actions_for_csp %}<table class="t"><thead><tr><th>When</th><th>Item</th><th>Status</th></tr></thead><tbody>
+      {% for f in agent_findings_for_csp %}<tr><td>{{ f.created_at|date:"j M, g:i a" }}</td><td>Finding: {{ f.finding_type }}</td><td>{{ f.verification_status }}</td></tr>{% endfor %}
+      {% for a in agent_actions_for_csp %}<tr><td>{{ a.created_at|date:"j M, g:i a" }}</td><td>Action: {{ a.get_action_type_display }}</td><td>{{ a.get_status_display }}</td></tr>{% endfor %}
+    </tbody></table>{% else %}<div class="body muted">No assistant findings for this CSP.</div>{% endif %}
+  </div>
+  <footer>Corrections: none recorded. The system does not yet support editing a day's figures from this page.</footer>
+</section>
+{% endif %}
 {% endblock %}

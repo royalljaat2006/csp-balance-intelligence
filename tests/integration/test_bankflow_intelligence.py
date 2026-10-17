@@ -260,60 +260,65 @@ def staff(client, db):
     return client
 
 
-def test_home_requires_login_and_renders_empty_state(client, staff):
+def test_overview_requires_login_and_renders_an_honest_empty_state(client, staff):
     page = staff.get("/dashboard/")
     assert page.status_code == 200
     html = page.content.decode()
-    assert "Nothing needs attention right now" in html
+    assert "Nothing needs attention right now" in html or "Needs attention" in html
     assert "New customer accounts for" in html and "have not been captured yet" in html
     client.logout()
     assert client.get("/dashboard/").status_code == 302
 
 
-def test_home_keeps_sbi_reported_and_estimated_values_apart(staff, world):
+def test_overview_keeps_sbi_reported_and_estimated_values_apart(staff, world):
     estimates.compute_daily_estimates(TODAY)
-    html = staff.get("/dashboard/?range=30").content.decode()
-    for needle in ("Customer accounts", "Withdrawn by customers",
-                   "Deposited by customers", "SBI-reported average balance",
-                   "Reliable estimate not available yet", "Today in short", "Your CSPs",
-                   "Advanced details", "Incentive summary", "Classic overview"):
+    html = staff.get("/dashboard/").content.decode()
+    for needle in ("CSPs in scope", "Valid SBI baselines", "Estimates", "Informational",
+                   "New customer accounts", "Month-to-date estimate",
+                   "Projected month-end average", "Needs attention"):
         assert needle in html, needle
-    assert "+90 new in the last 30 days" in html  # latest PMJDY count is the current one
-    assert "/dashboard/csp/A/" in html  # rows link to the existing CSP detail page
     assert "X-API-Key" not in html
+    # an estimate is never presented as a reliable balance while nothing is validated
+    flat = "".join(html.split())
+    assert "0<small>reliable</small>" in flat  # no estimate counts as reliable
+    listing = staff.get("/dashboard/csps/").content.decode()
+    assert "/dashboard/csp/A/" in listing  # rows link to the CSP page
+    assert "Carry-forward, not validated" in listing
 
 
-def test_home_flags_stale_sources_and_filters(staff, world):
+def test_overview_flags_stale_sources_and_the_csp_list_filters(staff, world):
     from bankflow.models import PmjdyMonthly
 
     old = timezone.now() - dt.timedelta(days=4)
     PmjdyMonthly.objects.create(csp_id="A", month=f"{TODAY:%Y-%m}", mtd=3, ftd=0, target=7,
                                 observed_at=old, snapshot_date=timezone.localtime(old).date())
-    url = "/dashboard/?show=attention&sort=name&order=asc&page=1"
-    html = staff.get(url).content.decode()
+    html = staff.get("/dashboard/").content.decode()
     assert "New customer account numbers were last updated" in html  # plain-words stale notice
-    assert 'class="fh-src stale"' in html  # advanced sources table
-    table = html.split('id="my-csps"')[1]
-    assert "Name B" in table and "Name A</strong>" not in table
+    table = staff.get("/dashboard/csps/?show=review&sort=name&order=asc").content.decode()
+    body = table.split("<tbody>")[1].split("</tbody>")[0]
+    assert "Name B" in body and "Name A</b>" not in body
 
 
-def test_home_bad_params_fall_back_safely(staff, world):
-    assert staff.get("/dashboard/?range=abc&sort=drop&show=y&order=z&page=-4").status_code == 200
+def test_bad_query_parameters_fall_back_safely(staff, world):
+    assert staff.get("/dashboard/csps/?range=abc&sort=drop&show=y&order=z&page=-4").status_code == 200
+    assert staff.get("/dashboard/needs-attention/?range=abc&type=zz&page=-1").status_code == 200
 
 
-def test_classic_overview_is_still_served_at_its_own_route(staff, world):
+def test_old_overview_and_bank_flow_links_redirect(staff, world):
     from django.urls import reverse
 
     assert reverse("dashboard:overview_classic") == "/dashboard/overview/"
-    assert reverse("dashboard:bank_flow") == "/dashboard/bank-flow/"
+    assert reverse("dashboard:bank_flow") == "/dashboard/sbi-comparison/"
+    assert staff.get("/dashboard/overview/")["Location"] == "/dashboard/"
+    assert staff.get("/dashboard/bank-flow/")["Location"] == "/dashboard/sbi-comparison/"
 
 
-def test_viewer_sees_home_without_staff_only_links(client, world):
+def test_viewer_sees_the_overview_without_staff_only_links(client, world):
     get_user_model().objects.create_user("viewer", password="x", is_staff=False)
     client.login(username="viewer", password="x")
     html = client.get("/dashboard/").content.decode()
-    assert "Customer accounts" in html and "Technical validation details" not in html
-    assert ">Administration<" not in html
+    assert "CSPs in scope" in html and "Technical validation details" not in html
+    assert ">Administration<" not in html and "/dashboard/sbi-comparison/" not in html
 
 
 # ---------------------------------------------------------------- only the selected types count

@@ -1,0 +1,97 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Review · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Review</h1>
+    <p class="lede">Everything the data says needs a person's look, with what happened, what it affects and the next step. This page only shows the data: marking something as seen does not change any figure, and a flagged row is never counted automatically.</p>
+  </div>
+  <div class="seg" role="group" aria-label="Period">
+    {% for r in ranges %}<a href="?range={{ r }}"{% if r == days %} aria-current="true"{% endif %}>Last {{ r }} days</a>{% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block content %}
+{% if user.is_staff %}{% else %}{% include "dashboard/components/callout.html" with tone="info" text="You have read-only access. Technical reasons for failed imports are shown to staff." %}{% endif %}
+
+<section aria-label="Data categories" class="stack">
+  <div class="row between"><h2 style="font-size:17px">Data checks</h2><span class="small muted">{{ review.open }} of {{ review.categories|length }} need a look &middot; {{ review.range.from|date:"j M" }} to {{ review.range.to|date:"j M" }}</span></div>
+  {% for c in review.categories %}
+  <details class="more" id="cat-{{ c.key }}"{% if c.status == "open" or c.key == open_cat %} open{% endif %}>
+    <summary><span class="row"><b>{{ c.title }}</b>
+      {% if c.status == "open" %}{% include "dashboard/components/badge.html" with tone="warn" text=c.count|intc|add:" to review" %}
+      {% elif c.status == "info" %}{% include "dashboard/components/badge.html" with tone="info" text=c.count|intc|add:" noted" %}
+      {% else %}{% include "dashboard/components/badge.html" with tone="ok" text="Clear" %}{% endif %}</span></summary>
+    <div class="body">
+      <dl class="kv left" style="grid-template-columns:130px 1fr;margin-bottom:12px">
+        <dt>What happened</dt><dd>{{ c.what }}</dd>
+        <dt>Impact</dt><dd>{{ c.impact }}</dd>
+        <dt>Next step</dt><dd>{{ c.next_action }}</dd>
+        <dt>Who can act</dt><dd>{{ c.permitted }}</dd>
+        {% if c.amount %}<dt>Value involved</dt><dd>{{ c.amount|inr }}</dd>{% endif %}
+      </dl>
+      {% if c.note %}<p class="small muted" style="margin-bottom:10px">{{ c.note }}</p>{% endif %}
+
+      {% if c.items %}
+      <div class="table-wrap">
+      {% if c.key == "codes" %}
+        <table class="t"><thead><tr><th>Result</th><th>Code seen</th><th class="num">Rows</th><th class="num">Value</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td>{% if i.kind == "status" %}{{ i.words }}{% if i.expected %} <span class="badge">Expected</span>{% endif %}{% else %}{{ i.status }}{% endif %}</td><td class="mono">{% if i.kind == "example" %}{{ i.ko }}{% else %}&mdash;{% endif %}</td><td class="num">{{ i.count|intc }}</td><td class="num">{{ i.amount|inr }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "labels" %}
+        <table class="t"><thead><tr><th>Label</th><th>Decision</th><th class="num">Rows</th><th class="num">Value</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td class="mono">{{ i.label }}</td><td>{% if i.decision == "approved exclusion" %}{% include "dashboard/components/badge.html" with tone="ok" text="Approved exclusion" %}{% elif i.decision == "held out until approved" %}{% include "dashboard/components/badge.html" with tone="warn" text="Held out until approved" %}{% else %}{% include "dashboard/components/badge.html" with tone="bad" text="Needs a decision" %}{% endif %}</td><td class="num">{{ i.count|intc }}</td><td class="num">{{ i.amount|inr }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "duplicates" %}
+        <table class="t"><thead><tr><th>Day</th><th>Bank reference</th><th>Label</th><th>Why flagged</th><th class="num">Amount</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td>{{ i.date|date:"j M Y" }}</td><td class="mono">{{ i.reference|default:"—" }}</td><td>{{ i.label }}</td><td>{{ i.reason }}</td><td class="num">{{ i.amount|inr }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "counts" %}
+        <table class="t"><thead><tr><th>CSP</th><th class="num">Count</th><th>Last read</th><th>Issue</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td><a href="{% url 'dashboard:csp_detail' i.csp_code %}">{{ i.name|default:i.csp_code }}</a><span class="sub mono">{{ i.csp_code }}</span></td><td class="num">{% if i.count is None %}missing{% else %}{{ i.count|intc }}{% endif %}</td><td>{{ i.last_reading|date:"j M Y"|default:"never" }}</td><td>{{ i.issue }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "coverage" %}
+        <table class="t"><thead><tr><th>Day</th><th>State</th><th>Detail</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td>{{ i.date|date:"D j M Y" }}</td><td>{{ i.state }}</td><td class="small">{{ i.detail }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "late" %}
+        <table class="t"><thead><tr><th>Transaction day</th><th class="num">Rows that arrived late</th><th class="num">Value</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td>{{ i.date|date:"D j M Y" }}</td><td class="num">{{ i.count|intc }}</td><td class="num">{{ i.amount|inr }}</td></tr>{% endfor %}
+        </tbody></table>
+      {% elif c.key == "failed" %}
+        <table class="t"><thead><tr><th>What</th><th>Status</th><th>When</th>{% if user.is_staff %}<th>Reason</th>{% endif %}</tr></thead><tbody>
+          {% for i in c.items %}<tr><td class="mono">{{ i.name }}</td><td>{{ i.status }}</td><td>{{ i.when|date:"j M, g:i a" }}</td>{% if user.is_staff %}<td class="small">{{ i.reason|default:"—" }}</td>{% endif %}</tr>{% endfor %}
+        </tbody></table>
+      {% endif %}
+      </div>
+      {% elif c.status == "clear" %}<p class="muted">Nothing to review in this period.</p>{% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+
+{% if network %}
+<section class="stack" aria-label="Network notes">
+  {% for n in network %}{% include "dashboard/components/callout.html" with tone=n.severity|sev_tone title=n.title|add:". " text=n.meaning %}{% endfor %}
+</section>
+{% endif %}
+
+<section class="card" id="alerts">
+  <header><div><h2>CSP alerts</h2><p>{{ total }} CSP alert{{ total|pluralize }} in this period: {{ high }} to check today, {{ medium }} this week. Alerts are reasons to look, not proof of a problem.</p></div>
+    <form method="get" class="filters"><input type="hidden" name="range" value="{{ days }}">
+      <label>Type<select name="type" data-autosubmit><option value="">All types</option>{% for k, v in type_choices %}<option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label></form></header>
+  <div class="body flush">
+    {% if cards %}
+    <div class="table-wrap"><table class="t"><thead><tr><th>CSP</th><th>What we see</th><th>What to do</th><th>Urgency</th></tr></thead><tbody>
+      {% for c in cards %}
+      <tr><td class="name"><a href="{% url 'dashboard:csp_detail' c.csp_code %}"><b>{{ c.name|default:c.csp_code }}</b></a><span class="sub mono">{{ c.csp_code }}</span></td>
+        <td><b>{{ c.title }}</b><span class="sub">{{ c.meaning }}{% if c.facts %} ({{ c.facts|join:"; " }}){% endif %}</span>{% if c.data_note %}<span class="sub">{{ c.data_note }}</span>{% endif %}</td>
+        <td class="small">{{ c.action }}</td>
+        <td>{% include "dashboard/components/badge.html" with tone=c.severity|sev_tone text=c.severity_label %}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% include "dashboard/components/pager.html" %}
+    {% else %}{% include "dashboard/components/empty.html" with title="No CSP alerts" text="No CSP crossed an alert threshold in this period." %}{% endif %}
+  </div>
+</section>
+<p class="small muted">{{ review.controls.text }}</p>
+{% endblock %}

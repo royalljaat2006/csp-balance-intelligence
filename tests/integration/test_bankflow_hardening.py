@@ -417,13 +417,10 @@ def test_failed_run_predictions_are_marked_audit_only_on_the_dashboard(client, d
     assert next(r for r in runs if r.target == "avg_change").status == "EVALUATION_FAILED"
     get_user_model().objects.create_user("staff", password="x", is_staff=True)
     client.login(username="staff", password="x")
-    html = client.get("/dashboard/bank-flow/").content.decode()
+    html = client.get("/dashboard/sbi-comparison/").content.decode()
     assert "EVALUATION FAILED" in html
-    assert "model NOT validated" in html
-    assert (
-        "VALIDATION PASSED</span>"
-        not in html.split("Model evaluation")[1].split("Target metric")[0]
-    )
+    assert "Model NOT validated" in html
+    assert "VALIDATION PASSED" not in html
 
 
 def test_ingest_never_changes_balances_or_eligibility(tmp_path, csps):

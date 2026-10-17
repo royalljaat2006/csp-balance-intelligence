@@ -1,149 +1,42 @@
-{% extends "dashboard/base.html" %}
-{% block title %}AI Operations — Eko Operations{% endblock %}
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}AI operations · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / AI operations</div>
+  <h1>AI operations</h1>
+  <p class="lede">Everything the AI assistant produces, in one place: the daily briefing, priority calls, data anomaly flags and draft nudges. It summarises stored figures; it never calculates a balance or sends a message.</p></div></div>
+{% endblock %}
 {% block content %}
-<div class="wrap stagger">
+<section class="card"><div class="body"><dl class="kv"><dt>Last run</dt><dd>{% if last_run_at %}{{ last_run_at|timesince }} ago{% else %}never{% endif %}</dd>
+  <dt>Model</dt><dd>{{ model_used|default:"—" }}</dd><dt>Data period</dt><dd>{{ month }}</dd>
+  <dt>Status</dt><dd>{% if model_used %}{% include "dashboard/components/badge.html" with tone="ok" text="Active" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Not configured" %}{% endif %}</dd></dl></div></section>
 
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Nemotron</div>
-    <h1>AI Operations</h1>
-    <p class="sub">Every AI-generated output the platform produces, in one place — daily briefing, priority
-      calls, anomaly flags, and draft nudges. All summarize real backend data; none invents a metric.</p>
-  </header>
+<section class="card"><header><div><h2>CSP operations assistant</h2><p>Reads stored figures, flags at-risk CSPs with the existing comparison, and may draft a nudge for a person to approve. It never sends anything.</p></div><a class="btn sm" href="{% url 'dashboard:agent_monitoring' %}">Assistant monitoring</a></header>
+  <div class="body stack">
+    {% if agent_run_result %}{% include "dashboard/components/callout.html" with tone="info" text=agent_run_result %}{% endif %}
+    <form method="post">{% csrf_token %}<button type="submit" name="action" value="run_agent" class="btn primary">Run the assistant now</button></form>
+    <dl class="kv"><dt>Last run status</dt><dd>{% if latest_agent_task %}{{ latest_agent_task.get_status_display }}{% else %}Never run{% endif %}</dd>
+      <dt>Last task</dt><dd>{{ latest_agent_task.description|default:"—" }}</dd><dt>Result</dt><dd>{{ latest_agent_task.final_status|default:"—" }}</dd>
+      <dt>Waiting for approval</dt><dd>{{ pending_agent_actions|length }}</dd></dl>
+    {% if latest_action_agent_run.reasoning_summary %}<p class="small"><b>AI reasoning</b> (a hypothesis grounded in the facts above, not a verified fact): {{ latest_action_agent_run.reasoning_summary }}</p>{% endif %}
+    {% if agent_timeline %}<details class="more"><summary>Timeline of task #{{ latest_agent_task.id }}</summary><div class="body"><ul style="margin:0;padding-left:18px">{% for e in agent_timeline %}<li><span class="mono">{{ e.time|date:"g:i a" }}</span> {{ e.text }}</li>{% endfor %}</ul></div></details>{% endif %}
+    {% if pending_agent_actions %}<div><b>Actions waiting for approval</b><ul style="margin:6px 0 0;padding-left:18px">{% for a in pending_agent_actions %}<li>{{ a.get_action_type_display }} &middot; {{ a.csp.name|default:a.csp_id }}: {{ a.description|truncatechars:90 }}</li>{% endfor %}</ul></div>{% endif %}
+  </div></section>
 
-  <div class="kv-grid" style="background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px 20px;">
-    <div class="kv"><span class="k">Last run</span><span class="v">{% if last_run_at %}{{ last_run_at|timesince }} ago{% else %}never{% endif %}</span></div>
-    <div class="kv"><span class="k">Model</span><span class="v">{{ model_used|default:"—" }}</span></div>
-    <div class="kv"><span class="k">Data period</span><span class="v">{{ month }}</span></div>
-    <div class="kv"><span class="k">Status</span><span class="v">{% if model_used %}<span class="status-badge fresh">Active</span>{% else %}<span class="status-badge missing">Not configured</span>{% endif %}</span></div>
-  </div>
+<section class="card"><header><div><h2>Daily briefing</h2><p>{{ month }}</p></div>{% include "dashboard/components/badge.html" with tone="shadow" text="AI generated" %}</header>
+  <div class="body">{% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight %}
+    {% if latest_insight %}<p class="small muted" style="margin-top:8px">Generated {{ latest_insight.generated_at|timesince }} ago from {{ month }}'s network-wide figures.</p>{% endif %}</div></section>
 
-  <section class="panel">
-    <div class="panel-head">
-      <h2>CSP Operations Agent</h2>
-      <span class="hint"><a href="{% url 'dashboard:agent_monitoring' %}">Full agent monitoring &rarr;</a></span>
-    </div>
-    <p class="sub" style="margin-top:-6px;">Observes real network data, flags at-risk CSPs using the existing comparison
-      engine, and optionally drafts a nudge message for human approval &mdash; never sends anything itself. See
-      <a href="{% url 'dashboard:agent_monitoring' %}">Agent Monitoring</a> for health/history.</p>
-    {% if agent_run_result %}<p class="hint" style="margin:8px 0;">{{ agent_run_result }}</p>{% endif %}
-    <form method="post" style="margin:10px 0 16px;">
-      {% csrf_token %}
-      <button type="submit" name="action" value="run_agent" class="btn-primary" style="width:auto; margin-top:0; padding:9px 18px;">Run Agent Now</button>
-    </form>
-    <div class="kv-grid">
-      <div class="kv"><span class="k">Last run status</span><span class="v">
-        {% if latest_agent_task %}
-          {% if latest_agent_task.status == "completed" %}<span class="status-badge fresh">Completed</span>
-          {% elif latest_agent_task.status == "running" %}<span class="status-badge processing">Running</span>
-          {% elif latest_agent_task.status == "needs_data" %}<span class="status-badge partial">Needs data</span>
-          {% else %}<span class="status-badge failed">Failed</span>{% endif %}
-        {% else %}<span class="status-badge missing">Never run</span>{% endif %}
-      </span></div>
-      <div class="kv"><span class="k">Last run task</span><span class="v" style="font-size:13px;">{{ latest_agent_task.description|default:"—" }}</span></div>
-      <div class="kv"><span class="k">Result</span><span class="v" style="font-size:13px;">{{ latest_agent_task.final_status|default:"—" }}</span></div>
-      <div class="kv"><span class="k">Pending approvals</span><span class="v">{{ pending_agent_actions|length }}</span></div>
-    </div>
+<section class="grid g2">
+  <div class="card"><header><div><h2>Priority calling list</h2><p>Ranked over gap, trend and account growth.</p></div></header>
+    <div class="body">{% for pc in priority_calls %}<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>{{ pc.rank }}. <a href="{% url 'dashboard:csp_detail' pc.csp.csp_code %}">{{ pc.csp.name|default:pc.csp.csp_code }}</a></b> <span class="small muted mono">{{ pc.csp.csp_code }}</span><div class="small">{{ pc.reason }}</div></div>
+      {% empty %}<p class="muted">No priority calls generated yet.</p>{% endfor %}</div></div>
+  <div class="card"><header><div><h2>Anomaly flags</h2><p>{{ unreviewed_anomaly_total }} awaiting review.</p></div></header>
+    <div class="body">{% for a in unreviewed_anomalies %}<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>{{ a.get_severity_display }} severity</b> <span class="small muted">{{ a.ingest_log.source }}, {{ a.generated_at|timesince }} ago</span><div class="small">{{ a.description }}</div></div>
+      {% empty %}<p class="muted">No anomalies flagged. Every reviewed run looked clean.</p>{% endfor %}</div></div>
+</section>
 
-    {% if latest_action_agent_run.reasoning_summary %}
-    <div class="modal-section-label">AI reasoning (hypothesis — grounded in the facts above, not itself a verified fact)</div>
-    <p class="sub" style="margin-top:0;">{{ latest_action_agent_run.reasoning_summary }}</p>
-    {% endif %}
-
-    {% if agent_timeline %}
-    <div class="modal-section-label">Activity timeline &mdash; task #{{ latest_agent_task.id }}</div>
-    <div class="qw-list">
-      {% for event in agent_timeline %}
-      <div class="qw-item" style="cursor:default;">
-        <span class="qw-rank" style="width:52px; font-family:'IBM Plex Mono',monospace;">{{ event.time|date:"H:i" }}</span>
-        <span class="qw-main"><span class="qw-name" style="white-space:normal;">{{ event.text }}</span></span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if pending_agent_actions %}
-    <div class="modal-section-label">Actions awaiting approval</div>
-    <div class="qw-list">
-      {% for a in pending_agent_actions %}
-      <a class="qw-item" href="{% url 'dashboard:messaging' %}">
-        <span class="qw-main">
-          <span class="qw-name">{{ a.get_action_type_display }} &middot; {{ a.csp.name|default:a.csp_id }}</span>
-          <span class="qw-code">{{ a.description|truncatechars:80 }}</span>
-        </span>
-      </a>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Daily briefing</h2><span class="hint">{{ month }} &middot; Nemotron</span></div>
-    {% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight unreviewed_anomaly_count=unreviewed_anomaly_total only %}
-    {% if latest_insight %}<p class="hint" style="margin-top:10px;">Generated {{ latest_insight.generated_at|timesince }} ago &middot; source: {{ month }}'s network-wide numbers.</p>{% endif %}
-  </section>
-
-  <div class="panel-grid">
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Priority calling list</h2>
-        <span class="hint">ranked over gap + trend + account growth</span>
-      </div>
-      <div class="qw-list">
-        {% for pc in priority_calls %}
-        <a class="qw-item" href="{% url 'dashboard:csp_detail' pc.csp.csp_code %}">
-          <span class="qw-rank">{{ pc.rank }}</span>
-          <span class="qw-main">
-            <span class="qw-name">{{ pc.csp.name|default:pc.csp.csp_code }}</span>
-            <span class="qw-code">{{ pc.csp.csp_code }} &middot; {{ pc.generated_at|timesince }} ago</span>
-          </span>
-        </a>
-        <p class="sub" style="margin:-4px 0 6px; font-size:11.5px;">{{ pc.reason }}</p>
-        {% empty %}
-        <p class="sub">No priority calls generated yet &mdash; runs via <code>manage.py generate_priority_calls</code>.</p>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Anomaly flags</h2>
-        <span class="hint">{{ unreviewed_anomaly_total }} awaiting review</span>
-      </div>
-      <div class="qw-list">
-        {% for a in unreviewed_anomalies %}
-        <a class="qw-item" href="{% url 'dashboard:admin_embed' %}">
-          <span class="qw-main">
-            <span class="qw-name">{{ a.get_severity_display }} severity</span>
-            <span class="qw-code">{{ a.ingest_log.source }} &middot; {{ a.generated_at|timesince }} ago</span>
-          </span>
-        </a>
-        <p class="sub" style="margin:-4px 0 6px; font-size:11.5px;">{{ a.description }}</p>
-        {% empty %}
-        <p class="sub">No anomalies flagged &mdash; every reviewed ingestion run looked clean.</p>
-        {% endfor %}
-      </div>
-    </section>
-  </div>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Draft nudges</h2>
-      <span class="hint">{{ draft_total }} in draft &middot; <a href="{% url 'dashboard:messaging' %}">full messaging queue &rarr;</a></span>
-    </div>
-    <p class="sub" style="margin-top:-6px;">Draft only — nothing here is sent automatically; see Messaging to approve or reject.</p>
-    <div class="qw-list">
-      {% for m in recent_drafts %}
-      <a class="qw-item" href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">
-        <span class="qw-main">
-          <span class="qw-name">{{ m.csp.name|default:m.csp.csp_code }}</span>
-          <span class="qw-code">{{ m.get_channel_display }} &middot; {{ m.get_status_display }} &middot; {{ m.generated_at|timesince }} ago</span>
-        </span>
-      </a>
-      {% empty %}
-      <p class="sub">No draft nudges generated yet.</p>
-      {% endfor %}
-    </div>
-  </section>
-
-</div>
+<section class="card"><header><div><h2>Draft nudges</h2><p>{{ draft_total }} in draft. Nothing is sent automatically.</p></div><a class="btn sm" href="{% url 'dashboard:messaging' %}">Open the queue</a></header>
+  <div class="body">{% for m in recent_drafts %}<div style="padding:8px 0;border-bottom:1px solid var(--line)"><a href="{% url 'dashboard:csp_detail' m.csp.csp_code %}"><b>{{ m.csp.name|default:m.csp.csp_code }}</b></a> <span class="small muted">{{ m.get_channel_display }} &middot; {{ m.get_status_display }} &middot; {{ m.generated_at|timesince }} ago</span></div>
+    {% empty %}<p class="muted">No draft nudges yet.</p>{% endfor %}</div></section>
 {% endblock %}

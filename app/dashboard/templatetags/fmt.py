@@ -106,3 +106,67 @@ def get_item(mapping, key):
         return mapping.get(key, "missing")
     except AttributeError:
         return "missing"
+
+
+# ---- tone and wording helpers: presentation only, they decide nothing --------------------------
+_STATE_TONE = {"fresh": "ok", "ok": "ok", "on_time": "ok", "done": "ok", "complete": "ok",
+               "delayed": "warn", "warn": "warn", "late": "warn", "waiting": "info",
+               "partial": "warn", "info": "info", "success": "ok", "failed": "bad",
+               "received": "info", "processing": "info", "duplicate_skipped": "info",
+               "invalid_source": "bad", "imported": "ok", "quarantined": "warn",
+               "stale": "bad", "missing": "bad", "never": "warn"}
+_STATUS_WORD = {"ok": "Ready", "warn": "Check", "bad": "Problem"}
+_EST_LABEL = {
+    "VALIDATED": "Reliable", "PROVISIONAL": "Provisional",
+    "INSUFFICIENT_EVIDENCE": "Carry-forward, not validated", "UNAVAILABLE": "No estimate",
+    "NOT_COMPUTED": "Not calculated yet",
+}
+_EST_TONE = {"VALIDATED": "ok", "PROVISIONAL": "warn", "INSUFFICIENT_EVIDENCE": "shadow",
+             "UNAVAILABLE": "", "NOT_COMPUTED": ""}
+
+
+@register.filter
+def state_tone(value):
+    """freshness / health word -> badge tone (anything unknown or bad reads as 'bad')."""
+    return _STATE_TONE.get(str(value or "").lower(), "bad")
+
+
+@register.filter
+def status_word(value):
+    return _STATUS_WORD.get(value, str(value or ""))
+
+
+@register.filter
+def sev_tone(value):
+    return {"high": "bad", "medium": "warn"}.get(value, "info")
+
+
+@register.filter
+def est_label(value):
+    return _EST_LABEL.get(value, str(value or "").replace("_", " ").capitalize())
+
+
+@register.filter
+def est_tone(value):
+    return _EST_TONE.get(value, "")
+
+
+@register.filter
+def ago_days(value):
+    """'today' / '1 day ago' / '5 days ago' for an integer number of days."""
+    n = _num(value)
+    if n is None:
+        return "never"
+    n = int(n)
+    return "today" if n <= 0 else ("1 day ago" if n == 1 else f"{n} days ago")
+
+
+@register.simple_tag(takes_context=True)
+def page_url(context, page):
+    """'?' + the current query string with ?page= replaced: pager links keep every filter."""
+    from urllib.parse import urlencode
+
+    request = context.get("request")
+    q = {k: v for k, v in (request.GET.items() if request else []) if k != "page"}
+    q["page"] = page
+    return "?" + urlencode(q)

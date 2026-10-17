@@ -185,29 +185,31 @@ def staff(client, world):
 
 
 def test_home_offers_the_two_views_and_defaults_to_the_range_one(staff):
-    html = staff.get("/dashboard/").content.decode()
-    assert "Today vs yesterday" in html and 'data-view="day"' not in html
-    assert "Withdrawn" in html and "Deposits minus withdrawals" in html
+    html = staff.get("/dashboard/csps/").content.decode()
+    assert "Today vs yesterday" in html and 'href="?view=day"' in html
+    assert "data-csp=" not in html  # the per-CSP money table is only on the day view
+    assert "SBI-reported average" in html
 
 
 def test_the_today_vs_yesterday_view_lists_each_csp_with_both_days(staff):
-    html = staff.get("/dashboard/?view=day").content.decode()
-    assert 'data-view="day"' in html
+    html = staff.get("/dashboard/csps/?view=day").content.decode()
+    assert 'data-csp="1A850001"' in html
     assert "Alpha" in html and "Bravo" in html and "Charlie" in html and "Junk" not in html
     flat = " ".join(html.split())
-    assert "+10 vs yesterday (300)" in flat                  # Alpha's customer accounts
+    assert "yesterday 300 (+10)" in flat                     # Alpha's customer accounts
     assert "₹9,000" in flat and "yesterday ₹3,000" in flat    # full rupees, Indian grouping
-    assert f"{TODAY:%a %d %b}" in html and f"{YESTERDAY:%a %d %b}" in html
-    table = html.split('id="my-csps"')[1]
+    assert f"{TODAY:%a} {TODAY.day} {TODAY:%b}" in html
+    assert f"{YESTERDAY:%a} {YESTERDAY.day} {YESTERDAY:%b}" in html
+    table = html.split("<tbody>")[1]
     assert table.index("Alpha") < table.index("Charlie")     # biggest account rise first
 
 
 def test_the_view_keeps_working_with_search_sort_paging_and_bad_input(staff):
-    ok = staff.get("/dashboard/?view=day&q=brav&sort=name&order=asc")
+    ok = staff.get("/dashboard/csps/?view=day&q=brav&sort=name&order=asc")
     assert ok.status_code == 200 and "Bravo" in ok.content.decode()
-    assert "Alpha" not in ok.content.decode().split('id="my-csps"')[1]
-    for url in ("/dashboard/?view=day&sort=bogus", "/dashboard/?view=day&page=99",
-                "/dashboard/?view=nonsense", "/dashboard/?view=day&page=abc"):
+    assert "Alpha" not in ok.content.decode().split("<tbody>")[1]
+    for url in ("/dashboard/csps/?view=day&sort=bogus", "/dashboard/csps/?view=day&page=99",
+                "/dashboard/csps/?view=nonsense", "/dashboard/csps/?view=day&page=abc"):
         assert staff.get(url).status_code == 200, url
 
 
@@ -235,19 +237,3 @@ def test_api_csp_day_compare_scope_shape_and_validation(client, world, api_key):
     assert body["rows"][0]["csp_code"] == "1A850001" and body["rows"][0]["net_today"] == 4000.0
     assert "customer_name" not in body["rows"][0] and "mobile" not in body["rows"][0]
     assert client.get(url + "?sort=bogus", HTTP_X_API_KEY=report).status_code == 422
-
-
-# ---------------------------------------------------------------- lazy loading
-def test_the_heat_map_is_not_shipped_with_the_page_but_fetched_on_demand(staff):
-    page = staff.get("/dashboard/").content.decode()
-    assert 'id="fh-heat-data"' not in page            # no ~100 KB payload in every page load
-    assert 'data-url="/dashboard/data/heat/?range=30"' in page
-    r = staff.get("/dashboard/data/heat/?range=30")
-    assert r.status_code == 200 and "private" in r["Cache-Control"]
-    cells = r.json()
-    assert {c["code"] for c in cells} == {"1A850001", "1A850002", "1A850003"}
-    assert set(cells[0]) == {"code", "name", "growth_pct", "net_flow", "fresh", "delta", "status"}
-
-
-def test_the_heat_map_endpoint_needs_a_login(client, world):
-    assert client.get("/dashboard/data/heat/").status_code == 302

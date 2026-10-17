@@ -25,7 +25,7 @@ import datetime as dt
 import decimal
 from dataclasses import dataclass, field
 
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import Max, Q
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
@@ -328,7 +328,9 @@ def _activity_on(csp_code: str, business_date: dt.date, *, mode: str) -> dict | 
     columns = ", ".join(_ACTIVITY_COLUMNS)
     sql = f"select {columns} from daily_activity where csp_code = %s and activity_date = %s"
     try:
-        with connection.cursor() as cursor:
+        # own savepoint: on PostgreSQL a missing mart (dbt has not run) would otherwise abort the
+        # surrounding transaction and break every later query of the request
+        with transaction.atomic(), connection.cursor() as cursor:
             cursor.execute(sql, [csp_code, business_date])
             row = cursor.fetchone()
     except (ProgrammingError, OperationalError):
@@ -560,7 +562,7 @@ def _bulk_activity_on(business_date: dt.date) -> dict[str, dict]:
         "from daily_activity where activity_date = %s"
     )
     try:
-        with connection.cursor() as cursor:
+        with transaction.atomic(), connection.cursor() as cursor:  # savepoint, see _activity_on
             cursor.execute(sql, [business_date])
             rows = cursor.fetchall()
     except (ProgrammingError, OperationalError):

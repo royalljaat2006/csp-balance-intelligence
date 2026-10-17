@@ -20,6 +20,26 @@ Errors follow docs/API-ERRORS.md. All timestamps IST (PRD §13).
 | `/api/v1/comparisons/top-movers` | GET | v1 | Biggest balance movers, growth or decline | `comparison:read` | — | active |
 | `/api/v1/comparisons/at-risk` | GET | v1 | Explainable at-risk CSP flags | `comparison:read` | — | active |
 | `/api/v1/reports/overview` | GET | v1 | Cross-CSP slab distribution + avg MAB | `report:read` | — | active |
+| `/api/v1/bank-flow/summary` | GET | v1 | Statement ingestion, reconciliation and coverage summary | `report:read` | — | active |
+| `/api/v1/bank-flow/code-resolution` | GET | v1 | KO code to CSP match quality, by count and by amount | `report:read` | — | active |
+| `/api/v1/bank-flow/flows` | GET | v1 | Per-CSP statement flows for a date range | `report:read` | — | active |
+| `/api/v1/bank-flow/evaluations` | GET | v1 | Held-out flow evaluations and their status | `report:read` | — | active |
+| `/api/v1/bank-flow/target` | GET | v1 | SBI Avg Balance refresh history and what it can support | `report:read` | — | active |
+| `/api/v1/bank-flow/estimates` | GET | v1 | Daily shadow estimates, each with method, status and reason | `report:read` | — | active |
+| `/api/v1/bank-flow/estimates/summary` | GET | v1 | Estimate status counts and the estimator verdict | `report:read` | — | active |
+| `/api/v1/bank-flow/account-count-hypothesis` | GET | v1 | Latest account-count rule test | `report:read` | — | active |
+| `/api/v1/bank-flow/dashboard-summary` | GET | v1 | Headline figures with source, interval and freshness | `report:read` | — | active |
+| `/api/v1/bank-flow/network-movement` | GET | v1 | Daily withdrawals, deposits, accounts, observed vs estimated | `report:read` | — | active |
+| `/api/v1/bank-flow/csp-growth` | GET | v1 | Per-CSP growth explorer rows (search, filter, sort, paginate) | `report:read` | — | active |
+| `/api/v1/bank-flow/exceptions` | GET | v1 | CSP and network alerts with evidence and next action | `report:read` | — | active |
+| `/api/v1/bank-flow/progress` | GET | v1 | What each automated step did today and yesterday | `report:read` | — | active |
+| `/api/v1/bank-flow/day-compare` | GET | v1 | Today against yesterday, network-wide or one CSP | `report:read` | — | active |
+| `/api/v1/bank-flow/csp-day-compare` | GET | v1 | Every CSP, today against yesterday | `report:read` | — | active |
+| `/api/v1/bank-flow/data-readiness` | GET | v1 | Six stages from received to estimate, technical vs reliable verdict | `report:read` | — | active |
+| `/api/v1/bank-flow/review` | GET | v1 | Everything needing review: unlinked codes, labels, duplicates, counts, gaps | `report:read` | — | active |
+| `/api/v1/bank-flow/estimate-explanation/{csp_code}` | GET | v1 | Why one CSP's estimate has its value (movement shown, not added) | `report:read` | — | active |
+| `/api/v1/bank-flow/sbi-comparison` | GET | v1 | Predicted vs SBI-reported, variance, per-event results and the gate | `report:read` | — | active |
+| `/api/v1/bank-flow/month-end-outlook` | GET | v1 | Shadow month-to-date average and month-end projection | `report:read` | — | active |
 | `/health` | GET | — | Liveness + ingest staleness (infra, no auth) | none | Docker/Nginx healthcheck | active |
 
 "Consumer" is empty because no external consumer has been registered yet — see

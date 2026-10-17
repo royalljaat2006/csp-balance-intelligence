@@ -1,30 +1,33 @@
 {% load fmt %}
-<section class="dc" aria-label="Today versus yesterday{% if dc.scope == 'csp' %} for this CSP{% endif %}">
-  <details class="dc-box" open data-dc-details>
-    <summary class="dc-head">
-      <span class="dc-title">Today vs yesterday{% if dc.scope == "csp" %} &middot; this CSP{% endif %}</span>
-      <span class="dc-dates"><strong>Today</strong> {{ dc.today|date:"D d M" }} &middot; <strong>Yesterday</strong> {{ dc.yesterday|date:"D d M" }}</span>
-    </summary>
-    <div class="dc-grid">
+<details class="card" id="dc-card" open data-collapse-on-phone aria-label="Today versus yesterday{% if dc.scope == 'csp' %} for this CSP{% endif %}">
+  <summary>
+  <header>
+    <div><h2><span class="chev" aria-hidden="true">&#9656;</span> Today vs yesterday{% if dc.scope == "csp" %} &middot; this CSP{% endif %}</h2>
+      <p>Today is {{ dc.today|date:"D j M" }} and yesterday {{ dc.yesterday|date:"D j M" }} (India time). A dash means no figure is stored for that day; it is never shown as zero.</p></div>
+    <a class="btn sm" href="{% url 'dashboard:data_readiness' %}">When was this updated?</a>
+  </header>
+  </summary>
+  <div class="body">
+    <div class="grid g4">
       {% for r in dc.rows %}
-      <div class="dc-item" data-dc-key="{{ r.key }}">
-        <div class="dc-label">{{ r.label }}</div>
-        <div class="dc-now">{% if r.unit == "rupees" %}{{ r.today|inr }}{% else %}{{ r.today|intc }}{% endif %}</div>
-        <div class="dc-then">Yesterday: {% if r.unit == "rupees" %}{{ r.yesterday|inr }}{% else %}{{ r.yesterday|intc }}{% endif %}</div>
-        <div class="dc-delta {% if r.good_when_up %}{{ r.direction }}{% else %}neutral{% endif %}">
-          {% if r.change is None %}No comparison yet{% else %}{% if r.direction == "up" %}&#9650;{% elif r.direction == "down" %}&#9660;{% else %}&#9644;{% endif %}
-          {% if r.unit == "rupees" %}{{ r.change|signed_inr }}{% else %}{{ r.change|signed }}{% endif %}{% if r.change_pct is not None %} ({{ r.change_pct|pct1 }}){% endif %}{% endif %}
-          {% if r.change is not None and not r.like_for_like %}<span class="dc-tag" title="Today is still in progress, so this is not a like-for-like comparison">so far</span>{% endif %}
+      <div data-dc-key="{{ r.key }}">
+        <div class="small muted">{{ r.label }}</div>
+        <div style="font-size:20px;font-weight:650">{% if r.unit == "rupees" %}{{ r.today|inr }}{% else %}{{ r.today|intc }}{% endif %}</div>
+        <div class="small muted">Yesterday {% if r.unit == "rupees" %}{{ r.yesterday|inr }}{% else %}{{ r.yesterday|intc }}{% endif %}</div>
+        <div class="small">
+          {% if r.change is None %}<span class="muted">No comparison yet</span>{% else %}
+            <b>{% if r.direction == "up" %}&#9650;{% elif r.direction == "down" %}&#9660;{% else %}&ndash;{% endif %}
+            {% if r.unit == "rupees" %}{{ r.change|signed_inr }}{% else %}{{ r.change|signed }}{% endif %}{% if r.change_pct is not None %} ({{ r.change_pct|pct1 }}){% endif %}</b>
+            {% if not r.like_for_like %}<span class="badge info" title="Today is still in progress, so this is not a like-for-like comparison">so far</span>{% endif %}
+          {% endif %}
         </div>
-        {% if r.note %}<div class="dc-note">{{ r.note }}</div>{% endif %}
+        {% if r.note %}<div class="small muted">{{ r.note }}</div>{% endif %}
       </div>
       {% endfor %}
     </div>
     {% if dc.other_types.today.txn_count or dc.other_types.yesterday.txn_count %}
-    <p class="dc-foot">Not counted above: transfers, other-bank withdrawals, loan, initial and SSA deposits and unrecognised types
+    <p class="small muted" style="margin-top:12px">Not counted above: transfers, other-bank withdrawals, loan and SSA deposits and unrecognised labels
       ({{ dc.other_types.today.txn_count|intc }} transactions today, {{ dc.other_types.yesterday.txn_count|intc }} yesterday).</p>
     {% endif %}
-    <p class="dc-foot">Today is the present day in India time and yesterday is the day before. A dash means no figure is stored for that day; it is never shown as zero.
-      <a href="{% url 'dashboard:data_progress' %}">See when each figure was last updated</a>.</p>
-  </details>
-</section>
+  </div>
+</details>

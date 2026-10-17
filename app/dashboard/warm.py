@@ -28,6 +28,12 @@ _MARKER_KEY = "csp-tracker:warm:last"
 RANGES = (7, 30, 90)
 
 
+def _journey_pages() -> None:
+    from . import pages  # local import: pages pulls in the views module
+
+    pages.warm()
+
+
 def _steps() -> list[tuple[str, object]]:
     today = timezone.localdate()
     steps: list[tuple[str, object]] = [
@@ -38,6 +44,7 @@ def _steps() -> list[tuple[str, object]]:
         ("day_coverage", services.day_coverage),
         ("partial_snapshots", services.partial_snapshot_report),
         ("resolution_stats", services.code_resolution_stats),
+        ("journey_pages", _journey_pages),
     ]
     for days in RANGES:
         date_from, date_to = intelligence.resolve_range(days)

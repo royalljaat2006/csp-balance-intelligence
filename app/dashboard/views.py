@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-import json
 
 from autopilot import monitoring as agent_monitoring_service
 from autopilot.models import (
@@ -29,24 +28,24 @@ from autopilot.models import (
 )
 from autopilot.services import approve_draft_message, reject_draft_message
 from autopilot.tasks import enqueue_agent_run
-from bankflow import estimates as bankflow_estimates
-from bankflow import flows as bankflow_flows
+from bankflow import explain, outlook, sbi_comparison
 from bankflow import intelligence as bankflow_intelligence
-from bankflow import progress as bankflow_progress
-from bankflow import services as bankflow_services
 from common.cache import cache_aside
 from csp import comparison, services
-from csp.models import HISTORICAL_ONLY_STATUS, Csp, DailyBalance, IngestLog, MonthlySummary
+from csp.models import Csp, DailyBalance, IngestLog, MonthlySummary
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
 from django.db import connection
-from django.db.models import Count, Max, Min
+from django.db.models import Max, Min
 from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from . import pipeline_state, plain, shell
+from .charts import points as chart_points
+from .charts import querystring
+from .charts import spec as chart_spec
 from .pipeline_sse import stream_pipeline_events
 
 
@@ -200,12 +199,21 @@ def pipeline(request):
         return HttpResponseForbidden("Data Pipeline is restricted to staff accounts.")
 
     snapshot = pipeline_state.get_snapshot()
+    groups = [
+        ("Data in", [("calling_sheet", "Calling Sheet"), ("transactions", "Transactions"),
+                     ("postgres", "Database"), ("snapshots", "Daily snapshots")]),
+        ("Assistants", [("autopilot", "AI autopilot"), ("balance_agent", "Balance assistant"),
+                        ("transaction_agent", "Transaction assistant"),
+                        ("risk_agent", "Risk assistant")]),
+        ("Outcomes", [("findings", "AI findings"), ("actions", "Actions and approvals")]),
+    ]
     return render(
         request,
         "dashboard/pipeline.html",
         {
-            "initial_snapshot_json": json.dumps(snapshot),
-            "initial_timeline_json": json.dumps(pipeline_state.get_activity_timeline()),
+            "groups": groups,
+            "initial_snapshot": snapshot,
+            "initial_timeline": pipeline_state.get_activity_timeline(),
         },
     )
 
@@ -819,10 +827,32 @@ def csp_comparisons(request):
     top_decline = comparison.top_movers(comparisons, by="pct", direction="decline", limit=8)
     at_risk_flags = comparison.at_risk_csps(comparisons)
 
+    rows_all = [_comparison_row(c) for c in comparisons]
+    q = request.GET.get("q", "").strip()[:64]
+    trend_filter = request.GET.get("trend", "")
+    sort = request.GET.get("sort", "change")
+    shown = rows_all
+    if q:
+        needle = q.lower()
+        shown = [r for r in shown if needle in r["csp_code"].lower()
+                 or needle in (r["csp_name"] or "").lower()]
+    if trend_filter in trend_counts:
+        shown = [r for r in shown if r["trend"] == trend_filter]
+    if sort == "name":
+        shown.sort(key=lambda r: (r["csp_name"] or "").lower())
+    else:  # biggest change first, rows with no comparison last
+        shown.sort(key=lambda r: (r["pct_change"] is None, -abs(r["pct_change"] or 0)))
+    page, offset, page_size = _paginate(request, page_size=25)
+
     return render(
         request,
         "dashboard/csp_comparisons.html",
         {
+            "q": q, "trend_filter": trend_filter, "sort": sort,
+            "rows_shown": shown[offset: offset + page_size], "total": len(shown),
+            "page": page, "total_pages": max(1, -(-len(shown) // page_size)),
+            "qs_prev": querystring(request, page=page - 1),
+            "qs_next": querystring(request, page=page + 1),
             "mode": mode,
             "current_date": current_date.isoformat(),
             "comparison_type": comparison_type,
@@ -951,175 +981,16 @@ def balance_intelligence(request):
             "slab_upgrades": slab_upgrades,
             "slab_downgrades": slab_downgrades,
             "avg_mom_pct": avg_mom_pct,
+            "charts": {"network": chart_spec(
+                f"Network average balance per account, {window_days} days", "inr", [
+                    {"name": "SBI-reported average (all CSPs)", "color": "s1", "step": True,
+                     "points": chart_points(network_balance_series)}],
+                empty="No readings in this window.")},
             "near_next_slab": [_comparison_row(c) for c in near_next_slab],
             "near_next_slab_threshold": near_next_slab_threshold,
             "below_minimum": [_comparison_row(c) for c in below_minimum],
             "largest_increases": [_comparison_row(c) for c in largest_increases],
             "largest_decreases": [_comparison_row(c) for c in largest_decreases],
-        },
-    )
-
-
-@login_required
-def overview_classic(request):
-    month = request.GET.get("month") or services.current_month()
-    overview = cache_aside(
-        f"overview:{month}", ttl=settings.DASHBOARD_CACHE_TTL,
-        fn=lambda: services.get_overview(month),
-    )
-    summaries, _ = services.list_monthly_summaries(month=month, limit=100000)
-    growth_by_csp = cache_aside(
-        "all_csps_account_growth", ttl=settings.DASHBOARD_CACHE_TTL,
-        fn=services.get_all_csps_account_growth
-    )
-    csp_rows = [_csp_row(ms, growth_by_csp) for ms in summaries]
-
-    quick_wins = sorted(
-        (r for r in csp_rows if r["slab"] != "S4" and (r["amount_to_deposit"] or 0) > 0),
-        key=lambda r: r["amount_to_deposit"],
-    )[:8]
-
-    # Autopilot (Nemotron) output — all read-only narration, none of it
-    # required for the page to work: empty/missing just means autopilot
-    # hasn't run yet or NEMOTRON_API_KEY isn't configured (see
-    # autopilot/nemotron_client.py's degrade-gracefully contract).
-    latest_insight = Insight.objects.filter(month=month).first()
-    priority_calls = list(
-        PriorityCall.objects.filter(month=month).select_related("csp").order_by("rank")[:10]
-    )
-    # unreviewed_anomaly_count comes from dashboard.context_processors.dashboard_shell
-    # now (every page's notification bell needs it, not just Overview).
-
-    # Today-vs-yesterday, network-wide — same comparison engine as the Daily
-    # Comparison tab/API, one bulk_compare_csps() call (N+1-free across
-    # every CSP), scoped down to what an Overview KPI strip needs.
-    today = timezone.localdate()
-    yesterday = comparison.resolve_comparison_date(today)
-    daily_comparisons = comparison.bulk_compare_csps(today, yesterday, mode="overall")
-    daily_trend_counts = {"GROWTH": 0, "DECLINE": 0, "NO_CHANGE": 0, "NO_DATA": 0}
-    for c in daily_comparisons:
-        daily_trend_counts[c.balance.trend] = daily_trend_counts.get(c.balance.trend, 0) + 1
-    reporting_today = sum(1 for c in daily_comparisons if c.balance.current_value is not None)
-    top_growth_today = comparison.top_movers(
-        daily_comparisons, by="pct", direction="growth", limit=5
-    )
-    top_decline_today = comparison.top_movers(
-        daily_comparisons, by="pct", direction="decline", limit=5
-    )
-    slab_summaries = comparison.summarize_by_slab(daily_comparisons)
-
-    # Network health — real counts only, every threshold named so a reader
-    # can see exactly what "near next slab" means rather than an opaque flag.
-    near_next_slab_threshold = decimal.Decimal("500")
-    near_next_slab_count = sum(
-        1
-        for r in csp_rows
-        if r["gap_to_next_slab"] is not None
-        and 0 < r["gap_to_next_slab"] <= near_next_slab_threshold
-    )
-    significant_decline_count = sum(
-        1
-        for c in daily_comparisons
-        if c.balance.movement == comparison.MovementBucket.SHARP_DECLINE
-    )
-    reporting_coverage_pct = (
-        round(reporting_today / overview["csp_total"] * 100, 1) if overview["csp_total"] else None
-    )
-
-    network_balance_series = [
-        {"date": str(r["date"]), "value": r["avg_balance"]}
-        for r in cache_aside(
-            "network_balance_trend:30",
-            ttl=settings.DASHBOARD_CACHE_TTL,
-            fn=lambda: services.get_network_balance_trend(days=30),
-        )
-    ]
-
-    return render(
-        request,
-        "dashboard/home.html",
-        {
-            "month": month,
-            "overview": overview,
-            "csp_rows": csp_rows,
-            "quick_wins": quick_wins,
-            "reporting_today": reporting_today,
-            "daily_trend_counts": daily_trend_counts,
-            "top_growth_today": [_comparison_row(c) for c in top_growth_today],
-            "top_decline_today": [_comparison_row(c) for c in top_decline_today],
-            "slab_summaries": slab_summaries,
-            "near_next_slab_count": near_next_slab_count,
-            "near_next_slab_threshold": near_next_slab_threshold,
-            "significant_decline_count": significant_decline_count,
-            "reporting_coverage_pct": reporting_coverage_pct,
-            "network_balance_series": network_balance_series,
-            "total_accounts": sum(r["account_count"] for r in csp_rows),
-            "total_balance": sum(
-                r["mtd_mab"] * r["account_count"] for r in csp_rows if r["account_count"]
-            ),
-            "latest_insight": latest_insight,
-            "priority_calls": priority_calls,
-        },
-    )
-
-
-@login_required
-def csp_directory(request):
-    """Browse every CSP — merges three already-computed sources (never a
-    fourth computation of its own): `Csp` for identity,
-    `comparison.bulk_compare_csps()` for today-vs-yesterday balance/slab
-    (the same call Daily Comparison and Overview make), and
-    `MonthlySummary` for the monthly average. A CSP with no comparison
-    data yet (never ingested) still gets a row — reporting_status makes
-    that visible rather than hiding it."""
-    mode = request.GET.get("mode", "overall")
-    if mode not in ("overall", "onus"):
-        mode = "overall"
-
-    month = services.current_month()
-    today = timezone.localdate()
-    yesterday = comparison.resolve_comparison_date(today)
-    daily_comparisons = comparison.bulk_compare_csps(today, yesterday, mode=mode)
-    comparison_by_code = {c.csp_code: c for c in daily_comparisons}
-
-    summaries = MonthlySummary.objects.filter(month=month).select_related("csp")
-    summary_by_code = {s.csp_id: s for s in summaries}
-
-    rows = []
-    for csp in Csp.objects.tracked():
-        c = comparison_by_code.get(csp.csp_code)
-        summary = summary_by_code.get(csp.csp_code)
-        rows.append(
-            {
-                "csp_code": csp.csp_code,
-                "name": csp.name,
-                "mobile": csp.mobile,
-                "account_count": csp.account_count,
-                "current_balance": _decimal_to_float(c.balance.current_value) if c else None,
-                "previous_balance": _decimal_to_float(c.balance.previous_value) if c else None,
-                "mtd_mab": _decimal_to_float(summary.mtd_mab) if summary else None,
-                "pct_change": _decimal_to_float(c.balance.pct_change) if c else None,
-                "trend": c.balance.trend if c else "NO_DATA",
-                "slab": (c.current_slab if c and c.current_slab else None)
-                or (summary.slab if summary else None),
-                "txn_count_today": _decimal_to_float(c.txn_count.current_value) if c else None,
-                "reporting_status": (
-                    "reporting"
-                    if c and c.balance.current_value is not None
-                    else "not_reporting"
-                ),
-                "data_status": c.current_data_status if c else "missing",
-                "last_sync": csp.last_seen_date.isoformat() if csp.last_seen_date else None,
-            }
-        )
-
-    return render(
-        request,
-        "dashboard/csp_directory.html",
-        {
-            "mode": mode,
-            "rows": rows,
-            "total_csps": len(rows),
         },
     )
 
@@ -1137,9 +1008,6 @@ def csp_detail(request, csp_code: str):
         mode = "overall"
     summary = services.get_monthly_summary(csp_code, month)
     current_balance = services.get_current_balance(csp)
-    balance_history = list(services.get_balance_history(csp))
-    activity = services.get_csp_daily_activity(csp_code)[-60:]
-    account_growth = services.get_csp_account_growth(csp)
     recent_txns, txn_total = services.list_transactions(csp, limit=15)
 
     # Daily comparison + trend intelligence — same csp.comparison engine the
@@ -1153,26 +1021,19 @@ def csp_detail(request, csp_code: str):
     daily_comparison = comparison.compare_csp_metrics(csp_code, today, yesterday, mode=mode)
     trend_intel = comparison.get_trend_intelligence(csp_code, today)
     slab_history = comparison.get_csp_slab_history(csp_code, days=60)
-    slab_history_series = [
-        {"date": str(s.business_date), "value": float(s.mtd_avg_so_far)} for s in slab_history
-    ]
-
-    activity_series = [{"date": str(a["activity_date"]), "value": a["txn_count"]} for a in activity]
-    balance_series = [
-        {"date": str(b.balance_date), "value": float(b.daily_avg_balance)} for b in balance_history
-    ]
-    account_growth_series = [
-        {"date": str(g["date"]), "value": g["account_count"]} for g in account_growth
-    ]
-    latest_net_new = account_growth[-1]["net_new"] if account_growth else None
 
     row = _csp_row(summary) if summary else None
+    from . import pages  # local import: pages imports helpers from this module
 
-    # CSP 360°: this CSP's own agent findings/actions/verification history
-    # (Phase 11 productization) — same AgentFinding/AgentAction/
-    # AgentVerification rows Agent Findings/Actions/Verification already
-    # list network-wide, just filtered to this csp_code. No new business
-    # logic: a straight filtered read of existing models.
+    extras = pages.csp_detail_extras(csp)
+    extras["charts"]["mtd"] = chart_spec(
+        "Production month-to-date average (Calling Sheet based)", "inr", [
+            {"name": "Month-to-date average so far", "color": "s1",
+             "points": [[s_.business_date.isoformat(), float(s_.mtd_avg_so_far)]
+                        for s_ in slab_history]}],
+        empty="No daily snapshots in the last 60 days.")
+
+    # this CSP's own assistant findings/actions: a straight filtered read of existing models
     agent_findings_for_csp = list(
         AgentFinding.objects.filter(csp=csp).order_by("-created_at")[:10]
     )
@@ -1190,10 +1051,6 @@ def csp_detail(request, csp_code: str):
             "row": row,
             "summary": summary,
             "current_balance": current_balance,
-            "activity_series": activity_series,
-            "balance_series": balance_series,
-            "account_growth_series": account_growth_series,
-            "latest_net_new": latest_net_new,
             "recent_txns": recent_txns,
             "txn_total": txn_total,
             "month": month,
@@ -1201,12 +1058,33 @@ def csp_detail(request, csp_code: str):
             "daily_comparison": daily_comparison,
             "csp_day_compare": _csp_day_compare(csp_code),
             "trend_intel": trend_intel,
-            "slab_history": slab_history,
-            "slab_history_series": slab_history_series,
+            "x": explain.explain_estimate(csp_code),
+            "outlook": outlook.csp_outlook_map().get(csp_code),
+            "sbi": sbi_comparison.sbi_comparison(
+                only_count_changed=False, search=csp_code, limit=12),
+            "review_flags": _csp_flags(csp_code),
+            "growth": _csp_growth_row(csp_code),
             "agent_findings_for_csp": agent_findings_for_csp,
             "agent_actions_for_csp": agent_actions_for_csp,
+            **extras,
         },
     )
+
+
+def _csp_growth_row(csp_code: str) -> dict | None:
+    frm, to = bankflow_intelligence.resolve_range(30)
+    rows, _t, _m = bankflow_intelligence.csp_growth(frm, to, search=csp_code, limit=5)
+    return next((r for r in rows if r["csp_code"] == csp_code), None)
+
+
+def _csp_flags(csp_code: str) -> list[dict]:
+    frm, to = bankflow_intelligence.resolve_range(30)
+    rows, _t, _m = bankflow_intelligence.csp_growth(frm, to, search=csp_code, limit=5)
+    for r in rows:
+        if r["csp_code"] == csp_code:
+            return [plain.friendly_exception({**f, "csp_code": csp_code, "name": r["name"]})
+                    for f in r["flags"]]
+    return []
 
 
 @login_required
@@ -1310,6 +1188,27 @@ def transactions(request):
             "onus_only": onus_only,
             "date_from": request.GET.get("date_from", ""),
             "date_to": request.GET.get("date_to", ""),
+            "total": txn_total,
+            "qs_prev": querystring(request, page=page - 1),
+            "qs_next": querystring(request, page=page + 1),
+            "charts": {
+                "activity": chart_spec(
+                    "Eligible transactions per day (transaction workbook)", "count", [
+                        {"name": "All approved types", "color": "s1",
+                         "points": chart_points([
+                             {"date": r["activity_date"], "value": r["txn_count"]}
+                             for r in activity_series_30d])},
+                        {"name": "On-us types only", "color": "s2",
+                         "points": chart_points([
+                             {"date": r["activity_date"], "value": r["onus_txn_count"]}
+                             for r in activity_series_30d])},
+                    ], empty="No workbook activity in the last 30 days."),
+                "types": chart_spec(
+                    "Transactions by type, today and yesterday", "count", [
+                        {"name": "Transactions", "color": "s1", "points": [
+                            [d["txn_type"], d["count"]] for d in type_distribution]}],
+                    kind="bars", categorical=True, empty="No transactions for these two days."),
+            },
         },
     )
 
@@ -1443,6 +1342,26 @@ def trends(request):
             "heatmap_rows": heatmap_rows,
             "heatmap_current_date": today,
             "heatmap_comparison_date": heatmap_comparison_date,
+            "charts": {
+                "counts": chart_spec("Transactions per day by direction", "count", [
+                    {"name": "Deposits", "color": "s1",
+                     "points": chart_points(deposit_count_series)},
+                    {"name": "Withdrawals", "color": "s2",
+                     "points": chart_points(withdrawal_count_series)},
+                ], empty="No workbook activity in this range."),
+                "amounts": chart_spec("Value per day by direction", "inr", [
+                    {"name": "Deposits", "color": "s1",
+                     "points": chart_points(deposit_amount_series)},
+                    {"name": "Withdrawals", "color": "s2",
+                     "points": chart_points(withdrawal_amount_series)},
+                    {"name": "Net (pool in minus out)", "color": "s3",
+                     "points": chart_points(net_flow_series)},
+                ], empty="No workbook activity in this range."),
+                "accounts": chart_spec("Total customer accounts", "count", [
+                    {"name": "Accounts", "color": "s1", "step": True,
+                     "points": chart_points(account_growth_series)},
+                ], empty="No account counts recorded yet."),
+            },
         },
     )
 
@@ -1460,114 +1379,7 @@ def csp_activity_json(request, csp_code: str):
     return JsonResponse({"activity": payload})
 
 
-_BANKFLOW_BADGE = {
-    "VALIDATION_PASSED": "fresh",
-    "INSUFFICIENT_EVIDENCE": "delayed",
-    "EVALUATION_FAILED": "failed",
-    "NOT_EVALUATED": "missing",
-    "RECONCILED": "fresh",
-    "PARTIAL": "partial",
-    "FAILED": "failed",
-}
-
-
-@login_required
-def bank_flow(request):
-    """Bank-Flow Validation -- SBI pool-account statement ingestion, CSP-code
-    match quality, transaction-flow features and the honest, held-out
-    evaluation of whether flows predict the Calling Sheet Avg Balance.
-
-    Staff-only and strictly read-only. Nothing on this page is an actual
-    balance: predicted values are labelled predictions, and evaluation status
-    is whatever the evaluation decided (NOT EVALUATED / INSUFFICIENT EVIDENCE /
-    EVALUATION FAILED / VALIDATION PASSED) -- never inferred here."""
-    if not request.user.is_staff:
-        return HttpResponseForbidden("Bank-Flow Validation is restricted to staff accounts.")
-
-    date_from = _parse_date(request.GET.get("from"))
-    date_to = _parse_date(request.GET.get("to"))
-    mode = request.GET.get("mode", bankflow_flows.MODE_EXACT)
-    if mode not in bankflow_flows.MODES:
-        mode = bankflow_flows.MODE_EXACT
-    definition = request.GET.get("definition", bankflow_flows.DEFAULT_DEFINITION)
-    if definition not in bankflow_flows.FLOW_DEFINITIONS:
-        definition = bankflow_flows.DEFAULT_DEFINITION
-    page, offset, page_size = _paginate(request)
-
-    rows, total = bankflow_services.csp_flow_table(
-        date_from=date_from, date_to=date_to, mode=mode, definition=definition,
-        limit=page_size, offset=offset,
-    )
-    ingestion = bankflow_services.ingestion_summary()
-    latest = ingestion["latest_statement"]
-    if latest:
-        latest["badge"] = _BANKFLOW_BADGE.get(latest["reconciliation"], "missing")
-    evaluations = bankflow_services.evaluation_overview()
-    for ev in evaluations:
-        ev["badge"] = _BANKFLOW_BADGE.get(ev["status"], "missing")
-        ev["is_association"] = ev["config"].get("horizon_days") == 0
-
-    return render(
-        request,
-        "dashboard/bank_flow.html",
-        {
-            "ingestion": ingestion,
-            "quality": bankflow_services.quality_flags(),
-            "quarantined": bankflow_services.quarantined_files(),
-            "coverage": bankflow_services.coverage_report(),
-            "resolution": bankflow_services.code_resolution_stats(),
-            "unresolved": bankflow_services.unresolved_by_day(),
-            "target": bankflow_services.target_overview(),
-            "estimate_overview": bankflow_estimates.estimate_overview(),
-            "estimate_rows": bankflow_estimates.estimate_rows(limit=25)[0],
-            "evaluations": evaluations,
-            "rows": rows,
-            "mode": mode,
-            "modes": bankflow_flows.MODES,
-            "definition": definition,
-            "definitions": sorted(bankflow_flows.FLOW_DEFINITIONS),
-            "date_from": date_from,
-            "date_to": date_to,
-            "page": page,
-            "total": total,
-            "total_pages": max(1, -(-total // page_size)),
-        },
-    )
-
-
 _RANGES = (7, 30, 90)
-_BADGE = {
-    "VALIDATED": "fresh", "PROVISIONAL": "partial", "INSUFFICIENT_EVIDENCE": "delayed",
-    "UNAVAILABLE": "missing", "NOT_COMPUTED": "missing", "NOT_RUN": "missing",
-    "NOT_SUPPORTED": "failed",
-}
-_SORT_CHOICES = {  # friendly name -> (label, intelligence.SORTS key)
-    "new_accounts": ("Most new accounts", "count_change"),
-    "withdrawals": ("Most withdrawn by customers", "withdrawals"),
-    "deposits": ("Most deposited by customers", "deposits"),
-    "difference": ("Deposits minus withdrawals", "net_flow"),
-    "name": ("Name (A-Z)", "name"),
-}
-_DAY_SORT_CHOICES = {  # friendly name -> (label, intelligence.DAY_SORTS key)
-    "accounts_change": ("Biggest rise in customer accounts", "accounts_change"),
-    "new_today": ("Most new accounts today", "new_today"),
-    "withdrawn_today": ("Most withdrawn today", "withdrawn_today"),
-    "deposited_today": ("Most deposited today", "deposited_today"),
-    "net_today": ("Deposits minus withdrawals today", "net_today"),
-    "net_change": ("Biggest change in deposits minus withdrawals", "net_change"),
-    "name": ("Name (A-Z)", "name"),
-}
-_METHOD_NAMES = {
-    "growth_only": "New accounts alone",
-    "flow_only": "Money movement alone",
-    "growth_and_flow": "New accounts and money movement together",
-}
-_SOURCE_NAMES = {
-    "pmjdy": "New PMJDY accounts",
-    "calling_sheet": "SBI-reported balances",
-    "transactions": "Bank statements",
-    "estimates": "Our estimates",
-}
 
 
 def _days_param(request) -> int:
@@ -1593,108 +1405,6 @@ def _chart_payload(movement: dict) -> dict:
     })
 
 
-def _attention_counts(exc: dict) -> tuple[int, int]:
-    items = exc["items"]
-    return (
-        sum(1 for i in items if i["severity"] in ("high", "medium")),
-        sum(1 for i in items if i["severity"] == "high"),
-    )
-
-
-@login_required
-def home(request):
-    """Simple home for a non-technical operations manager: customer accounts, withdrawals and
-    deposits, the estimate only when it is defensible, a plain summary, what needs attention, a
-    trend and a searchable CSP list. Technical detail lives under 'Advanced details'. All numbers
-    come from bankflow.intelligence (the same functions the API uses); this view adds wording
-    only."""
-    days = _days_param(request)
-    date_from, date_to = bankflow_intelligence.resolve_range(days)
-    summary = _cached("fh:summary", days,
-                      lambda: bankflow_intelligence.dashboard_summary(date_from, date_to))
-    movement = _cached("fh:movement", days,
-                       lambda: bankflow_intelligence.network_movement(date_from, date_to))
-    exc = _cached("fh:exceptions", days,
-                  lambda: bankflow_intelligence.exceptions(date_from, date_to, limit=200))
-    attention_total, high = _attention_counts(exc)
-    cards = [plain.friendly_exception(i, days) for i in exc["items"]]
-
-    q = request.GET.get("q", "")[:64]
-    show = request.GET.get("show", "all")
-    show = show if show in ("all", "attention") else "all"
-    view = "day" if request.GET.get("view") == "day" else "range"
-    choices = _DAY_SORT_CHOICES if view == "day" else _SORT_CHOICES
-    default_sort = "accounts_change" if view == "day" else "new_accounts"
-    sort = request.GET.get("sort", default_sort)
-    sort = sort if sort in choices else default_sort
-    order_default = "asc" if sort == "name" else "desc"
-    descending = request.GET.get("order", order_default) == "desc"
-    page, offset, page_size = _paginate(request, page_size=15)
-    # the range figures (heat map, summary cards) are always built; the list below them is
-    # either those same range rows or, in the "today vs yesterday" view, one row per CSP for
-    # the present day against the day before
-    all_rows, _t, _m = bankflow_intelligence.csp_growth(
-        date_from, date_to, search=q,
-        sort=_SORT_CHOICES[sort if view == "range" else "new_accounts"][1],
-        descending=descending if view == "range" else True,
-        limit=10000, offset=0,
-    )
-    for r in all_rows:
-        r["status_key"], r["status_text"] = plain.csp_status(r)
-        r["est"] = plain.estimate_cell(r)
-    if show == "attention":
-        all_rows = [r for r in all_rows if any(f["severity"] != "low" for f in r["flags"])]
-    total = len(all_rows)
-    rows = all_rows[offset: offset + page_size]
-    day_meta = None
-    if view == "day":
-        rows, total, day_meta = bankflow_intelligence.csp_day_compare_rows(
-            search=q, sort=choices[sort][1], descending=descending, limit=page_size,
-            offset=offset,
-        )
-
-    estimator = dict(summary["estimates"]["estimator"])
-    estimator["badge"] = _BADGE.get(estimator["status"], "missing")
-    estimator["words"] = plain.STATUS_WORDS.get(estimator["status"], plain.ESTIMATE_UNAVAILABLE)
-    hypothesis = bankflow_estimates.hypothesis_overview()
-    methods = [
-        {"name": _METHOD_NAMES.get(k, k),
-         "words": plain.STATUS_WORDS.get(v["status"], v["status"]),
-         "badge": _BADGE.get(v["status"], "missing")}
-        for k, v in ((hypothesis.get("metrics") or {}).get("comparison", {}).get("methods", {}))
-        .items()
-    ]
-    month = services.current_month()
-    slabs = dict(
-        MonthlySummary.objects.filter(month=month)
-        .exclude(csp__status=HISTORICAL_ONLY_STATUS)
-        .values_list("slab").annotate(n=Count("id"))
-    )
-    fr = summary["freshness"]
-    sources = [
-        {"name": _SOURCE_NAMES[k], "state": fr[k]["state"],
-         "when": (f"{fr[k]['age_hours']} hours ago" if fr[k].get("age_hours") is not None
-                  else "never")}
-        for k in ("pmjdy", "calling_sheet", "transactions", "estimates")
-    ]
-    return render(request, "dashboard/home_flow.html", {
-        "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
-        "summary": summary,
-        "summary_lines": plain.daily_summary(summary, attention_total, high, days),
-        "notes": plain.data_notes(summary),
-        "attention_cards": cards[:5], "attention_total": attention_total, "attention_high": high,
-        "chart": _chart_payload(movement),
-        "rows": rows, "total": total, "page": page,
-        "total_pages": max(1, -(-total // page_size)),
-        "q": q, "show": show, "sort": sort, "order": "desc" if descending else "asc",
-        "view": view, "day_meta": day_meta,
-        "sort_choices": [(k, v[0]) for k, v in choices.items()],
-        "estimator": estimator, "methods": methods, "sources": sources, "slabs": slabs,
-        "slab_cards": [{"code": c, "n": slabs.get(c, 0)} for c in ("NIL", "S1", "S2", "S3", "S4")],
-        "month": month, "ESTIMATE_UNAVAILABLE": plain.ESTIMATE_UNAVAILABLE,
-    })
-
-
 @login_required
 def money_movement(request):
     """Customer withdrawals, deposits and the difference, day by day -- the plain version of the
@@ -1705,11 +1415,22 @@ def money_movement(request):
                       lambda: bankflow_intelligence.dashboard_summary(date_from, date_to))
     movement = _cached("mm:movement", days,
                        lambda: bankflow_intelligence.network_movement(date_from, date_to))
+    P = bankflow_intelligence.plain
+    flow_days = [p for p in movement["series"] if p["withdrawals"] is not None]
+    charts = {"money": chart_spec(
+        "Customer withdrawals and deposits per day", "inr", [
+            {"name": "Deposited by customers", "color": "s1",
+             "points": [[str(p["date"]), P(p["deposits"])] for p in flow_days]},
+            {"name": "Withdrawn by customers", "color": "s2",
+             "points": [[str(p["date"]), P(p["withdrawals"])] for p in flow_days]},
+            {"name": "Deposits minus withdrawals", "color": "s3",
+             "points": [[str(p["date"]), P(p["net_customer_flow"])] for p in flow_days]},
+        ], kind="bars", empty="No bank statement covers this period yet.")}
     return render(request, "dashboard/money_movement.html", {
         "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
         "summary": summary, "notes": plain.data_notes(summary),
-        "day_rows": list(reversed(movement["series"])),
-        "chart": _chart_payload(movement), "movement_notes": movement["notes"],
+        "day_rows": list(reversed(movement["series"])), "charts": charts,
+        "movement_notes": movement["notes"],
     })
 
 
@@ -1736,61 +1457,6 @@ def shell_data(request):
     response = JsonResponse(payload)
     response["Cache-Control"] = "private, max-age=30"
     return response
-
-
-@login_required
-def heat_data(request):
-    """The heat map's cells (one per CSP), loaded only when Advanced details is opened: they used to
-    be embedded in every Home page load (~100 KB) whether or not anyone looked at them."""
-    days = _days_param(request)
-    date_from, date_to = bankflow_intelligence.resolve_range(days)
-    rows, _total, _meta = bankflow_intelligence.csp_growth(
-        date_from, date_to, sort="net_flow", descending=True, limit=10000, offset=0)
-    heat = bankflow_intelligence.plain([
-        {"code": r["csp_code"], "name": r["name"], "growth_pct": r["growth_pct"],
-         "net_flow": r["net_flow"], "fresh": r["count_freshness"],
-         "delta": r["estimated_delta"], "status": r["estimate_status"]}
-        for r in rows[:600]
-    ])
-    response = JsonResponse(heat, safe=False)
-    response["Cache-Control"] = "private, max-age=60"
-    return response
-
-
-@login_required
-def data_progress(request):
-    """What each automated step has done today and yesterday, and when (India time): the morning
-    snapshot, the Calling Sheet reads, new accounts, bank statements ingested, the money-movement
-    and estimate calculations. Read straight from the tables the pipeline writes."""
-    data = bankflow_progress.pipeline_progress()
-    if not request.user.is_staff:  # technical error text is for staff only
-        for step in data["steps"]:
-            for day in ("today", "yesterday"):
-                step[day]["error"] = ""
-    return render(request, "dashboard/data_progress.html", {"p": data})
-
-
-@login_required
-def needs_attention(request):
-    """Everything that should be looked at, in plain words, most urgent first."""
-    days = _days_param(request)
-    date_from, date_to = bankflow_intelligence.resolve_range(days)
-    exc = _cached("na:exceptions", days,
-                  lambda: bankflow_intelligence.exceptions(date_from, date_to, limit=500))
-    all_cards = [plain.friendly_exception(i, days) for i in exc["items"]]
-    titles = {c["type"]: c["title"] for c in all_cards}
-    kind = request.GET.get("type", "")
-    cards = [c for c in all_cards if c["type"] == kind] if kind in titles else all_cards
-    page, offset, page_size = _paginate(request, page_size=25)
-    return render(request, "dashboard/needs_attention.html", {
-        "days": days, "ranges": _RANGES, "date_from": date_from, "date_to": date_to,
-        "cards": cards[offset: offset + page_size], "total": len(cards), "page": page,
-        "total_pages": max(1, -(-len(cards) // page_size)),
-        "kind": kind if kind in titles else "",
-        "type_choices": sorted(titles.items(), key=lambda kv: kv[1]),
-        "high": sum(1 for c in all_cards if c["severity"] == "high"),
-        "medium": sum(1 for c in all_cards if c["severity"] == "medium"),
-    })
 
 
 @login_required

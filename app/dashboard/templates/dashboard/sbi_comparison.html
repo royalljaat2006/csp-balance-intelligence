@@ -1,0 +1,82 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}SBI comparison · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>SBI comparison</h1>
+    <p class="lede">What the estimator predicted against what SBI later reported, and whether the agreed validation gate is met. Staff only and read-only. Seeing a chart or a passing test is never evidence of accuracy; only these observed comparisons are.</p>
+  </div>
+</div>
+{% endblock %}
+{% block content %}
+{% if c.gate.satisfied %}
+  {% include "dashboard/components/callout.html" with tone="shadow" title="Criteria met, not promoted. " text="Every measurable criterion is met, but a separate approval is required before any production use and none has been granted. The predictor stays shadow-only." %}
+{% elif c.gate.has_run %}
+  {% include "dashboard/components/callout.html" with tone="warn" title="Not validated. " text="The criteria below are not all met, so the predictor stays shadow-only. Insufficient evidence is not a pass." %}
+{% else %}
+  {% include "dashboard/components/callout.html" with tone="warn" title="No validation run yet. " text="The predictor has not been evaluated against SBI refreshes." %}
+{% endif %}
+
+<section class="grid g4" aria-label="Summary">
+  {% include "dashboard/components/stat.html" with label="Valid comparisons" value=c.summary.valid_comparisons|intc hint="SBI refreshes with a prediction and a reported value, in the selection below." %}
+  {% include "dashboard/components/stat.html" with label="Aggregate variance" value=c.summary.aggregate.variance_pct|pct1 hint="Total predicted against total reported, weighted by account count." %}
+  {% include "dashboard/components/stat.html" with label="Average of CSP variances" value=c.summary.simple_avg_pct_variance|pct1 hint="Plain average of each comparison's % variance. Zero-reported rows are excluded." %}
+  {% include "dashboard/components/stat.html" with label="Mean error vs carry-forward" value=c.summary.mean_abs_error|inr hint="Average gap per account between the prediction and the SBI-reported value." %}
+</section>
+<p class="small muted">Aggregate carry-forward variance {{ c.summary.aggregate.carry_forward_variance_pct|pct1 }} &middot; mean carry-forward error {{ c.summary.carry_forward_mean_abs_error|inr }} &middot; {{ c.summary.excluded_zero_reported|intc }} comparison{{ c.summary.excluded_zero_reported|pluralize }} with a reported value of zero (variance N/A).{% if c.summary.beats_carry_forward is not None %} The estimator {% if c.summary.beats_carry_forward %}has a lower{% else %}does not have a lower{% endif %} mean error than carry-forward in this selection.{% endif %}</p>
+
+<section class="card">
+  <header><div><h2>Validation gate</h2><p>Each criterion with what has been observed so far. Latest run: {% if c.gate.run_at %}{{ c.gate.run_at|date:"j M Y, g:i a" }}{% else %}none{% endif %}{% if c.gate.selected_method %} &middot; selected method: {{ c.gate.selected_method }}{% endif %}.</p></div>
+    {% include "dashboard/components/badge.html" with tone=c.gate.status|est_tone text=c.gate.status|est_label %}</header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Criterion</th><th>Required</th><th>Observed</th><th>Met?</th></tr></thead><tbody>
+    {% for k in c.gate.criteria %}
+    <tr><td>{{ k.label }}</td><td>{{ k.required }}</td><td>{{ k.observed|default:"No data yet" }}</td>
+      <td>{% if k.met is True %}{% include "dashboard/components/badge.html" with tone="ok" text="Met" %}{% elif k.met is False %}{% include "dashboard/components/badge.html" with tone="bad" text="Not met" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Insufficient evidence" %}{% endif %}</td></tr>
+    {% empty %}<tr><td colspan="4" class="muted">{{ c.gate.text }}</td></tr>{% endfor %}
+    <tr><td>Separate approval before production use</td><td>Granted by the business</td><td>{{ c.gate.approval }}</td><td>{% include "dashboard/components/badge.html" with tone="warn" text="Outstanding" %}</td></tr>
+  </tbody></table></div>
+  <footer>{{ c.gate.text }} The 90th percentile is taken over all held-out comparisons.</footer>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>By SBI refresh event</h2><p>Mean error per account, model against carry-forward.</p></div></header>
+    <div class="body flush table-wrap">
+      {% if c.events %}<table class="t"><thead><tr><th>Event day</th><th class="num">Comparisons</th><th class="num">Model error</th><th class="num">Carry-forward error</th><th>Winner</th></tr></thead><tbody>
+        {% for e in c.events|slice:":15" %}<tr><td>{{ e.event_date|date:"j M Y" }}</td><td class="num">{{ e.comparisons|intc }}</td><td class="num">{{ e.mean_abs_error|inr }}</td><td class="num">{{ e.carry_forward_mean_abs_error|inr }}</td><td>{% if e.model_won %}Model{% else %}Carry-forward{% endif %}</td></tr>{% endfor %}
+      </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No refresh events yet" text="Insufficient evidence: SBI must refresh a CSP's value at least once after history starts." %}{% endif %}</div></div>
+  <div class="card"><header><div><h2>By monthly cycle</h2></div></header>
+    <div class="body flush table-wrap">
+      {% if c.cycles %}<table class="t"><thead><tr><th>Month</th><th class="num">Events</th><th class="num">Comparisons</th><th class="num">Events won</th></tr></thead><tbody>
+        {% for m in c.cycles %}<tr><td>{{ m.month }}</td><td class="num">{{ m.events }}</td><td class="num">{{ m.comparisons|intc }}</td><td class="num">{{ m.wins }}</td></tr>{% endfor %}
+      </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No monthly cycle yet" text="Six monthly cycles are required." %}{% endif %}</div></div>
+</section>
+
+<section class="card">
+  <header><div><h2>Every comparison</h2><p>{{ c.unit|capfirst }}. The prediction uses only the previous reading and the account counts.</p></div>
+    <form class="filters" method="get">
+      <label>CSP code<input type="search" name="q" value="{{ q }}" placeholder="e.g. 1A850001"></label>
+      <label>Show<select name="scope" data-autosubmit><option value="changed"{% if scope == "changed" %} selected{% endif %}>Only where the account count changed</option><option value="all"{% if scope == "all" %} selected{% endif %}>Every SBI refresh</option></select></label>
+      <button class="btn primary" type="submit">Apply</button></form></header>
+  <div class="body flush table-wrap">
+    {% if c.rows %}<table class="t"><thead><tr><th>CSP</th><th>SBI refresh</th><th class="num">Previous</th><th class="num">Predicted</th><th class="num">SBI-reported</th><th class="num">Difference</th><th class="num">Variance</th><th class="num">Carry-forward variance</th></tr></thead><tbody>
+      {% for r in c.rows %}<tr><td><a href="{% url 'dashboard:csp_detail' r.csp_code %}" class="mono">{{ r.csp_code }}</a></td><td>{{ r.event_date|date:"j M Y" }}<span class="sub">accounts {{ r.previous_count|intc }} &rarr; {{ r.new_count|intc }}</span></td>
+        <td class="num">{{ r.previous_value|inr }}</td><td class="num">{{ r.predicted|inr }}</td><td class="num">{{ r.reported|inr }}</td><td class="num">{{ r.difference|signed_inr }}</td>
+        <td class="num">{% if r.pct_variance is None %}N/A{% else %}{{ r.pct_variance|pct1 }}{% endif %}</td><td class="num">{% if r.carry_forward_pct_variance is None %}N/A{% else %}{{ r.carry_forward_pct_variance|pct1 }}{% endif %}</td></tr>{% endfor %}
+    </tbody></table>
+    {% include "dashboard/components/pager.html" %}
+    {% else %}{% include "dashboard/components/empty.html" with title="No comparison to show" text="There are no SBI refreshes in this selection. That is insufficient evidence, not a pass." %}{% endif %}
+  </div>
+  <footer>{% for n in c.notes %}{{ n }} {% endfor %}</footer>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>Estimator candidates</h2><p>From the latest stored evaluation.</p></div></header>
+    <div class="body"><dl class="kv"><dt>Estimates today</dt><dd>{% for k, v in estimate_overview.by_status.items %}{{ v|intc }} {{ k|est_label|lower }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}</dd>
+      <dt>Estimator verdict</dt><dd>{{ estimate_overview.hypothesis.status|est_label }}</dd></dl>
+      <p class="small muted" style="margin-top:8px">{{ estimate_overview.hypothesis.detail }}</p></div></div>
+  <div class="card"><header><div><h2>Flow-based evaluation runs</h2><p>Held-out tests of statement movement against SBI refreshes.</p></div></header>
+    <div class="body flush table-wrap"><table class="t"><thead><tr><th>Target</th><th>Status</th><th class="num">Events</th></tr></thead><tbody>
+      {% for ev in evaluations %}<tr><td>{{ ev.label }}<span class="sub">{{ ev.detail }}</span></td><td>{{ ev.status_label }}{% if ev.status != "VALIDATION_PASSED" %}<span class="sub">Model NOT validated: any predictions are for audit only.</span>{% endif %}</td><td class="num">{{ ev.n_events|intc }}</td></tr>{% endfor %}
+    </tbody></table></div></div>
+</section>
+{% endblock %}

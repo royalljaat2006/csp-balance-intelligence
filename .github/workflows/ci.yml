@@ -6,11 +6,23 @@ on:
   pull_request:
 
 env:
-  DATABASE_URL: "sqlite:///dev.sqlite3"
+  # PostgreSQL, like production: the bank-flow and comparison code uses Postgres-only SQL
+  # (DISTINCT ON, LATERAL, jsonb), so a SQLite run cannot exercise it.
+  DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
 
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3

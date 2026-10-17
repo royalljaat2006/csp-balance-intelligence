@@ -1,11 +1,9 @@
 """
-Primary navigation: five items, with sibling pages shown as tabs inside a section.
+Navigation: what the sidebar shows, which section a page belongs to, and the tabs inside a section.
 
-Home | My CSPs | Money Movement | Needs Attention | More
-
-Every existing route stays reachable and keeps its own permission check; this module only decides
-which section a page belongs to and which sibling tabs to show. Staff-only pages are hidden from
-non-staff here exactly as the old sidebar did (the views still enforce access themselves).
+The sidebar follows the operational journey (see the page order below). Every route keeps its own
+permission check in the view; this module only decides what to show, and hides staff-only entries
+from non-staff so there is never a link that leads to "forbidden".
 """
 
 from __future__ import annotations
@@ -16,26 +14,26 @@ from django.urls import reverse
 
 #: url_name -> section key
 SECTION_OF: dict[str, str] = {
-    "home": "home", "shell_data": "home", "heat_data": "home",
-    "csp_directory": "csps", "csp_detail": "csps", "csp_activity_json": "csps",
-    "balance_intelligence": "csps",
-    "money_movement": "money", "transactions": "money", "csp_comparisons": "money",
-    "trends": "money", "bank_flow": "money", "data_progress": "money",
-    "needs_attention": "attention", "risk": "attention", "actions": "attention",
-    "approvals": "attention", "verification": "attention", "agent_findings": "attention",
-    "more": "more", "overview_classic": "more", "messaging": "more", "ai_operations": "more",
-    "ai_recommendations": "more", "agent_monitoring": "more", "system_health": "more",
-    "pipeline": "more", "pipeline_events": "more", "pipeline_history": "more",
-    "pipeline_node_detail": "more", "api_docs": "more", "audit": "more", "admin_embed": "more",
+    "home": "overview", "shell_data": "overview", "heat_data": "overview",
+    "overview_classic": "overview",
+    "data_readiness": "readiness", "data_progress": "readiness",
+    "csp_directory": "csps", "csp_detail": "csps", "csp_explain": "csps",
+    "csp_activity_json": "csps", "csp_comparisons": "csps", "balance_intelligence": "csps",
+    "money_movement": "money", "transactions": "money", "trends": "money",
+    "needs_attention": "review", "risk": "review", "actions": "review", "approvals": "review",
+    "verification": "review", "agent_findings": "review",
+    "bank_flow": "sbi",
+    "month_end": "outlook",
+    "more": "ops", "messaging": "ops", "ai_operations": "ops", "ai_recommendations": "ops",
+    "agent_monitoring": "ops", "system_health": "ops", "pipeline": "ops",
+    "pipeline_events": "ops", "pipeline_history": "ops", "pipeline_node_detail": "ops",
+    "api_docs": "ops", "audit": "ops", "admin_embed": "ops",
 }
 
-
-#: pages that show the Today-vs-yesterday strip. Today is the present IST day, yesterday the day
-#: before; every page that shows data about the network or its CSPs belongs here (CSP detail has
-#: its own per-CSP version; admin, audit, messaging and API pages show no such data).
+#: pages that show the "today versus yesterday" strip (today is the present IST day)
 COMPARE_PAGES = frozenset({
-    "home", "money_movement", "transactions", "csp_comparisons", "trends", "bank_flow",
-    "csp_directory", "balance_intelligence", "needs_attention", "overview_classic",
+    "home", "money_movement", "transactions", "csp_comparisons", "trends", "csp_directory",
+    "balance_intelligence", "needs_attention", "month_end", "overview_classic",
 })
 
 
@@ -44,89 +42,84 @@ class Tab:
     label: str
     url_name: str
     staff_only: bool = False
-    active_names: tuple[str, ...] = ()  # extra url_names that light this tab up
+    active_names: tuple[str, ...] = ()
 
 
-#: section -> primary-nav entry
+#: (key, label, url_name, icon, staff_only, group)
 PRIMARY = [
-    ("home", "Home", "home"),
-    ("csps", "My CSPs", "csp_directory"),
-    ("money", "Money Movement", "money_movement"),
-    ("attention", "Needs Attention", "needs_attention"),
-    ("more", "More", "more"),
+    ("overview", "Overview", "home", "home", False, "Work"),
+    ("readiness", "Data readiness", "data_readiness", "check", False, "Work"),
+    ("csps", "CSP balances", "csp_directory", "users", False, "Work"),
+    ("money", "Money movement", "money_movement", "flow", False, "Work"),
+    ("review", "Review", "needs_attention", "flag", False, "Work"),
+    ("sbi", "SBI comparison", "bank_flow", "scale", True, "Validate"),
+    ("outlook", "Month-end outlook", "month_end", "calendar", False, "Validate"),
+    ("ops", "Operations", "more", "gear", False, "Tools"),
 ]
 
 TABS: dict[str, list[Tab]] = {
     "csps": [
-        Tab("CSP Directory", "csp_directory"),
-        Tab("CSP 360°", "csp_directory", active_names=("csp_detail",)),
-        Tab("Balance Intelligence", "balance_intelligence"),
+        Tab("All CSPs", "csp_directory",
+            active_names=("csp_directory", "csp_detail", "csp_explain")),
+        Tab("Day by day", "csp_comparisons"),
+        Tab("Incentive slabs", "balance_intelligence"),
     ],
     "money": [
-        Tab("Overview", "money_movement"),
-        Tab("Data progress", "data_progress"),
-        Tab("Transactions", "transactions"),
-        Tab("Daily Comparison", "csp_comparisons"),
-        Tab("Trends & Analytics", "trends"),
-        Tab("Bank-Flow Validation", "bank_flow", staff_only=True),
+        Tab("Summary", "money_movement"),
+        Tab("Transaction workbook", "transactions"),
+        Tab("Trends", "trends"),
     ],
-    "attention": [
-        Tab("All items", "needs_attention"),
+    "review": [
+        Tab("Data to review", "needs_attention"),
         Tab("Risk", "risk", staff_only=True),
-        Tab("Actions", "actions", staff_only=True),
-        Tab("Approvals", "approvals", staff_only=True),
+        Tab("Assistant findings", "agent_findings", staff_only=True),
         Tab("Verification", "verification", staff_only=True),
-        Tab("Agent Findings", "agent_findings", staff_only=True),
+        Tab("Proposed actions", "actions", staff_only=True),
+        Tab("Approvals", "approvals", staff_only=True),
     ],
 }
 
-#: "More" hub: (group title, [(label, url_name, staff_only, one-line description)])
+#: Operations hub: (group title, [(label, url_name, staff_only, description)])
 MORE_GROUPS: list[tuple[str, list[tuple[str, str, bool, str]]]] = [
-    ("Reports and incentives", [
-        ("Classic overview", "overview_classic", False,
-         "The previous home page: incentive slabs, quick wins and top movers."),
-        ("Balance Intelligence", "balance_intelligence", False,
-         "Incentive slabs, who is close to the next slab, and gaps."),
-        ("Trends & Analytics", "trends", False, "Network activity over time."),
+    ("Health and history", [
+        ("System health", "system_health", True,
+         "Freshness, failures and the manual runs staff may start."),
+        ("Live pipeline", "pipeline", True, "Where each job is right now."),
+        ("Audit trail", "audit", True, "Every data run, with its outcome."),
+        ("Data readiness", "data_readiness", False, "What arrived, and whether it is enough."),
     ]),
-    ("Messages and AI tools", [
-        ("Messaging", "messaging", True, "Draft messages to CSPs."),
-        ("AI Operations", "ai_operations", True, "Automated daily analysis and its history."),
-        ("AI Recommendations", "ai_recommendations", True, "Suggested next steps."),
-        ("Agent Monitoring", "agent_monitoring", True, "How the automated assistants are doing."),
+    ("Assistants", [
+        ("AI operations", "ai_operations", True, "Automated daily analysis and the agent."),
+        ("AI recommendations", "ai_recommendations", True, "Suggested next steps."),
+        ("Draft messages", "messaging", True, "Drafts for CSPs. Nothing is ever sent from here."),
+        ("Assistant monitoring", "agent_monitoring", True, "How the assistants are doing."),
     ]),
-    ("Checks on the data", [
-        ("Data progress", "data_progress", False,
-         "What ran today and yesterday, and when each figure was last updated."),
-        ("Bank-Flow Validation", "bank_flow", True,
-         "Technical checks on bank statements and the estimate."),
-        ("Data Pipeline", "pipeline", True, "Where data comes from and when it last arrived."),
-        ("System Health", "system_health", True, "Is everything running?"),
-    ]),
-    ("Administration", [
-        ("Audit", "audit", True, "Who did what, and when."),
-        ("API Documentation", "api_docs", True, "For developers connecting other systems."),
-        ("Administration", "admin_embed", True, "Users, keys and raw records."),
+    ("Reference", [
+        ("Incentive slabs", "balance_intelligence", False, "Rule #19 positions (production)."),
+        ("API documentation", "api_docs", True, "For people connecting other systems."),
+        ("Administration", "admin_embed", True, "Users, API keys and raw records."),
     ]),
 ]
 
 
 def build(url_name: str | None, is_staff: bool) -> dict:
     section = SECTION_OF.get(url_name or "", "")
-    primary = [
-        {"key": key, "label": label, "href": reverse(f"dashboard:{target}"),
-         "active": key == section}
-        for key, label, target in PRIMARY
-    ]
+    groups: dict[str, list[dict]] = {}
+    for key, label, target, icon, staff_only, group in PRIMARY:
+        if staff_only and not is_staff:
+            continue
+        groups.setdefault(group, []).append({
+            "key": key, "label": label, "href": reverse(f"dashboard:{target}"),
+            "active": key == section, "icon": icon,
+        })
     tabs = []
     for t in TABS.get(section, []):
         if t.staff_only and not is_staff:
             continue
-        active = url_name in t.active_names if t.active_names else url_name == t.url_name
+        names = t.active_names or (t.url_name,)
         tabs.append({"label": t.label, "href": reverse(f"dashboard:{t.url_name}"),
-                     "active": active})
-    return {"nav_primary": primary, "nav_section": section, "nav_tabs": tabs,
-            "nav_back_to_more": section == "more" and url_name != "more"}
+                     "active": url_name in names})
+    return {"nav_groups": list(groups.items()), "nav_section": section, "nav_tabs": tabs}
 
 
 def more_groups(is_staff: bool) -> list[dict]:

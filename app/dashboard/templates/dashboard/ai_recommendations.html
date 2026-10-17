@@ -1,63 +1,20 @@
-{% extends "dashboard/base.html" %}
-{% block title %}AI Recommendations — Eko Operations{% endblock %}
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}AI recommendations · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / AI recommendations</div>
+  <h1>AI recommendations</h1>
+  <p class="lede">The assistant's narration and suggestions over figures that are already stored. These are AI suggestions, never a new calculation. The full task history is on <a href="{% url 'dashboard:ai_operations' %}">AI operations</a>.</p></div></div>
+{% endblock %}
 {% block content %}
-<div class="wrap stagger">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>AI Operations</div>
-    <h1>AI Recommendations</h1>
-    <p class="sub">Nemotron's narration and suggestions over already-computed numbers — never a new
-      calculation of its own. {% include "dashboard/components/trust_badge.html" with kind="ai_recommendation" %}
-      Full agent task history lives on <a href="{% url 'dashboard:ai_operations' %}" style="color:var(--brand);">AI Operations</a>.</p>
-  </header>
-
-  <section class="panel">
-    {% include "dashboard/components/section_header.html" with title="Monthly briefing" hint=month %}
-    {% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight unreviewed_anomaly_count=0 %}
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Priority calls</h2><span class="hint">{{ priority_calls|length }} ranked</span></div>
-    <div class="tbl-scroll">
-      <table>
-        <thead><tr><th class="num">Rank</th><th>CSP</th><th>Reasoning</th></tr></thead>
-        <tbody>
-          {% for p in priority_calls %}
-          <tr>
-            <td class="mono num">{{ p.rank }}</td>
-            <td><a class="name-link" href="{% url 'dashboard:csp_detail' p.csp.csp_code %}">{{ p.csp.name|default:p.csp.csp_code }}</a><span class="code">{{ p.csp.csp_code }}</span></td>
-            <td class="hint">{{ p.reasoning|truncatechars:100 }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="3">
-            {% include "dashboard/components/empty_state.html" with title="No priority calls yet" description="Runs automatically once a day — see manage.py generate_priority_calls." %}
-          </td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Recent draft nudges</h2><span class="hint">{{ recent_drafts|length }} shown &middot; approve on <a href="{% url 'dashboard:approvals' %}" style="color:var(--brand);">Approvals</a></span></div>
-    <div class="tbl-scroll">
-      <table>
-        <thead><tr><th>CSP</th><th>Message</th><th>Status</th><th>Drafted</th></tr></thead>
-        <tbody>
-          {% for m in recent_drafts %}
-          <tr>
-            <td><a class="name-link" href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">{{ m.csp.name|default:m.csp.csp_code }}</a><span class="code">{{ m.csp.csp_code }}</span></td>
-            <td style="text-align:left;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ m.text|truncatechars:60 }}</td>
-            <td><span class="pill msg-{{ m.status }}">{{ m.get_status_display }}</span></td>
-            <td class="mono">{{ m.generated_at|date:"d M, H:i" }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">No draft nudges yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-</div>
+<section class="card"><header><div><h2>Monthly briefing</h2><p>{{ month }}</p></div>{% include "dashboard/components/badge.html" with tone="shadow" text="AI generated" %}</header>
+  <div class="body">{% include "dashboard/components/ai_insight_card.html" with latest_insight=latest_insight %}</div></section>
+<section class="card"><header><div><h2>Priority calls</h2><p>{{ priority_calls|length }} ranked.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th class="num">Rank</th><th>CSP</th><th>Reasoning</th></tr></thead><tbody>
+    {% for p in priority_calls %}<tr><td class="num">{{ p.rank }}</td><td class="name"><a href="{% url 'dashboard:csp_detail' p.csp.csp_code %}">{{ p.csp.name|default:p.csp.csp_code }}</a><span class="sub mono">{{ p.csp.csp_code }}</span></td><td class="small">{{ p.reason }}</td></tr>
+    {% empty %}<tr><td colspan="3">{% include "dashboard/components/empty.html" with title="No priority calls yet" text="They are generated once a day." %}</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="card"><header><div><h2>Recent draft nudges</h2><p>Decide on <a href="{% url 'dashboard:approvals' %}">Approvals</a>.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>CSP</th><th>Message</th><th>Status</th><th>Drafted</th></tr></thead><tbody>
+    {% for m in recent_drafts %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">{{ m.csp.name|default:m.csp.csp_code }}</a></td><td class="small" style="max-width:420px">{{ m.text }}</td><td>{{ m.get_status_display }}</td><td>{{ m.generated_at|date:"j M, g:i a" }}</td></tr>
+    {% empty %}<tr><td colspan="4" class="muted">No draft nudges yet.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

@@ -1,0 +1,75 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Why this estimate · {{ x.csp.name|default:code }}{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <div class="crumbs"><a href="{% url 'dashboard:csp_directory' %}">CSP balances</a> / <a href="{% url 'dashboard:csp_detail' code %}">{{ x.csp.name|default:code }}</a> / Why this estimate</div>
+    <h1>Why is this estimate {% if x.has_estimate %}{{ x.estimate.per_account_average|inr }}{% else %}not available{% endif %}?</h1>
+    <p class="lede">A step-by-step reading of the figures the system stored for <b>{{ x.csp.name|default:code }}</b> <span class="mono">{{ code }}</span>
+      {% if x.as_of %}as of {{ x.as_of|date:"j M Y" }}{% endif %}. Every number below is read from stored data; nothing is recalculated on this page.</p>
+  </div>
+  <a class="btn" href="{% url 'dashboard:csp_detail' code %}">Back to the CSP</a>
+</div>
+{% endblock %}
+{% block content %}
+{% url 'dashboard:data_readiness' as readiness_url %}
+{% if not x.has_estimate %}
+  {% include "dashboard/components/callout.html" with tone="info" text=x.message %}
+{% else %}
+{% include "dashboard/components/callout.html" with tone="shadow" title="Shadow estimate. " text="This estimate is informational. It is not an SBI figure, it is not stored with production balances, and it is not used for Rule #19 or any incentive." %}
+
+{% for f in x.flags %}{% include "dashboard/components/callout.html" with tone=f.level text=f.text %}{% endfor %}
+
+<section class="grid g-main">
+  <div class="card">
+    <header><div><h2>How the figures fit together</h2><p>Per-account averages are rupees per account; combined balances are the whole CSP.</p></div></header>
+    <div class="body">
+      <ol class="steps">
+        <li><div><h3>Starting point: the SBI-reported average</h3></div>
+          <div class="val">{{ x.baseline.per_account_average|inr }}</div>
+          <p class="why">Received {{ x.baseline.received_on|date:"j M Y" }} ({{ x.baseline.days_since_received|ago_days }}). It starts a new cycle on that day; money movement counts from the next day. Source: {{ x.baseline.source }}.</p></li>
+        <li><div><h3>Account count used</h3></div>
+          <div class="val">{{ x.account_count.at_baseline|intc }}{% if x.account_count.current != x.account_count.at_baseline %} &rarr; {{ x.account_count.current|intc }}{% endif %}</div>
+          <p class="why">Count when the SBI value arrived{% if x.account_count.current != x.account_count.at_baseline %}, and the latest count{% endif %}. Last read {% if x.account_count.last_reading %}{{ x.account_count.last_reading|date:"j M" }} ({{ x.account_count.reading_age_days|ago_days }}){% else %}never{% endif %}{% if x.account_count.stale %}. <b>Stale: the last known count is being used.</b>{% endif %}</p></li>
+        <li><div><h3>Combined balance at the baseline</h3></div>
+          <div class="val">{{ x.combined_baseline|inr }}</div>
+          <p class="why">Average &times; account count = {{ x.baseline.per_account_average|inr }} &times; {{ x.account_count.at_baseline|intc }}.</p></li>
+        <li><div><h3>Eligible deposits since then</h3></div>
+          <div class="val">{{ x.movement.deposits|inr }}</div>
+          <p class="why">Approved deposit types from bank statements, matched exactly to this CSP, after {{ x.movement.from_exclusive|date:"j M" }}.</p></li>
+        <li><div><h3>Eligible withdrawals since then</h3></div>
+          <div class="val">{{ x.movement.withdrawals|inr }}</div>
+          <p class="why">Approved withdrawal types, same rules. A pool debit is a customer deposit; a pool credit is a customer withdrawal.</p></li>
+        <li><div><h3>Net movement</h3></div>
+          <div class="val">{{ x.movement.net|signed_inr }}</div>
+          <p class="why">Deposits minus withdrawals over {{ x.movement.days_with_statements }} statement day{{ x.movement.days_with_statements|pluralize }} of {{ x.movement.window_days }}{% if x.movement.coverage is not None %} ({{ x.movement.coverage|pct0 }} proven complete){% endif %}. Days without a statement are not treated as zero.</p></li>
+        <li><div><h3>Stored estimate (per account)</h3></div>
+          <div class="val">{{ x.estimate.per_account_average|inr }}</div>
+          <p class="why"><b>{{ x.estimate.status|est_label }}.</b> {{ x.estimate.method_words }} {{ x.estimate.reason_words }}{% if x.estimate.expected_error_pct is not None %} Measured typical error: {{ x.estimate.expected_error_pct|floatformat:1 }}%.{% endif %}</p></li>
+      </ol>
+      <div class="callout info" style="margin-top:10px">{% include "dashboard/_icon.html" with name="info" %}<div><b>Movement is shown, not added.</b> {{ x.not_applied }}</div></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card"><header><div><h2>Can the baseline be trusted?</h2><p>Is the SBI average really a per-account average?</p></div>
+      {% if x.check.state == "consistent" %}{% include "dashboard/components/badge.html" with tone="ok" text="Consistent" %}{% elif x.check.state == "inconsistent" %}{% include "dashboard/components/badge.html" with tone="bad" text="Mismatch" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Cannot check" %}{% endif %}</header>
+      <div class="body"><p>{{ x.check.text }}</p>
+        {% if x.check.sheet_total is not None %}<dl class="kv" style="margin-top:10px"><dt>Sheet's own total balance</dt><dd>{{ x.check.sheet_total|inr }}</dd><dt>Average &times; account count</dt><dd>{{ x.check.average_x_count|inr }}</dd><dt>Difference</dt><dd>{{ x.check.difference|signed_inr }}</dd></dl>{% endif %}
+        <p class="small muted" style="margin-top:8px">Read-only check against the Calling Sheet's total for this CSP. It does not prove the same for every CSP.</p></div></div>
+    <div class="card"><header><div><h2>Estimator status</h2></div>{% include "dashboard/components/badge.html" with tone=x.estimator.status|est_tone text=x.estimator.status|est_label %}</header>
+      <div class="body"><p class="small">{{ x.estimator.detail }}</p></div>
+      {% if user.is_staff %}<footer>Validation is shown on <a href="{% url 'dashboard:bank_flow' %}">SBI comparison</a>.</footer>{% endif %}</div>
+  </div>
+</section>
+
+<section class="card">
+  <header><div><h2>Daily movement since the baseline</h2><p>Statement days for this CSP, with whether each day is proven complete.</p></div></header>
+  <div class="body flush table-wrap">
+    {% if x.movement.days %}<table class="t"><thead><tr><th>Day</th><th class="num">Deposits</th><th class="num">Withdrawals</th><th class="num">Net</th><th>Day status</th></tr></thead><tbody>
+      {% for d in x.movement.days %}<tr><td>{{ d.date|date:"D j M" }}</td><td class="num">{{ d.deposits|inr }}</td><td class="num">{{ d.withdrawals|inr }}</td><td class="num">{{ d.net|signed_inr }}</td><td>{{ d.status }}</td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No eligible movement since the baseline" text="Either nothing happened or no statement covers these days. Check Data readiness before reading this as zero." href=readiness_url go="Open data readiness" %}{% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

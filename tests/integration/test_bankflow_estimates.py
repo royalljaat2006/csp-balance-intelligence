@@ -232,9 +232,10 @@ def test_estimates_api_scope_and_labelling(client, api_key):
 def test_dashboard_shows_estimates_distinct_from_observed(client):
     get_user_model().objects.create_user("staff", password="x", is_staff=True)
     client.login(username="staff", password="x")
-    assert "No estimates computed yet" in client.get("/dashboard/bank-flow/").content.decode()
+    assert "No outlook for this month" in client.get("/dashboard/month-end/").content.decode()
     _csp("A")
     _bal("A", TODAY, "1000", 300)
     estimates.compute_daily_estimates(TODAY)
-    page = client.get("/dashboard/bank-flow/").content.decode()
-    assert "Observed (SBI)" in page and "(est.)" in page and "INSUFFICIENT_EVIDENCE" in page
+    page = client.get("/dashboard/csp/A/").content.decode()
+    assert "SBI-reported average" in page and "Our estimate" in page
+    assert "Carry-forward, not validated" in page  # the estimate is labelled, never a balance

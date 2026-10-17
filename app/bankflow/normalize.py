@@ -38,12 +38,16 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+# `yono withdrawal` is deliberately NOT in this map: it is a different label from `yono fi wdl` and
+# is held out of every estimate (classified "unclassified") until it is independently verified and
+# approved. The transaction workbook's own allow-list (ingestion/xlsx_validation.py) is a separate
+# list for a separate source and is not affected.
+#
 # channel (lower-cased, whitespace-collapsed) -> (normalized label, category)
 CHANNEL_MAP: dict[str, tuple[str, str]] = {
     "aepswdl": ("aeps_withdrawal", "withdrawal"),
     "withdrawal": ("withdrawal", "withdrawal"),
     "rupaywdl": ("rupay_withdrawal", "withdrawal"),
-    "yono withdrawal": ("yono_withdrawal", "withdrawal"),
     "aepsdeposit": ("aeps_deposit", "deposit"),
     "deposit": ("deposit", "deposit"),
     "rupaydeposit": ("rupay_deposit", "deposit"),
@@ -73,6 +77,11 @@ class Normalized:
     ko_raw: str
     is_reversal_candidate: bool
     reversal_reason: str
+
+
+#: Normalized labels that earlier versions stored and that are no longer approved. Stored rows
+#: carrying them are moved to "unclassified" by ingest.reclassify_stored().
+RETIRED_NORMALIZED: dict[str, str] = {"yono_withdrawal": "unknown:yono withdrawal"}
 
 
 def description_hash(description: str, ref_column: str) -> str:

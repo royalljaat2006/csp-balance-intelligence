@@ -1,322 +1,175 @@
-/* Live Data Pipeline — consumes real SSE events from the server (see
- * dashboard/pipeline_sse.py). Every value rendered here comes from a
- * server-pushed event or the initial server-rendered snapshot; nothing in
- * this file invents a number, a timer, or a status transition. */
+/* Live pipeline: consumes the real server-sent events (dashboard/pipeline_sse.py).
+   Every value shown comes from a pushed event or the server-rendered first snapshot; nothing here
+   invents a number, a timer or a status change. All text goes in through textContent. */
 (function () {
   "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var lastEventAt = null, reconnectTimer = null, historyPage = 1, historyNode = null;
+  var LABELS = { idle: "Idle", running: "Running", queued: "Queued", completed: "Completed", warning: "Warning",
+    failed: "Failed", waiting_approval: "Waiting for approval", not_configured: "Not configured" };
+  var TONE = { running: "info", queued: "info", completed: "ok", warning: "warn", failed: "bad",
+    waiting_approval: "warn", not_configured: "", idle: "" };
 
-  const NODE_KEYS = [
-    "calling_sheet", "transactions", "postgres", "snapshots", "autopilot",
-    "balance_agent", "transaction_agent", "risk_agent", "findings", "actions",
-  ];
-  const CONNECTOR_MAP = {
-    calling_sheet: ["conn-cs-pg"], transactions: ["conn-tx-pg"],
-    postgres: ["conn-pg-snap"],
-    snapshots: ["conn-snap-bal", "conn-snap-tx", "conn-snap-risk"],
-    balance_agent: ["conn-bal-find"], transaction_agent: ["conn-tx-find"], risk_agent: ["conn-risk-find"],
-    findings: ["conn-find-act"], actions: [], autopilot: ["conn-pg-autopilot"],
-  };
-
-  let lastEventAt = null;
-  let reconnectTimer = null;
-  let historyPage = 1;
-  let historyNode = null;
-
-  function fmtAgo(iso) {
+  function ago(iso) {
     if (!iso) return "never";
-    const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-    if (seconds < 5) return "just now";
-    if (seconds < 60) return seconds + "s ago";
-    if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
-    return Math.round(seconds / 3600) + "h ago";
+    var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.round(s / 60) + "m ago";
+    return Math.round(s / 3600) + "h ago";
   }
-
-  function setConnectionState(state) {
-    const pill = document.getElementById("pl-connection");
-    const text = document.getElementById("pl-connection-text");
-    pill.className = "freshness-pill " + state;
-    if (state === "live") {
-      text.textContent = "LIVE — last event: " + fmtAgo(lastEventAt);
-    } else if (state === "lost") {
-      text.innerHTML = "⚠ LIVE CONNECTION LOST — last update: " + fmtAgo(lastEventAt) + " — reconnecting…";
-    } else {
-      text.textContent = "Connecting…";
-    }
+  function connection(state) {
+    var pill = $("pl-connection"), text = $("pl-connection-text");
+    pill.className = "fresh " + (state === "live" ? "ok" : state === "lost" ? "bad" : "warn");
+    text.textContent = state === "live" ? "Live. Last event " + ago(lastEventAt)
+      : state === "lost" ? "Connection lost. Last update " + ago(lastEventAt) + ". Reconnecting..." : "Connecting...";
   }
+  function records(r) { return Object.keys(r || {}).map(function (k) { return k + ": " + r[k]; }).join(", "); }
 
-  function applyNode(node) {
-    const el = document.querySelector('.pl-node[data-node="' + node.key + '"]');
+  function applyNode(n) {
+    var el = document.querySelector('.node[data-node="' + n.key + '"]');
     if (!el) return;
-    el.dataset.status = node.status;
-    el.className = "pl-node status-" + node.status;
-    const statusText = el.querySelector(".pl-status-text");
-    const meta = el.querySelector(".pl-node-meta");
-    const labels = {
-      idle: "Idle", running: "Running", queued: "Queued", completed: "Completed",
-      warning: "Warning", failed: "Failed", waiting_approval: "Waiting approval",
-      not_configured: "Not configured",
-    };
-    statusText.textContent = labels[node.status] || node.status;
-
-    const parts = [];
-    if (node.status === "not_configured") {
-      parts.push("disabled — no credentials configured");
-    } else if (node.status === "running" && node.last_run_at) {
-      parts.push("started " + fmtAgo(node.last_run_at));
-    } else if (node.last_run_at) {
-      parts.push("last run " + fmtAgo(node.last_run_at));
-      if (node.last_duration_seconds != null) parts.push(node.last_duration_seconds + "s");
-    } else {
-      parts.push("no execution recorded yet");
-    }
-    if (node.records) {
-      const recordBits = Object.keys(node.records).map((k) => k + ": " + node.records[k]);
-      if (recordBits.length) parts.push(recordBits.join(", "));
-    }
-    if (node.error) parts.push("error: " + node.error);
-    meta.textContent = parts.join(" · ");
-
-    // Real progress only — node.progress is null unless the backend
-    // actually reported a live {processed, total} pair for this exact run
-    // (see common/cache.set_job_progress / dashboard/pipeline_state.py).
-    let bar = el.querySelector(".pl-progress");
-    if (node.status === "running" && node.progress && node.progress.total) {
-      if (!bar) {
-        bar = document.createElement("div");
-        bar.className = "pl-progress";
-        bar.innerHTML = '<div class="pl-progress-fill"></div><div class="pl-progress-label"></div>';
-        el.appendChild(bar);
-      }
-      const pct = Math.min(100, Math.round((node.progress.processed / node.progress.total) * 100));
-      bar.querySelector(".pl-progress-fill").style.width = pct + "%";
-      bar.querySelector(".pl-progress-label").textContent =
-        node.progress.processed.toLocaleString() + " / " + node.progress.total.toLocaleString() + " (" + pct + "%)";
-    } else if (bar) {
-      bar.remove();
-    }
-
-    (CONNECTOR_MAP[node.key] || []).forEach((connId) => {
-      const conn = document.getElementById(connId);
-      if (!conn) return;
-      conn.classList.toggle("flowing", node.status === "running");
-    });
-
-    if (node.key === "actions") applyApprovalBanner(node);
-  }
-
-  function applyApprovalBanner(node) {
-    const banner = document.getElementById("pl-approval-banner");
-    const diagram = document.getElementById("pipeline-diagram");
-    const pending = node.status === "waiting_approval" ? (node.records && node.records.pending_approval) : 0;
-    if (pending) {
-      document.getElementById("pl-approval-banner-text").textContent =
-        "Pipeline paused — " + pending + " action" + (pending === 1 ? "" : "s") + " waiting for approval";
-      banner.hidden = false;
-      diagram.classList.add("pl-paused");
-    } else {
-      banner.hidden = true;
-      diagram.classList.remove("pl-paused");
+    el.className = "node status-" + n.status;
+    var badge = el.querySelector(".pl-status-badge");
+    badge.className = "badge pl-status-badge " + (TONE[n.status] || "");
+    el.querySelector(".pl-status-text").textContent = LABELS[n.status] || n.status;
+    var parts = [];
+    if (n.status === "not_configured") parts.push("Disabled: no credentials configured");
+    else if (n.status === "running" && n.last_run_at) parts.push("Started " + ago(n.last_run_at));
+    else if (n.last_run_at) { parts.push("Last run " + ago(n.last_run_at)); if (n.last_duration_seconds != null) parts.push(n.last_duration_seconds + "s"); }
+    else parts.push("No run recorded yet");
+    if (n.records && records(n.records)) parts.push(records(n.records));
+    if (n.error) parts.push("Error: " + n.error);
+    el.querySelector(".pl-node-meta").textContent = parts.join(" · ");
+    var bar = el.querySelector(".bar");
+    if (n.status === "running" && n.progress && n.progress.total) {
+      var pct = Math.min(100, Math.round(n.progress.processed / n.progress.total * 100));
+      if (!bar) { bar = document.createElement("span"); bar.className = "bar"; bar.appendChild(document.createElement("i")); el.appendChild(bar); }
+      bar.firstChild.style.width = pct + "%";
+      bar.title = n.progress.processed.toLocaleString() + " of " + n.progress.total.toLocaleString() + " (" + pct + "%)";
+    } else if (bar) bar.remove();
+    if (n.key === "actions") {
+      var pending = n.status === "waiting_approval" && n.records ? n.records.pending_approval : 0;
+      $("pl-approval-banner").hidden = !pending;
+      if (pending) $("pl-approval-banner-text").textContent = pending + " action" + (pending === 1 ? "" : "s") + " waiting.";
     }
   }
-
-  function applyCounters(counters) {
-    document.getElementById("pl-counter-csps").textContent = counters.csps_processed_today;
-    document.getElementById("pl-counter-txns").textContent = counters.transactions_processed_today;
-    document.getElementById("pl-counter-snapshots").textContent = counters.snapshots_generated_today;
-    document.getElementById("pl-counter-jobs").textContent = counters.active_jobs + " / " + counters.queued_jobs;
-    document.getElementById("pl-counter-failed").textContent = counters.failed_jobs_today;
-    document.getElementById("pl-counter-findings").textContent = counters.ai_findings_today;
-    document.getElementById("pl-counter-approvals").textContent = counters.pending_approvals;
-    document.getElementById("pl-counter-total-csps").textContent = counters.total_csps;
+  function counters(c) {
+    $("pl-counter-csps").textContent = c.csps_processed_today;
+    $("pl-counter-txns").textContent = c.transactions_processed_today;
+    $("pl-counter-snapshots").textContent = c.snapshots_generated_today;
+    $("pl-counter-jobs").textContent = c.active_jobs + " / " + c.queued_jobs;
+    $("pl-counter-failed").textContent = c.failed_jobs_today;
+    $("pl-counter-findings").textContent = c.ai_findings_today;
+    $("pl-counter-approvals").textContent = c.pending_approvals;
+    $("pl-counter-total-csps").textContent = c.total_csps;
   }
-
-  function applyCurrentOperation(op) {
-    const el = document.getElementById("pl-current-operation");
-    if (!op || !op.node) {
-      el.innerHTML = '<p class="sub">No active operation.</p>';
-      return;
-    }
-    const rows = [
-      ["Operation", op.node],
-      ["Status", op.status],
-      ["Started", op.started_at ? new Date(op.started_at).toLocaleString() : "—"],
-    ];
+  function currentOperation(op) {
+    var box = $("pl-current-operation");
+    box.replaceChildren();
+    if (!op || !op.node) { var p = document.createElement("p"); p.className = "muted"; p.textContent = "No active operation."; box.appendChild(p); return; }
+    var rows = [["Operation", op.node], ["Status", op.status], ["Started", op.started_at ? new Date(op.started_at).toLocaleString() : "—"]];
     if (op.status === "running") {
-      rows.push(["Elapsed", (op.elapsed_seconds != null ? op.elapsed_seconds + "s" : "—")]);
-      if (op.progress && op.progress.total) {
-        const pct = Math.min(100, Math.round((op.progress.processed / op.progress.total) * 100));
-        rows.push(["Progress", op.progress.processed.toLocaleString() + " / " + op.progress.total.toLocaleString() + " (" + pct + "%)"]);
-      }
-    } else {
-      rows.push(["Duration", (op.duration_seconds != null ? op.duration_seconds + "s" : "—")]);
-    }
-    if (op.records) {
-      Object.keys(op.records).forEach((k) => rows.push([k, op.records[k]]));
-    }
+      rows.push(["Elapsed", op.elapsed_seconds != null ? op.elapsed_seconds + "s" : "—"]);
+      if (op.progress && op.progress.total) rows.push(["Progress", op.progress.processed.toLocaleString() + " of " + op.progress.total.toLocaleString()]);
+    } else rows.push(["Duration", op.duration_seconds != null ? op.duration_seconds + "s" : "—"]);
+    Object.keys(op.records || {}).forEach(function (k) { rows.push([k, op.records[k]]); });
     if (op.error) rows.push(["Error", op.error]);
-    el.innerHTML = '<div class="kv-grid">' + rows.map(
-      (r) => '<div class="kv"><span class="k">' + r[0] + '</span><span class="v">' + r[1] + '</span></div>'
-    ).join("") + "</div>";
+    var dl = document.createElement("dl"); dl.className = "kv";
+    rows.forEach(function (r) { var dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = r[0]; dd.textContent = r[1]; dl.appendChild(dt); dl.appendChild(dd); });
+    box.appendChild(dl);
   }
-
-  const EVENT_ICONS = {
-    ingestion_started: "●", ingestion_completed: "✓", ingestion_failed: "✕",
-    agent_started: "●", agent_completed: "✓", agent_failed: "✕",
-    agent_finding: "◆", verification_completed: "✓",
-    action_created: "●", action_pending_approval: "⏸",
-  };
-
-  function prependTimelineEntry(entry) {
-    const list = document.getElementById("pl-timeline");
-    const row = document.createElement("div");
-    row.className = "pipeline-timeline-row";
-    const time = new Date(entry.ts).toLocaleTimeString();
-    row.innerHTML = '<span class="mono">' + time + '</span><span class="pl-timeline-icon">' +
-      (EVENT_ICONS[entry.kind] || "●") + '</span><span>' + entry.text + '</span>';
-    list.prepend(row);
+  var ICON = { ingestion_started: "●", ingestion_completed: "✓", ingestion_failed: "✕", agent_started: "●", agent_completed: "✓",
+    agent_failed: "✕", agent_finding: "◆", verification_completed: "✓", action_created: "●", action_pending_approval: "⏸" };
+  function addEntry(e) {
+    var list = $("pl-timeline"), li = document.createElement("li");
+    var t = document.createElement("span"); t.className = "mono"; t.textContent = new Date(e.ts).toLocaleTimeString();
+    var i = document.createElement("span"); i.textContent = ICON[e.kind] || "●"; i.setAttribute("aria-hidden", "true");
+    var x = document.createElement("span"); x.textContent = e.text;
+    li.appendChild(t); li.appendChild(i); li.appendChild(x); list.prepend(li);
     while (list.children.length > 40) list.removeChild(list.lastChild);
   }
-
-  function renderTimeline(entries) {
-    const list = document.getElementById("pl-timeline");
-    list.innerHTML = "";
-    if (!entries.length) {
-      list.innerHTML = '<p class="sub">No recent activity.</p>';
-      return;
-    }
-    entries.forEach(prependTimelineEntry);
+  function timeline(entries) {
+    var list = $("pl-timeline"); list.replaceChildren();
+    if (!entries.length) { var li = document.createElement("li"); li.className = "muted"; li.textContent = "No recent activity."; list.appendChild(li); return; }
+    entries.forEach(addEntry);
   }
-
-  function applySnapshot(snapshot) {
-    snapshot.nodes.forEach(applyNode);
-    applyCounters(snapshot.counters);
-    applyCurrentOperation(snapshot.current_operation);
-    document.getElementById("pl-generated-at").textContent =
-      "as of " + new Date(snapshot.generated_at).toLocaleTimeString();
+  function snapshot(s) {
+    s.nodes.forEach(applyNode); counters(s.counters); currentOperation(s.current_operation);
+    $("pl-generated-at").textContent = "As of " + new Date(s.generated_at).toLocaleTimeString() + ".";
   }
-
   function connect() {
-    setConnectionState("connecting");
-    const source = new EventSource(window.PIPELINE_URLS.events);
-
-    source.addEventListener("sync", (e) => {
-      lastEventAt = new Date().toISOString();
-      applySnapshot(JSON.parse(e.data));
-      setConnectionState("live");
-    });
-    source.addEventListener("timeline", (e) => renderTimeline(JSON.parse(e.data)));
-    source.addEventListener("node_update", (e) => { lastEventAt = new Date().toISOString(); applyNode(JSON.parse(e.data)); });
-    source.addEventListener("counters", (e) => { lastEventAt = new Date().toISOString(); applyCounters(JSON.parse(e.data)); });
-    source.addEventListener("current_operation", (e) => { lastEventAt = new Date().toISOString(); applyCurrentOperation(JSON.parse(e.data)); });
-    source.addEventListener("activity", (e) => { lastEventAt = new Date().toISOString(); prependTimelineEntry(JSON.parse(e.data)); });
-    source.addEventListener("heartbeat", () => { lastEventAt = new Date().toISOString(); setConnectionState("live"); });
-    source.addEventListener("error", () => {
-      // Server-side dependency failure (e.g. DB/Redis unreachable) reported
-      // explicitly by pipeline_sse.py — surfaced as-is, never hidden.
-      setConnectionState("lost");
-    });
-
-    source.onerror = () => {
-      // The stream self-terminates every ~20s by design (see
-      // pipeline_sse.py) — this fires on that normal close too, not just
-      // real failures. EventSource reconnects on its own; we just reflect
-      // connection state honestly in the meantime.
-      setConnectionState("lost");
-      source.close();
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connect, 1000);
+    connection("connecting");
+    var source = new EventSource(window.PIPELINE_URLS.events);
+    function seen() { lastEventAt = new Date().toISOString(); }
+    source.addEventListener("sync", function (e) { seen(); snapshot(JSON.parse(e.data)); connection("live"); });
+    source.addEventListener("timeline", function (e) { timeline(JSON.parse(e.data)); });
+    source.addEventListener("node_update", function (e) { seen(); applyNode(JSON.parse(e.data)); });
+    source.addEventListener("counters", function (e) { seen(); counters(JSON.parse(e.data)); });
+    source.addEventListener("current_operation", function (e) { seen(); currentOperation(JSON.parse(e.data)); });
+    source.addEventListener("activity", function (e) { seen(); addEntry(JSON.parse(e.data)); });
+    source.addEventListener("heartbeat", function () { seen(); connection("live"); });
+    source.onerror = function () {
+      // the stream closes itself every ~20 s by design; the browser reconnects, we only say so
+      connection("lost"); source.close(); clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 1000);
     };
   }
-
-  setInterval(() => {
-    if (lastEventAt) {
-      const text = document.getElementById("pl-connection-text");
-      if (text) text.textContent = document.getElementById("pl-connection").className.includes("lost")
-        ? text.textContent : "LIVE — last event: " + fmtAgo(lastEventAt);
-    }
-  }, 1000);
-
-  // ---- LIVE / HISTORY toggle -------------------------------------------
-  function showHistory(node) {
-    historyNode = node;
-    historyPage = 1;
-    document.getElementById("pl-history-panel").style.display = "";
-    loadHistory();
-  }
+  setInterval(function () { if (lastEventAt && $("pl-connection").className.indexOf("bad") < 0) connection("live"); }, 1000);
 
   function loadHistory() {
-    const params = new URLSearchParams({ page: historyPage });
-    if (historyNode) params.set("node", historyNode);
-    fetch(window.PIPELINE_URLS.history + "?" + params.toString())
-      .then((r) => r.json())
-      .then((data) => {
-        const tbody = document.getElementById("pl-history-rows");
-        tbody.innerHTML = "";
-        data.rows.forEach((row) => {
-          const tr = document.createElement("tr");
-          const statusCell = row.status || "—";
-          const detail = row.records
-            ? Object.keys(row.records).map((k) => k + ": " + row.records[k]).join(", ")
-            : (row.error || "—");
-          tr.innerHTML = "<td class=\"mono\">" + new Date(row.started_at).toLocaleString() + "</td>" +
-            "<td>" + row.label + "</td><td>" + statusCell + "</td>" +
-            "<td class=\"num\">" + (row.duration_seconds != null ? row.duration_seconds + "s" : "—") + "</td>" +
-            "<td class=\"hint\">" + detail + "</td>";
-          tbody.appendChild(tr);
+    var params = new URLSearchParams({ page: historyPage }); if (historyNode) params.set("node", historyNode);
+    fetch(window.PIPELINE_URLS.history + "?" + params.toString(), { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (d) {
+      var tb = $("pl-history-rows"); tb.replaceChildren();
+      d.rows.forEach(function (row) {
+        var tr = document.createElement("tr");
+        [new Date(row.started_at).toLocaleString(), row.label, row.status || "—", row.duration_seconds != null ? row.duration_seconds + "s" : "—",
+         row.records ? records(row.records) : (row.error || "—")].forEach(function (v, i) {
+          var td = document.createElement("td"); td.textContent = v; if (i === 3) td.className = "num"; tr.appendChild(td);
         });
-        document.getElementById("pl-history-page-label").textContent =
-          "Page " + data.page + " of " + data.total_pages + " (" + data.total + " total)";
+        tb.appendChild(tr);
       });
+      $("pl-history-page-label").textContent = "Page " + d.page + " of " + d.total_pages + " (" + d.total + " total)";
+    });
   }
+  function mode(history) {
+    $("pl-mode-live").setAttribute("aria-pressed", history ? "false" : "true");
+    $("pl-mode-history").setAttribute("aria-pressed", history ? "true" : "false");
+    $("pl-history-panel").hidden = !history;
+    if (history) { historyNode = null; historyPage = 1; loadHistory(); }
+  }
+  $("pl-mode-live").addEventListener("click", function () { mode(false); });
+  $("pl-mode-history").addEventListener("click", function () { mode(true); });
+  $("pl-history-prev").addEventListener("click", function () { if (historyPage > 1) { historyPage -= 1; loadHistory(); } });
+  $("pl-history-next").addEventListener("click", function () { historyPage += 1; loadHistory(); });
 
-  document.getElementById("pl-mode-live").addEventListener("click", () => {
-    document.getElementById("pl-mode-live").classList.add("active");
-    document.getElementById("pl-mode-history").classList.remove("active");
-    document.getElementById("pl-history-panel").style.display = "none";
-    document.getElementById("pipeline-diagram").style.opacity = "1";
-  });
-  document.getElementById("pl-mode-history").addEventListener("click", () => {
-    document.getElementById("pl-mode-history").classList.add("active");
-    document.getElementById("pl-mode-live").classList.remove("active");
-    showHistory(null);
-  });
-  document.getElementById("pl-history-prev").addEventListener("click", () => {
-    if (historyPage > 1) { historyPage -= 1; loadHistory(); }
-  });
-  document.getElementById("pl-history-next").addEventListener("click", () => {
-    historyPage += 1; loadHistory();
-  });
-
-  // ---- node click -> detail modal (reuses the app-wide modal, dashboard.js) ----
-  document.querySelectorAll(".pl-node").forEach((el) => {
-    el.setAttribute("tabindex", "0");
-    el.setAttribute("role", "button");
-    const open = () => {
-      const key = el.dataset.node;
-      const url = window.PIPELINE_URLS.nodeDetail.replace("__NODE__", key);
-      fetch(url).then((r) => r.json()).then((data) => {
-        const body = window.openModal(el.querySelector(".pl-node-label").textContent);
-        if (!data.latest) {
-          body.innerHTML = '<p class="sub">No execution recorded for this node yet.</p>';
-          return;
+  var dialog = $("pl-dialog");
+  $("pl-dialog-close").addEventListener("click", function () { dialog.close(); });
+  document.querySelectorAll(".node").forEach(function (el) {
+    el.addEventListener("click", function () {
+      var url = window.PIPELINE_URLS.nodeDetail.replace("__NODE__", el.dataset.node);
+      fetch(url, { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (data) {
+        $("pl-dialog-title").textContent = el.querySelector(".pl-node-label").textContent;
+        var body = $("pl-dialog-body"); body.replaceChildren();
+        if (!data.latest) { var p = document.createElement("p"); p.className = "muted"; p.textContent = "No run recorded for this job yet."; body.appendChild(p); }
+        else {
+          var t = document.createElement("table"); t.className = "t";
+          var head = document.createElement("tr"); ["When", "Status", "Duration", "Detail"].forEach(function (h) { var th = document.createElement("th"); th.textContent = h; head.appendChild(th); });
+          var thead = document.createElement("thead"); thead.appendChild(head); t.appendChild(thead);
+          var tb = document.createElement("tbody");
+          data.recent.forEach(function (r) {
+            var tr = document.createElement("tr");
+            [new Date(r.started_at).toLocaleString(), r.status, r.duration_seconds != null ? r.duration_seconds + "s" : "—", r.records ? records(r.records) : (r.error || "")]
+              .forEach(function (v) { var td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+            tb.appendChild(tr);
+          });
+          t.appendChild(tb); var w = document.createElement("div"); w.className = "table-wrap"; w.appendChild(t); body.appendChild(w);
         }
-        const rows = data.recent.map((r) => {
-          const detail = r.records
-            ? Object.keys(r.records).map((k) => k + ": " + r.records[k]).join(", ")
-            : (r.error || "");
-          return "<tr><td class=\"mono\">" + new Date(r.started_at).toLocaleString() + "</td><td>" + r.status +
-            "</td><td class=\"num\">" + (r.duration_seconds != null ? r.duration_seconds + "s" : "—") +
-            "</td><td class=\"hint\">" + detail + "</td></tr>";
-        }).join("");
-        body.innerHTML = '<table><thead><tr><th>When</th><th>Status</th><th class="num">Duration</th><th>Detail</th></tr></thead><tbody>' + rows + "</tbody></table>";
+        dialog.showModal();
       });
-    };
-    el.addEventListener("click", open);
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    });
   });
 
-  // ---- boot: render the server-provided initial state immediately ------
-  applySnapshot(window.PIPELINE_INITIAL_SNAPSHOT);
-  renderTimeline(window.PIPELINE_INITIAL_TIMELINE);
+  snapshot(JSON.parse($("pipeline-initial-snapshot").textContent));
+  timeline(JSON.parse($("pipeline-initial-timeline").textContent));
   connect();
 })();

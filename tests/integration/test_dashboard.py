@@ -74,13 +74,12 @@ def test_root_redirects_to_dashboard(client):
 
 
 @pytest.mark.django_db
-def test_home_renders_with_real_seeded_data(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    assert response.status_code == 200
-    body = response.content.decode()
-    assert "Test CSP" in body
-    assert "1A850001" in body
-    assert '"slab": "S1"' in body  # embedded via json_script for the table
+def test_overview_and_csp_list_render_with_real_seeded_data(logged_in_client, csp_with_summary):
+    overview = logged_in_client.get("/dashboard/")
+    assert overview.status_code == 200 and "CSPs in scope" in overview.content.decode()
+    listing = logged_in_client.get("/dashboard/csps/")
+    body = listing.content.decode()
+    assert listing.status_code == 200 and "Test CSP" in body and "1A850001" in body
 
 
 @pytest.mark.django_db
@@ -90,7 +89,9 @@ def test_home_never_leaks_an_api_key(logged_in_client, csp_with_summary):
 
 
 @pytest.mark.django_db
-def test_home_shows_today_vs_yesterday_kpis(logged_in_client, csp_with_summary):
+def test_day_by_day_page_counts_growth_from_the_comparison_engine(
+    logged_in_client, csp_with_summary
+):
     from csp.models import DailyBalance
 
     today = dt.date.today()
@@ -103,34 +104,37 @@ def test_home_shows_today_vs_yesterday_kpis(logged_in_client, csp_with_summary):
         daily_avg_balance=decimal.Decimal("3500"), source=DailyBalance.Source.CALLING_SHEET,
     )
 
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
+    response = logged_in_client.get("/dashboard/comparisons/")
     assert response.status_code == 200
-    body = response.content.decode()
-    assert "Today vs. yesterday" in body
-    assert response.context["reporting_today"] == 1
-    assert response.context["daily_trend_counts"]["GROWTH"] == 1
-    assert len(response.context["top_growth_today"]) == 1
-    assert response.context["top_growth_today"][0]["csp_code"] == csp_with_summary.csp_code
+    assert response.context["trend_counts"]["GROWTH"] == 1
+    assert len(response.context["top_growth"]) == 1
+    assert response.context["top_growth"][0]["csp_code"] == csp_with_summary.csp_code
+    assert "Test CSP" in response.content.decode()
 
 
 @pytest.mark.django_db
-def test_home_today_vs_yesterday_kpis_with_no_balance_data(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
+def test_day_by_day_page_says_no_data_when_there_are_no_readings(
+    logged_in_client, csp_with_summary
+):
+    response = logged_in_client.get("/dashboard/comparisons/")
     assert response.status_code == 200
-    assert response.context["reporting_today"] == 0
-    assert response.context["daily_trend_counts"]["NO_DATA"] == 1
+    assert response.context["trend_counts"]["NO_DATA"] == 1
+    assert response.context["trend_counts"]["DECLINE"] == 0  # a missing day is never a fall
 
 
 @pytest.mark.django_db
-def test_home_shows_ai_briefing_placeholder_without_insight(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    body = response.content.decode()
-    assert "AI briefing" in body
+def test_ai_recommendations_show_a_placeholder_without_an_insight(
+    logged_in_client, csp_with_summary
+):
+    body = logged_in_client.get("/dashboard/ai-recommendations/").content.decode()
+    assert "Monthly briefing" in body
     assert "No AI briefing generated yet" in body
 
 
 @pytest.mark.django_db
-def test_home_shows_latest_insight_and_priority_calls(logged_in_client, csp_with_summary):
+def test_ai_recommendations_show_the_latest_insight_and_priority_calls(
+    logged_in_client, csp_with_summary
+):
     from autopilot.models import Insight, PriorityCall
 
     month = csp_with_summary.monthly_summaries.first().month
@@ -143,28 +147,28 @@ def test_home_shows_latest_insight_and_priority_calls(logged_in_client, csp_with
         signals_used={"slab": "S1", "gap": 1000.0},
     )
 
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    body = response.content.decode()
+    body = logged_in_client.get("/dashboard/ai-recommendations/").content.decode()
     assert "Balances holding steady" in body
     assert "Nothing notable this week." in body
-    assert "AI priority calls" in body
+    assert "Priority calls" in body
     assert "Small gap, declining trend." in body
+    assert "AI suggestion, not a verified fact" in body
 
 
 @pytest.mark.django_db
-def test_home_shows_unreviewed_anomaly_count(logged_in_client, csp_with_summary):
+def test_ai_operations_shows_the_unreviewed_anomaly_count(logged_in_client, csp_with_summary):
     from autopilot.models import AnomalyFlag
     from csp.models import IngestLog
 
     log = IngestLog.objects.create(source="calling_sheet")
     AnomalyFlag.objects.create(ingest_log=log, description="Odd jump", severity="high")
 
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    assert "1 data anomaly flagged" in response.content.decode()
+    body = logged_in_client.get("/dashboard/ai/").content.decode()
+    assert "1 awaiting review" in body and "Odd jump" in body
 
 
 @pytest.mark.django_db
-def test_home_shows_per_csp_account_growth(logged_in_client, csp_with_summary):
+def test_csp_page_lists_account_count_changes(logged_in_client, csp_with_summary):
     from csp.models import DailyBalance
 
     DailyBalance.objects.create(
@@ -178,16 +182,17 @@ def test_home_shows_per_csp_account_growth(logged_in_client, csp_with_summary):
         source=DailyBalance.Source.CALLING_SHEET,
     )
 
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    body = response.content.decode()
-    assert 'data-key="net_new_accounts"' in body  # sortable table header
-    assert '"net_new_accounts": 12' in body  # embedded via json_script
+    body = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/").content.decode()
+    assert "Account count changes" in body
+    assert "+12" in body and "288" in body
 
 
 @pytest.mark.django_db
-def test_home_account_growth_null_without_history(logged_in_client, csp_with_summary):
-    response = logged_in_client.get("/dashboard/overview/")  # classic overview, unchanged
-    assert '"net_new_accounts": null' in response.content.decode()
+def test_csp_page_says_the_count_has_not_changed_without_history(
+    logged_in_client, csp_with_summary
+):
+    body = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/").content.decode()
+    assert "The account count has not changed" in body
 
 
 @pytest.mark.django_db
@@ -204,7 +209,7 @@ def test_csp_detail_unknown_code_404s(logged_in_client, db):
 
 
 @pytest.mark.django_db
-def test_csp_detail_shows_daily_comparison_growth(logged_in_client, csp_with_summary):
+def test_csp_detail_shows_today_against_yesterday(logged_in_client, csp_with_summary):
     from csp.models import DailyBalance
 
     today = dt.date.today()
@@ -220,49 +225,25 @@ def test_csp_detail_shows_daily_comparison_growth(logged_in_client, csp_with_sum
     response = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/")
     assert response.status_code == 200
     body = response.content.decode()
-    assert "Daily comparison" in body
-    assert "growth" in body.lower()
+    assert "Today vs yesterday" in body and "SBI-reported average" in body
+    assert "₹3,300" in body
 
 
 @pytest.mark.django_db
-def test_csp_detail_daily_comparison_shows_no_data_without_balances(
+def test_csp_detail_says_there_is_no_sbi_value_without_balances(
     logged_in_client, csp_with_summary
 ):
     response = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/")
     assert response.status_code == 200
     body = response.content.decode()
-    assert "Daily comparison" in body
-    assert "no data" in body.lower()
+    assert "No SBI value on file" in body
+    assert "No estimate has been calculated" in body
 
 
-@pytest.mark.django_db
-def test_csp_detail_account_growth_placeholder_without_data(logged_in_client, csp_with_summary):
-    response = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/")
-    body = response.content.decode()
-    assert "Account growth" in body
-    assert "Only 0 daily account-count reading recorded so far" in body
 
 
-@pytest.mark.django_db
-def test_csp_detail_shows_account_growth_when_available(logged_in_client, csp_with_summary):
-    from csp.models import DailyBalance
 
-    DailyBalance.objects.create(
-        csp=csp_with_summary, balance_date=dt.date(2026, 8, 1),
-        daily_avg_balance=decimal.Decimal("3000"), account_count=100,
-        source=DailyBalance.Source.CALLING_SHEET,
-    )
-    DailyBalance.objects.create(
-        csp=csp_with_summary, balance_date=dt.date(2026, 8, 2),
-        daily_avg_balance=decimal.Decimal("3000"), account_count=112,
-        source=DailyBalance.Source.CALLING_SHEET,
-    )
 
-    response = logged_in_client.get(f"/dashboard/csp/{csp_with_summary.csp_code}/")
-    body = response.content.decode()
-    assert "account-growth-chart" in body
-    assert "+12" in body  # net-new hint in the panel header
-    assert "'value': 112" in body
 
 
 @pytest.mark.django_db
@@ -319,8 +300,7 @@ def test_trends_page_shows_today_vs_yesterday_transaction_comparison(logged_in_c
 
     response = logged_in_client.get("/dashboard/trends/")
     assert response.status_code == 200
-    body = response.content.decode()
-    assert "Today vs. yesterday" in body
+    assert "Workbook, today against yesterday" in response.content.decode()
     assert response.context["txn_count_comparison"].current_value == decimal.Decimal("20")
     assert response.context["txn_count_comparison"].previous_value == decimal.Decimal("10")
     assert response.context["txn_count_comparison"].trend == "GROWTH"
@@ -387,9 +367,9 @@ def test_trends_page_shows_network_account_growth(logged_in_client, csp_with_sum
 
     response = logged_in_client.get("/dashboard/trends/")
     body = response.content.decode()
-    assert "Account growth, network-wide" in body
-    assert "+20" in body
-    assert "'value': 520" in body
+    assert "Customer accounts" in body
+    assert "520 accounts" in body and "+20" in body
+    assert '["2026-08-02", 520]' in body  # the chart data, embedded as JSON
 
 
 @pytest.mark.django_db
@@ -436,8 +416,8 @@ def test_trends_page_date_range_filter(logged_in_client, db):
             # Explicit range: only the matching day's activity is charted.
             response = logged_in_client.get("/dashboard/trends/?from=2026-08-01&to=2026-08-01")
             body = response.content.decode()
-            assert "'value': 600.0" in body  # aug-1 withdrawal_amount
-            assert "'value': 2000.0" not in body  # aug-10 withdrawal/deposit_amount, excluded
+            assert '["2026-08-01", 600.0]' in body  # aug-1 withdrawal_amount
+            assert "2000.0" not in body  # aug-10 withdrawal/deposit_amount, excluded
         finally:
             cursor.execute("drop table if exists daily_activity")
 
@@ -598,22 +578,24 @@ def test_messaging_approve_forbidden_for_non_staff(viewer_client, csp_with_summa
 
 @pytest.mark.django_db
 def test_nav_hides_staff_only_links_for_viewer(viewer_client, csp_with_summary):
-    # Primary navigation is five short items; the secondary tools live on the More page.
     home = viewer_client.get("/dashboard/").content.decode()
-    assert "Home" in home and "My CSPs" in home and "Money Movement" in home
+    for item in ("Overview", "Data readiness", "CSP balances", "Money movement", "Review"):
+        assert item in home
+    assert "SBI comparison" not in home
     body = viewer_client.get("/dashboard/more/").content.decode()
-    assert "Trends" in body and "Classic overview" in body
-    assert "<strong>API Documentation</strong>" not in body
-    assert "<strong>Administration</strong>" not in body
-    assert "<strong>Messaging</strong>" not in body
+    assert "Incentive slabs" in body and "Data readiness" in body
+    assert "<b>API documentation</b>" not in body
+    assert "<b>Administration</b>" not in body
+    assert "<b>Draft messages</b>" not in body
 
 
 @pytest.mark.django_db
 def test_nav_shows_staff_only_links_for_staff(logged_in_client, csp_with_summary):
     body = logged_in_client.get("/dashboard/more/").content.decode()
-    assert "<strong>API Documentation</strong>" in body
-    assert "<strong>Administration</strong>" in body
-    assert "<strong>Messaging</strong>" in body
+    assert "<b>API documentation</b>" in body
+    assert "<b>Administration</b>" in body
+    assert "<b>Draft messages</b>" in body
+    assert "SBI comparison" in logged_in_client.get("/dashboard/").content.decode()
 
 
 @pytest.mark.django_db

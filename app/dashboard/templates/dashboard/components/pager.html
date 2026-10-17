@@ -1,0 +1,9 @@
+{% load fmt %}{% if total_pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  <span>Page {{ page }} of {{ total_pages }}{% if total is not None %} &middot; {{ total }} item{{ total|pluralize }}{% endif %}</span>
+  <span class="btns">
+    {% if page > 1 %}<a class="btn sm" href="{% page_url page|add:'-1' %}">&larr; Previous</a>{% endif %}
+    {% if page < total_pages %}<a class="btn sm" href="{% page_url page|add:'1' %}">Next &rarr;</a>{% endif %}
+  </span>
+</nav>
+{% endif %}

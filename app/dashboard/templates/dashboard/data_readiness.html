@@ -1,0 +1,117 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Data readiness · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Data readiness</h1>
+    <p class="lede">Which data has arrived, what was accepted or set aside, and whether it is complete enough to rely on an estimate. An import that ran is not the same as data that is ready.</p>
+  </div>
+  <div class="seg" role="group" aria-label="Period">
+    {% for r in ranges %}<a href="?range={{ r }}"{% if r == days %} aria-current="true"{% endif %}>Last {{ r }} days</a>{% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block content %}
+<section class="grid g2" aria-label="Verdict">
+  <div class="card"><header><div><h2>Did the imports work?</h2><p>Technical health of the feeds.</p></div>
+    {% if ready.verdict.technical == "ok" %}{% include "dashboard/components/badge.html" with tone="ok" text="Yes" %}{% else %}{% include "dashboard/components/badge.html" with tone="bad" text="Needs attention" %}{% endif %}</header>
+    <div class="body"><p>{{ ready.verdict.technical_text }}</p></div></div>
+  <div class="card"><header><div><h2>Is the data ready for reliable estimates?</h2><p>Completeness and validation.</p></div>
+    {% if ready.verdict.reliable == "ok" %}{% include "dashboard/components/badge.html" with tone="ok" text="Ready" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Provisional" %}{% endif %}</header>
+    <div class="body">
+      <p>{{ ready.verdict.reliable_text }}</p>
+      {% if ready.verdict.reasons %}<ul style="margin:8px 0 0;padding-left:18px">{% for r in ready.verdict.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    </div></div>
+</section>
+
+<section aria-label="Stages">
+  <ol class="flow" style="list-style:none;margin:0;padding:0">
+    {% for s in ready.stages %}
+    <li class="stage {{ s.status }}">
+      <div class="no"><span>Stage {{ s.number }}</span>{% include "dashboard/components/badge.html" with tone=s.status text=s.status|status_word %}</div>
+      <h3>{{ s.title }}</h3><p>{{ s.headline }}</p>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>1. Source data received</h2></div></header>
+    <div class="body flush table-wrap"><table class="t"><thead><tr><th>Source</th><th>Last received</th><th>State</th></tr></thead><tbody>
+      {% for src in st.received.facts.sources %}
+      <tr><td>{{ src.label }}</td><td>{% if src.received_at %}{{ src.received_at|date:"j M, g:i a" }}<span class="sub">{{ src.received_at|timesince }} ago</span>{% else %}<span class="muted">Never</span>{% endif %}</td>
+        <td>{% include "dashboard/components/badge.html" with tone=src.state|state_tone text=src.state|capfirst %}</td></tr>
+      {% endfor %}</tbody></table></div>
+    <footer>Newest bank statement day: {{ st.received.facts.latest_statement_day|date:"j M Y"|default:"none yet" }}</footer></div>
+
+  <div class="card"><header><div><h2>2. File and format checks</h2></div></header>
+    <div class="body">
+      <dl class="kv"><dt>Statement files accepted</dt><dd>{{ st.validated.facts.files.imported|intc }}</dd>
+        <dt>Set aside (quarantined)</dt><dd>{{ st.validated.facts.files.quarantined|intc }}</dd>
+        <dt>Unreadable</dt><dd>{{ st.validated.facts.files.failed|intc }}</dd>
+        <dt>Newest statement: ledger check</dt><dd>{% if st.validated.facts.latest_reconciliation %}{{ st.validated.facts.latest_reconciliation|capfirst }}{% else %}none yet{% endif %}</dd>
+        {% if st.validated.facts.latest_header_gap %}<dt>Gap to the bank's own header total</dt><dd>{{ st.validated.facts.latest_header_gap|inr }} (unexplained)</dd>{% endif %}
+        {% if st.validated.facts.workbook %}<dt>Transaction workbook, last run</dt><dd>{{ st.validated.facts.workbook.status|capfirst }} &middot; {{ st.validated.facts.workbook.when|date:"j M, g:i a" }}</dd>
+        <dt>Workbook rows skipped</dt><dd>{{ st.validated.facts.workbook.rows_rejected|intc }}</dd>{% endif %}
+        {% if st.validated.facts.last_import_run %}<dt>Last folder check</dt><dd>{{ st.validated.facts.last_import_run.started_at|date:"j M, g:i a" }}</dd>{% endif %}</dl>
+      {% if st.validated.facts.set_aside %}
+      <table class="t" style="margin-top:12px"><thead><tr><th>File set aside</th><th>Status</th>{% if user.is_staff %}<th>Reason</th>{% endif %}</tr></thead><tbody>
+        {% for f in st.validated.facts.set_aside %}<tr><td class="mono">{{ f.name }}<span class="sub">{{ f.when|date:"j M, g:i a" }}</span></td><td>{{ f.status }}</td>{% if user.is_staff %}<td class="small">{{ f.reason|default:"—" }}</td>{% endif %}</tr>{% endfor %}
+      </tbody></table>
+      <p class="small muted" style="margin-top:8px">Next step: an administrator looks at the reason. A set-aside file contributes no transactions.</p>
+      {% endif %}
+    </div></div>
+
+  <div class="card"><header><div><h2>3. Duplicate checks</h2></div></header>
+    <div class="body"><dl class="kv">
+      <dt>Repeated rows ignored (overlapping files)</dt><dd>{{ st.duplicates.facts.overlapping_rows_ignored|intc }}</dd>
+      <dt>Files seen again</dt><dd>{{ st.duplicates.facts.files_seen_again|intc }}</dd>
+      <dt>Rows sharing a bank reference (flagged)</dt><dd>{{ st.duplicates.facts.duplicate_reference_rows|intc }}</dd>
+      <dt>Possible reversals (flagged)</dt><dd>{{ st.duplicates.facts.reversal_candidates|intc }}</dd></dl>
+      <p class="small muted" style="margin-top:8px">Exact repeats are dropped. Flagged rows stay as the bank posted them and are listed under <a href="{% url 'dashboard:needs_attention' %}?c=duplicates">Review</a>.</p></div></div>
+
+  <div class="card"><header><div><h2>4. CSP and type identified</h2></div></header>
+    <div class="body flush table-wrap"><table class="t"><thead><tr><th>CSP code result</th><th class="num">Rows</th><th class="num">Share of money</th></tr></thead><tbody>
+      {% for r in st.identified.facts.by_status %}<tr><td>{{ r.label }}</td><td class="num">{{ r.count|intc }}</td><td class="num">{{ r.amount_share|pct0 }}</td></tr>
+      {% empty %}<tr><td colspan="3" class="muted">No statement rows yet.</td></tr>{% endfor %}</tbody></table></div>
+    <footer>Rule: the first eight characters of the code after <span class="mono">@KO</span>; a nine-character code belongs to its eight-character parent; shorter or cut-off codes are never guessed. Rows with no approved label: {{ st.identified.facts.unclassified_rows|intc }}.</footer></div>
+
+  <div class="card"><header><div><h2>5. Counted, excluded and set aside</h2><p>{{ st.classified.facts.range.from|date:"j M" }} to {{ st.classified.facts.range.to|date:"j M" }}</p></div></header>
+    <div class="body"><dl class="kv">
+      <dt>Eligible withdrawals and deposits</dt><dd>{{ st.classified.facts.eligible.count|intc }} rows &middot; {{ st.classified.facts.eligible.amount|inr }}</dd>
+      <dt>Excluded by rule (transfers, other-bank, loan, SSA, Eko entries)</dt><dd>{{ st.classified.facts.excluded_by_rule.count|intc }} rows &middot; {{ st.classified.facts.excluded_by_rule.amount|inr }}</dd>
+      <dt>No approved label</dt><dd>{{ st.classified.facts.unclassified.count|intc }} rows &middot; {{ st.classified.facts.unclassified.amount|inr }}</dd>
+      <dt>CSP could not be identified</dt><dd>{{ st.classified.facts.unattributed_amount|inr }}</dd></dl>
+      <p class="small muted" style="margin-top:8px">Only the first line can affect an estimate.</p></div></div>
+
+  <div class="card"><header><div><h2>6. Estimates</h2></div></header>
+    <div class="body"><dl class="kv">
+      <dt>Latest estimate day</dt><dd>{{ st.estimates.facts.estimate_date|date:"j M Y"|default:"none yet" }}</dd>
+      <dt>Estimator status</dt><dd>{{ st.estimates.facts.estimator.status|est_label }}</dd>
+      {% for k, v in st.estimates.facts.by_status.items %}<dt>{{ k|est_label }}</dt><dd>{{ v|intc }} CSPs</dd>{% endfor %}
+      <dt>Below the 200-account gate</dt><dd>{{ st.estimates.facts.below_gate|intc }}</dd></dl>
+      <p class="small muted" style="margin-top:8px">{{ st.estimates.facts.estimator.detail }}</p></div></div>
+</section>
+
+<section class="card">
+  <header><div><h2>Automated steps, today and yesterday</h2><p>{{ p.overall.headline }} Times are India time.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Step</th><th>Schedule</th><th>Health</th><th>Today</th><th>Yesterday</th></tr></thead><tbody>
+    {% for step in p.steps %}
+    <tr data-step="{{ step.key }}"><td><b>{{ step.title }}</b><span class="sub">{{ step.what }}</span></td><td class="small">{{ step.schedule }}</td>
+      <td>{% include "dashboard/components/badge.html" with tone=step.health|state_tone text=step.health_label %}{% if step.last_at %}<span class="sub">last {{ step.last_at|date:"g:i a" }}</span>{% endif %}</td>
+      <td class="small">{{ step.today.summary }}{% if step.today.error %}<span class="sub">{{ step.today.error }}</span>{% endif %}</td>
+      <td class="small">{{ step.yesterday.summary }}{% if step.yesterday.error %}<span class="sub">{{ step.yesterday.error }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody></table></div>
+</section>
+
+<section class="card">
+  <header><div><h2>Bank statement files</h2><p>When the bank produced each file and when we read it.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>File</th><th>Statement day</th><th>Produced</th><th>Read</th><th class="num">Transactions</th><th>Status</th></tr></thead><tbody>
+    {% for f in p.statement_files %}
+    <tr><td class="mono">{{ f.filename }}</td><td>{{ f.statement_day|date:"j M Y" }}</td><td>{{ f.produced_at|date:"j M, g:i a" }}</td><td>{{ f.ingested_at|date:"j M, g:i a" }}</td><td class="num">{{ f.rows|intc }}</td>
+      <td>{% if f.status == "imported" %}{% include "dashboard/components/badge.html" with tone="ok" text="Accepted" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text=f.status|capfirst %}{% endif %}</td></tr>
+    {% empty %}<tr><td colspan="6">{% include "dashboard/components/empty.html" with title="No statement file has been read yet" %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if p.latest_statement_day %}<footer>Newest statement ingested is for {{ p.latest_statement_day|date:"j M Y" }}.</footer>{% endif %}
+</section>
+{% endblock %}

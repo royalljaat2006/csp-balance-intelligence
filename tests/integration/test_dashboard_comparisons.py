@@ -52,7 +52,8 @@ def test_requires_login(client):
 def test_renders_with_no_csps(logged_in_client, db):
     response = logged_in_client.get("/dashboard/comparisons/")
     assert response.status_code == 200
-    assert _extract_rows(response.content.decode()) == []
+    assert response.context["rows_shown"] == []
+    assert "No CSP matches" in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -68,8 +69,7 @@ def test_renders_growth_and_decline_kpis(logged_in_client, db):
     assert response.status_code == 200
     html = response.content.decode()
 
-    rows = _extract_rows(html)
-    by_code = {r["csp_code"]: r for r in rows}
+    by_code = {r["csp_code"]: r for r in response.context["rows_shown"]}
     assert by_code["1A850801"]["trend"] == "GROWTH"
     assert by_code["1A850802"]["trend"] == "DECLINE"
     assert "Grower" in html  # top-growers section

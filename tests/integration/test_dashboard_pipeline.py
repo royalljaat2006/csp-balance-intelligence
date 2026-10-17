@@ -254,7 +254,7 @@ def test_pipeline_page_renders_with_real_initial_snapshot(logged_in_client, csp)
     response = logged_in_client.get("/dashboard/pipeline/")
     assert response.status_code == 200
     body = response.content.decode()
-    assert "PIPELINE_INITIAL_SNAPSHOT" in body
+    assert "pipeline-initial-snapshot" in body
     assert '"total_csps": 1' in body
 
 

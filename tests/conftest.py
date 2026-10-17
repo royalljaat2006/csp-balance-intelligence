@@ -24,3 +24,13 @@ def _clear_cache():
     cache.clear()
     yield
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _plain_static_storage(settings):
+    """Pages are rendered in tests without `collectstatic` having been run: the hashed-file
+    manifest storage would raise for any static file added since the last collect."""
+    settings.STORAGES = {
+        **settings.STORAGES,
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }

@@ -195,7 +195,7 @@ def test_summary_says_unavailable_not_zero_when_nothing_was_captured(csps):
     assert na["available"] is False and na["mtd"] is None
 
 
-def test_home_shows_new_customer_accounts_in_plain_words(staff, csps):
+def test_overview_shows_new_customer_accounts_in_plain_words(staff, csps):
     capture_monthly(
         parse(
             {"A": {"mtd": 12, "ftd": 3, "target": 7}, "B": {"mtd": 4, "ftd": 1, "target": 7}}, MONTH
@@ -203,18 +203,21 @@ def test_home_shows_new_customer_accounts_in_plain_words(staff, csps):
         timezone.now(),
     )
     html = staff.get("/dashboard/").content.decode()
-    visible = html.split('<details class="sm-advanced"')[0]
-    assert f"16 new customer accounts so far in {TODAY.strftime('%B %Y')}" in visible
-    assert "4 on the latest day" in visible and "month target 14" in visible
-    assert "12 new this month" in visible  # per-CSP, in the table
+    visible = html.split("<main", 1)[1].split("<script", 1)[0]
+    flat = " ".join(visible.split())
+    assert "New customer accounts" in flat
+    assert f"so far in {TODAY.strftime('%B %Y')}" in flat and ">16<" in visible.replace(" ", "")
+    assert "4 on the latest day" in flat and "month target 14" in flat
     assert "PMJDY" not in visible  # the agreed wording is "new customer accounts"
     assert "have not been captured yet" not in visible
+    detail = staff.get("/dashboard/csp/A/").content.decode()
+    assert "12 new this month" in detail  # per CSP, on its own page
 
 
-def test_home_is_honest_when_new_accounts_are_missing_or_stale(staff, csps):
+def test_overview_is_honest_when_new_accounts_are_missing_or_stale(staff, csps):
     html = staff.get("/dashboard/").content.decode()
     assert f"New customer accounts for {TODAY.strftime('%B %Y')} have not been captured yet" in html
-    bump_generation()  # the home summary is cached for 30 s
+    bump_generation()  # the overview summary is cached
     capture_monthly(
         parse({"A": {"mtd": 1, "ftd": 0, "target": 7}}, MONTH),
         timezone.now() - dt.timedelta(days=4),

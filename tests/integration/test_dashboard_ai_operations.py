@@ -94,5 +94,5 @@ def test_shows_draft_messages_with_draft_only_disclaimer(logged_in_client, db):
 
     response = logged_in_client.get("/dashboard/ai/")
     body = response.content.decode()
-    assert "Draft only" in body
+    assert "Nothing is sent automatically" in body
     assert response.context["draft_total"] == 1

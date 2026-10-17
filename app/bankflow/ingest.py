@@ -519,9 +519,14 @@ def reclassify_stored() -> int:
     from django.db.models import Q
 
     from .models import StatementTransaction as Txn
-    from .normalize import CHANNEL_MAP
+    from .normalize import CHANNEL_MAP, RETIRED_NORMALIZED
 
     moved = 0
+    for old, new in RETIRED_NORMALIZED.items():
+        n = Txn.objects.filter(channel_normalized=old).update(
+            channel_normalized=new, category="unclassified",
+            is_reversal_candidate=False, reversal_reason="")
+        moved += n
     for normalized, category in {v for v in CHANNEL_MAP.values()}:
         rows = Txn.objects.filter(channel_normalized=normalized).exclude(category=category)
         n = rows.update(category=category)

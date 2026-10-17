@@ -79,6 +79,7 @@ The statement is Eko's pool account. A **credit** raises the pool balance and a 
 | `Loan Deposit`, `SSA` | other products | debit | no |
 | `EKO DEDUCTION`, `CSH DEP (CDM)` | Eko's own pool entries, no CSP | debit / credit | no |
 | `outimps`, `ppf`, `yono fi wdl` and anything unrecognised | not customer withdrawals or deposits | - | no |
+| `yono withdrawal` | **held out** until independently verified and approved (a different label from `yono fi wdl`); stored as unclassified | - | no |
 
 Customer-balance effect of a counted row = `debit − credit` (a withdrawal credited to the pool is
 negative, a deposit debited from it is positive; a reversal flips the sign). The dashboard and API

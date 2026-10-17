@@ -190,11 +190,11 @@ def viewer(client):
 
 
 def test_page_renders_for_everyone_signed_in_and_needs_login(client, staff):
-    html = staff.get("/dashboard/progress/").content.decode()
-    assert "Data progress" in html and "Morning snapshot" in html
+    html = staff.get("/dashboard/readiness/").content.decode()
+    assert "Data readiness" in html and "Morning snapshot" in html
     assert 'data-step="statements"' in html and "Bank statement files" in html
     client.logout()
-    assert client.get("/dashboard/progress/").status_code == 302
+    assert client.get("/dashboard/readiness/").status_code == 302
 
 
 def test_page_shows_snapshot_and_ingestion_times(staff):
@@ -203,7 +203,7 @@ def test_page_shows_snapshot_and_ingestion_times(staff):
                                      row_count=77, last_row_date=YESTERDAY,
                                      file_modified_at=timezone.now())
     assert f.pk
-    html = staff.get("/dashboard/progress/").content.decode()
+    html = staff.get("/dashboard/readiness/").content.decode()
     assert "Captured at" in html
     assert "Bank statement files" in html and ">77<" in html.replace(" ", "")
 
@@ -213,17 +213,17 @@ def test_error_text_is_for_staff_only(client):
          error="secret-detail-xyz")
     u = get_user_model().objects.create_user("vw2", password="x")
     client.force_login(u)
-    assert "secret-detail-xyz" not in client.get("/dashboard/progress/").content.decode()
+    assert "secret-detail-xyz" not in client.get("/dashboard/readiness/").content.decode()
     s = get_user_model().objects.create_user("st2", password="x", is_staff=True)
     client.force_login(s)
-    assert "secret-detail-xyz" in client.get("/dashboard/progress/").content.decode()
+    assert "secret-detail-xyz" in client.get("/dashboard/readiness/").content.decode()
 
 
-def test_the_tab_is_in_the_money_section_and_more_hub_and_the_freshness_pill_links_there(viewer):
+def test_readiness_is_in_the_sidebar_and_hub_and_the_freshness_pill_links_there(viewer):
     html = viewer.get("/dashboard/money/").content.decode()
-    assert 'href="/dashboard/progress/"' in html and "Data progress" in html
+    assert 'href="/dashboard/readiness/"' in html and "Data readiness" in html
     more = viewer.get("/dashboard/more/").content.decode()
-    assert "<strong>Data progress</strong>" in more
+    assert "<b>Data readiness</b>" in more
 
 
 # ---------------------------------------------------------------- the API

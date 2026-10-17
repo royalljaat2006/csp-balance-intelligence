@@ -1,152 +1,50 @@
-{% extends "dashboard/base.html" %}
-{% load humanize %}
-{% block title %}Transactions — Eko Operations{% endblock %}
-{% block content %}
-<div class="wrap stagger">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Ingestion &amp; ledger</div>
-    <h1>Transactions</h1>
-    <p class="sub">Transaction intelligence and ingestion visibility — the allow-listed ONUS/Overall ledger
-      (<code>ingestion/xlsx_validation.py</code>) plus the watched-folder ingestion audit trail.</p>
-  </header>
-
-  <p class="sub" style="margin-top:-10px;">
-    Today is <strong>{{ today|date:"D d M Y" }}</strong>, compared with yesterday ({{ yesterday|date:"d M" }}).
-    {% if not today_has_data %}Today&rsquo;s transactions have not arrived yet{% if latest_data_date %}; the newest day on file is
-      <strong>{{ latest_data_date|date:"D d M Y" }}</strong>{% endif %}.{% endif %}
-  </p>
-
-  <div class="stats cols-4">
-    <div class="stat" style="cursor:default;">
-      <div class="label">Transactions today</div>
-      {% if txn_count_today is None %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ txn_count_today }}">0</div>{% endif %}
-      <div class="foot">{% if txn_count_today is None %}no data yet{% else %}vs. {{ txn_count_yesterday|default_if_none:"—" }} on {{ yesterday|date:"d M" }}{% endif %}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Transaction amount today</div>
-      <div class="value" id="stat-amount-today">—</div>
-      <div class="foot">vs. <span id="stat-amount-yesterday">—</span> on {{ yesterday|date:"d M" }}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">ONUS transactions today</div>
-      {% if onus_txn_count_today is None %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ onus_txn_count_today }}">0</div>{% endif %}
-      <div class="foot">{% if txn_count_today is None %}no data yet{% else %}of {{ txn_count_today }} overall{% endif %}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Active CSPs today</div>
-      {% if not today_has_data %}<div class="value">&mdash;</div>{% else %}<div class="value" data-count="{{ active_csps_today }}">0</div>{% endif %}
-      <div class="foot">{% if today_has_data %}with at least one transaction{% else %}no data yet{% endif %}</div>
-    </div>
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Transaction workbook · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Transaction workbook</h1>
+    <p class="lede">Activity from the monthly transaction workbook (approved types, success sheet only). This is context for the balances, not an input to the average balance. It is a separate source from the bank statements and uses its own approved list.</p>
   </div>
-
-  <div class="panel-grid">
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Transaction activity" hint="trailing 30 days, overall vs. ONUS" %}
-      <div id="activity-chart"></div>
-    </section>
-    <section class="panel">
-      {% include "dashboard/components/section_header.html" with title="Transaction type distribution" hint=type_distribution_hint %}
-      <div id="type-donut"></div>
-    </section>
-  </div>
-
-  <section class="panel">
-    {% include "dashboard/components/section_header.html" with title="Ingestion health" hint="watched-folder audit trail" %}
-    <div class="kv-grid">
-      <div class="kv"><span class="k">Last ingestion run</span><span class="v">{% if last_transactions_run %}{{ last_transactions_run.started_at|timesince }} ago{% else %}&mdash;{% endif %}</span></div>
-      <div class="kv"><span class="k">Freshness</span><span class="v">{% include "dashboard/components/status_badge.html" with status=freshness.overall_status %}</span></div>
-    </div>
-    <div class="tbl-scroll" style="margin-top:14px;">
-      <table>
-        <thead><tr><th>Source</th><th>File</th><th>Status</th><th class="num">Read</th><th class="num">Valid</th><th class="num">Rejected</th><th class="num">Duplicate</th><th>When</th></tr></thead>
-        <tbody>
-          {% for log in recent_logs %}
-          <tr>
-            <td>{{ log.source }}</td>
-            <td>{{ log.file_name|default:log.external_ref|default:"—" }}</td>
-            <td>{% include "dashboard/components/status_badge.html" with status=log.status %}</td>
-            <td class="mono">{{ log.rows_read }}</td>
-            <td class="mono">{{ log.rows_valid }}</td>
-            <td class="mono">{{ log.rows_rejected }}</td>
-            <td class="mono">{{ log.rows_duplicate }}</td>
-            <td class="mono">{{ log.started_at|date:"d M, H:i" }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px;">No ingestion runs recorded yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Transaction ledger</h2>
-      <span class="hint">{{ txn_total|intcomma }} matching, page {{ page }} of {{ total_pages }}</span>
-    </div>
-    <form method="get" class="date-range-form">
-      <label>From <input type="date" name="date_from" value="{{ date_from }}"></label>
-      <label>To <input type="date" name="date_to" value="{{ date_to }}"></label>
-      <label><input type="checkbox" name="mode" value="onus" {% if onus_only %}checked{% endif %} onchange="this.form.mode.value = this.checked ? 'onus' : ''; this.form.submit();" style="width:auto;"> ONUS only</label>
-      <button type="submit">Apply</button>
-    </form>
-    <div class="tbl-scroll" style="margin-top:10px;">
-      <table>
-        <thead>
-          <tr><th>Date</th><th>CSP</th><th>Type</th><th class="num">Amount</th><th>Direction</th><th>Source file</th></tr>
-        </thead>
-        <tbody>
-          {% for t in txn_rows %}
-          <tr>
-            <td class="mono" style="text-align:left;">{{ t.txn_datetime|date:"d M, H:i" }}</td>
-            <td><a class="name-link" href="{% url 'dashboard:csp_detail' csp_code=t.csp_id %}">{{ t.csp.name|default:t.csp_id }}</a><span class="code">{{ t.csp_id }}</span></td>
-            <td>{{ t.txn_type }}</td>
-            <td class="mono"><span data-fmt="inr" data-val="{{ t.amount }}"></span></td>
-            <td>{{ t.direction }}</td>
-            <td class="hint">{{ t.source_file|default:"—" }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px;">No transactions match this filter.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div class="pager">
-      <span>Page {{ page }} of {{ total_pages }}</span>
-      <div class="pager-btns">
-        {% if page > 1 %}<a href="?page={{ page|add:"-1" }}&date_from={{ date_from }}&date_to={{ date_to }}{% if onus_only %}&mode=onus{% endif %}"><button type="button">&larr; Prev</button></a>{% else %}<button type="button" disabled>&larr; Prev</button>{% endif %}
-        {% if page < total_pages %}<a href="?page={{ page|add:"1" }}&date_from={{ date_from }}&date_to={{ date_to }}{% if onus_only %}&mode=onus{% endif %}"><button type="button">Next &rarr;</button></a>{% else %}<button type="button" disabled>Next &rarr;</button>{% endif %}
-      </div>
-    </div>
-    <p class="sub" style="margin-top:10px;">Server-paginated &mdash; only this page's rows ({{ txn_rows|length }}) are ever sent to the browser, never the full ledger.</p>
-  </section>
-
 </div>
-
-{{ type_distribution_json|json_script:"type-distribution-data" }}
 {% endblock %}
+{% block content %}
+{% if not today_has_data %}
+  {% include "dashboard/components/callout.html" with tone="info" title="No workbook data for today yet. " text="The workbook arrives when the other team saves it, so today's figures show a dash instead of an older day. " %}
+  {% if latest_data_date %}<p class="small muted">The newest day on file is {{ latest_data_date|date:"j M Y" }}.</p>{% endif %}
+{% endif %}
+<section class="grid g4" aria-label="Today and yesterday">
+  {% include "dashboard/components/stat.html" with label="Transactions today" value=txn_count_today|intc hint="Compared with yesterday below." %}
+  {% include "dashboard/components/stat.html" with label="Amount today" value=txn_amount_today|inr hint="Approved types, all CSPs." %}
+  {% include "dashboard/components/stat.html" with label="On-us transactions today" value=onus_txn_count_today|intc hint="The four on-us types only." %}
+  {% include "dashboard/components/stat.html" with label="CSPs active today" value=active_csps_today|intc hint="At least one approved transaction today." %}
+</section>
+<p class="small muted">Yesterday ({{ yesterday|date:"j M" }}): {{ txn_count_yesterday|intc }} transactions, {{ txn_amount_yesterday|inr }}.</p>
 
-{% block extra_scripts %}
-<script>
-  document.querySelectorAll('[data-fmt="inr"]').forEach(el => { el.textContent = window.fmtINR(+el.dataset.val); });
-  document.querySelectorAll(".stat .value[data-count]").forEach((el) => window.countUp(el, +el.dataset.count));
+<section class="grid g2">
+  <div class="card"><header><div><h2>Transactions per day</h2><p>Last 30 days.</p></div></header><div class="body">{{ charts.activity|json_script:"chart-activity" }}{% include "dashboard/components/chart.html" with id="chart-activity" %}</div></div>
+  <div class="card"><header><div><h2>By type</h2><p>{{ type_distribution_hint }}</p></div></header><div class="body">{{ charts.types|json_script:"chart-types" }}{% include "dashboard/components/chart.html" with id="chart-types" %}</div></div>
+</section>
 
-  document.getElementById("stat-amount-today").textContent = window.fmtCr({{ txn_amount_today|default_if_none:"null" }});
-  document.getElementById("stat-amount-yesterday").textContent = window.fmtCr({{ txn_amount_yesterday|default_if_none:"null" }});
+<section class="card">
+  <header><div><h2>Recent workbook imports</h2><p>Last run: {% if last_transactions_run %}{{ last_transactions_run.started_at|timesince }} ago{% else %}never{% endif %}.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>File</th><th>Status</th><th class="num">Rows read</th><th class="num">Approved</th><th class="num">Skipped</th><th>When</th></tr></thead><tbody>
+    {% for log in recent_logs %}<tr><td class="mono">{{ log.file_name|default:"—" }}</td><td>{% include "dashboard/components/badge.html" with tone=log.status|state_tone text=log.get_status_display %}</td><td class="num">{{ log.rows_read|intc }}</td><td class="num">{{ log.rows_valid|intc }}</td><td class="num">{{ log.rows_rejected|intc }}</td><td>{{ log.started_at|date:"j M, g:i a" }}</td></tr>
+    {% empty %}<tr><td colspan="6">{% include "dashboard/components/empty.html" with title="No workbook import has been recorded yet" %}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 
-  const activitySeries = {{ activity_series|safe }};
-  const onusActivitySeries = {{ onus_activity_series|safe }};
-  window.renderMultiTrendChart(document.getElementById("activity-chart"), [
-    {name: "Overall", color: "var(--brand)", data: activitySeries},
-    {name: "ONUS", color: "var(--accent)", data: onusActivitySeries},
-  ], {valueFormat: window.fmtNum, label: "Transaction count", emptyText: "No transaction activity ingested yet."});
-
-  const typeDistribution = JSON.parse(document.getElementById("type-distribution-data").textContent);
-  const donutColors = ["var(--brand)", "var(--accent)", "var(--good)", "var(--s2)", "var(--s3)", "var(--nil)", "var(--muted)"];
-  window.renderDonutChart(document.getElementById("type-donut"),
-    typeDistribution.map((d, i) => ({label: d.txn_type, value: d.count, color: donutColors[i % donutColors.length]})),
-    {valueFormat: window.fmtNum, centerLabel: "Transactions", emptyText: "No transactions in this window."}
-  );
-</script>
+<section class="card">
+  <header><div><h2>Transactions</h2><p>{{ total|intc }} match. Only one page is loaded at a time.</p></div>
+    <form class="filters" method="get">
+      <label>From<input type="date" name="date_from" value="{{ date_from }}"></label>
+      <label>To<input type="date" name="date_to" value="{{ date_to }}"></label>
+      <label>Types<select name="mode" data-autosubmit><option value="">All approved types</option><option value="onus"{% if onus_only %} selected{% endif %}>On-us only</option></select></label>
+      <button class="btn primary" type="submit">Apply</button></form></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>When</th><th>CSP</th><th>Type</th><th class="num">Amount</th><th>Pool direction</th><th>File</th></tr></thead><tbody>
+    {% for t in txn_rows %}<tr><td>{{ t.txn_datetime|date:"j M, g:i a" }}</td><td class="name"><a href="{% url 'dashboard:csp_detail' t.csp_id %}">{{ t.csp.name|default:t.csp_id }}</a><span class="sub mono">{{ t.csp_id }}</span></td><td>{{ t.txn_type }}</td><td class="num">{{ t.amount|inr }}</td><td>{{ t.direction }}</td><td class="small muted">{{ t.source_file|default:"—" }}</td></tr>
+    {% empty %}<tr><td colspan="6">{% include "dashboard/components/empty.html" with title="No transactions match this filter" %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% include "dashboard/components/pager.html" %}
+</section>
 {% endblock %}

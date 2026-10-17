@@ -1,0 +1,57 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Month-end outlook · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <h1>Month-end outlook</h1>
+    <p class="lede">Where the month is heading for {{ o.month_label }}. Three different things are shown side by side and must not be confused: our <b>estimate</b>, its <b>projection</b>, and what <b>SBI has reported</b>.</p>
+  </div>
+  <form class="filters" method="get"><label>Month<select name="month" data-autosubmit>{% for m in months %}<option value="{{ m }}"{% if m == month_key %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></label></form>
+</div>
+{% endblock %}
+{% block content %}
+{% url 'dashboard:data_readiness' as readiness_url %}
+{% for w in o.warnings %}{% include "dashboard/components/callout.html" with tone="warn" text=w %}{% endfor %}
+
+<section class="grid g3" aria-label="Estimate, projection and SBI value">
+  <div class="card stat"><div class="label"><span>Month-to-date estimate</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Estimate" %}</div>
+    <div class="value">{{ o.network.mtd_average|inr }}</div>
+    <div class="hint">Average per account over the days so far, {{ o.csps_with_outlook|intc }} of {{ o.csps_tracked|intc }} CSPs. Day {{ o.days_elapsed }} of {{ o.calendar_days }}.</div></div>
+  <div class="card stat"><div class="label"><span>Projected month-end average</span>{% include "dashboard/components/badge.html" with tone="shadow" text="Projection" %}</div>
+    <div class="value">{{ o.network.projected_average|inr }}</div>
+    <div class="hint">Latest estimate ({{ o.network.latest_estimate|inr }}) carried over the {{ o.days_remaining }} remaining day{{ o.days_remaining|pluralize }}.</div></div>
+  <div class="card stat"><div class="label"><span>Latest SBI-reported average</span>{% include "dashboard/components/badge.html" with tone="info" text="Observed" %}</div>
+    <div class="value">{{ o.sbi_reported.latest_average|inr }}</div>
+    <div class="hint">Newest value SBI has reported, weighted by account count. This is not a month average.</div></div>
+</section>
+
+<section class="card">
+  <header><div><h2>How this is worked out</h2></div></header>
+  <div class="body">
+    <ul style="margin:0;padding-left:18px">{% for a in o.assumptions %}<li>{{ a }}</li>{% endfor %}<li>Network figures weight each CSP by its account count ({{ o.network.weighting }}).</li></ul>
+    <p class="small muted" style="margin-top:10px">Days elapsed {{ o.days_elapsed }} &middot; days remaining {{ o.days_remaining }} &middot; as of {{ o.as_of|date:"j M Y" }}. Estimate statuses: {% for k, v in o.by_status.items %}{{ v|intc }} {{ k|est_label|lower }}{% if not forloop.last %}, {% endif %}{% empty %}none stored{% endfor %}.</p>
+  </div>
+</section>
+
+<section class="card">
+  <header><div><h2>Production reference</h2><p>{{ o.production_reference.note }}</p></div>{% include "dashboard/components/badge.html" with tone="info" text="Production" %}</header>
+  <div class="body"><dl class="kv"><dt>Average month-to-date (CSPs with data: {{ o.production_reference.csps|intc }})</dt><dd>{{ o.production_reference.mtd_average|inr }}</dd>
+    <dt>Average projected month-end</dt><dd>{{ o.production_reference.projected_average|inr }}</dd></dl>
+    <p class="small muted" style="margin-top:8px">The production calculation is unchanged and uses a different rule. A gap between it and the estimate above is expected.</p></div>
+</section>
+
+<section class="card">
+  <header><div><h2>By CSP</h2><p>All figures are per account and provisional unless marked reliable.</p></div>
+    <form class="filters" method="get"><input type="hidden" name="month" value="{{ month_key }}"><label>Find a CSP<input type="search" name="q" value="{{ q }}" placeholder="Name or code"></label><button class="btn primary" type="submit">Search</button></form></header>
+  <div class="body flush table-wrap">
+    {% if o.rows %}<table class="t"><thead><tr><th>CSP</th><th class="num">Month to date</th><th class="num">Projected month-end</th><th class="num">Latest estimate</th><th class="num">Days counted</th><th>Status</th></tr></thead><tbody>
+      {% for r in o.rows %}<tr><td class="name"><a href="{% url 'dashboard:csp_detail' r.csp_code %}"><b>{{ r.name|default:r.csp_code }}</b></a><span class="sub mono">{{ r.csp_code }}</span></td>
+        <td class="num">{{ r.mtd_average|inr }}</td><td class="num">{{ r.projected_average|inr }}</td><td class="num">{{ r.latest_estimate|inr }}</td>
+        <td class="num">{{ r.days_counted }} / {{ r.calendar_days }}<span class="sub">{% if r.days_carried_forward %}{{ r.days_carried_forward }} carried forward{% endif %}{% if r.days_before_first_estimate %} &middot; starts day {{ r.days_before_first_estimate|add:1 }}{% endif %}</span></td>
+        <td>{% include "dashboard/components/badge.html" with tone=r.status|est_tone text=r.status|est_label %}</td></tr>{% endfor %}
+    </tbody></table>
+    {% include "dashboard/components/pager.html" %}
+    {% else %}{% include "dashboard/components/empty.html" with title="No outlook for this month" text="An outlook needs stored daily estimates. They appear after the estimate job has run." href=readiness_url go="Check data readiness" %}{% endif %}
+  </div>
+</section>
+{% endblock %}

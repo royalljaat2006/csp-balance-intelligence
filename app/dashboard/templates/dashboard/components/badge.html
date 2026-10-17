@@ -1,0 +1,1 @@
+{% comment %}tone: ok | warn | bad | info | shadow | (blank). Always an icon AND words, never colour alone.{% endcomment %}<span class="badge {{ tone }}">{% if tone %}{% include "dashboard/_icon.html" with name=tone %}{% endif %}{{ text }}</span>

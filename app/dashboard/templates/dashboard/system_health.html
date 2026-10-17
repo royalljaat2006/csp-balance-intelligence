@@ -1,103 +1,50 @@
-{% extends "dashboard/base.html" %}
-{% block title %}System Health — Eko Operations{% endblock %}
-{% block content %}
-<div class="wrap stagger">
-
-  <header>
-    <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;"></span>Staff only</div>
-    <h1>Admin / System Health</h1>
-    <p class="sub">Real, computed status for every subsystem — database, ingestion, data freshness, and
-      configuration. <a href="{% url 'dashboard:admin_embed' %}">Open the full Django admin console &rarr;</a></p>
-  </header>
-
-  {% if action_result %}
-  <section class="panel" style="border-color:var(--brand);">
-    <p class="sub" style="margin:0;">{{ action_result }}</p>
-  </section>
-  {% endif %}
-
-  <div class="stats cols-4">
-    <div class="stat" style="cursor:default;">
-      <div class="label">Database</div>
-      <div class="value">{% if db_ok %}<span class="status-badge fresh">Healthy</span>{% else %}<span class="status-badge failed">Unreachable</span>{% endif %}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Ingestion freshness</div>
-      <div class="value">{% include "dashboard/components/status_badge.html" with status=freshness.overall_status %}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Failed jobs (recent)</div>
-      <div class="value">{{ recent_failed|length }}</div>
-    </div>
-    <div class="stat" style="cursor:default;">
-      <div class="label">Configuration</div>
-      <div class="value">{{ config_status|length }}</div>
-      <div class="foot">integrations tracked</div>
-    </div>
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}System health · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head">
+  <div>
+    <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / System health</div>
+    <h1>System health</h1>
+    <p class="lede">What is running, how fresh the data is, what failed lately and which manual runs staff may start. Staff only.</p>
   </div>
-
-  <div class="panel-grid">
-    <section class="panel">
-      <div class="panel-head"><h2>Data freshness</h2></div>
-      <div class="kv-grid">
-        <div class="kv"><span class="k">CALLING SHEET</span><span class="v">{% if freshness.calling_sheet_last_success %}{{ freshness.calling_sheet_last_success|timesince }} ago{% else %}never{% endif %}</span></div>
-        <div class="kv"><span class="k">Transactions</span><span class="v">{% if freshness.transactions_last_success %}{{ freshness.transactions_last_success|timesince }} ago{% else %}never{% endif %}</span></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h2>Historical coverage</h2></div>
-      <div class="kv-grid">
-        <div class="kv"><span class="k">Balance history</span><span class="v">{% if balance_bounds %}{{ balance_bounds.0 }} &rarr; {{ balance_bounds.1 }}{% else %}no data{% endif %}</span></div>
-        <div class="kv"><span class="k">Transaction ledger</span><span class="v">{% if activity_bounds %}{{ activity_bounds.0 }} &rarr; {{ activity_bounds.1 }}{% else %}no data{% endif %}</span></div>
-      </div>
-    </section>
-  </div>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Configuration status</h2></div>
-    <div class="kv-grid">
-      {% for name, ok in config_status.items %}
-      <div class="kv"><span class="k">{{ name }}</span><span class="v">{% if ok %}<span class="status-badge fresh">Configured</span>{% else %}<span class="status-badge missing">Not configured</span>{% endif %}</span></div>
-      {% endfor %}
-    </div>
-    <p class="sub" style="margin-top:12px;margin-bottom:0;">Values are never shown here — only whether each integration has credentials set. See <code>.env.example</code> for the full list.</p>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Quick actions</h2><span class="hint">idempotent — safe to re-run</span></div>
-    <div class="controls" style="margin-bottom:0;">
-      {% for action in quick_actions %}
-      <form method="post" style="display:inline;">
-        {% csrf_token %}
-        <button type="submit" name="action" value="{{ action }}" class="chip">{{ action }}</button>
-      </form>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Recent ingestion runs</h2></div>
-    <div class="tbl-scroll">
-      <table>
-        <thead><tr><th>Source</th><th>Status</th><th class="num">Read</th><th class="num">Valid</th><th class="num">Rejected</th><th>When</th></tr></thead>
-        <tbody>
-          {% for log in recent_logs %}
-          <tr>
-            <td>{{ log.source }}</td>
-            <td>{% include "dashboard/components/status_badge.html" with status=log.status %}</td>
-            <td class="mono">{{ log.rows_read }}</td>
-            <td class="mono">{{ log.rows_valid }}</td>
-            <td class="mono">{{ log.rows_rejected }}</td>
-            <td class="mono">{{ log.started_at|date:"d M, H:i" }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">No ingestion runs recorded yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
+  <a class="btn" href="{% url 'dashboard:admin_embed' %}">Open the administration console</a>
 </div>
+{% endblock %}
+{% block content %}
+{% if action_result %}{% include "dashboard/components/callout.html" with tone="info" text=action_result %}{% endif %}
+
+<section class="grid g4" aria-label="Status">
+  <div class="card stat"><div class="label"><span>Database</span></div>
+    <div class="value" style="font-size:20px">{% if db_ok %}{% include "dashboard/components/badge.html" with tone="ok" text="Healthy" %}{% else %}{% include "dashboard/components/badge.html" with tone="bad" text="Unreachable" %}{% endif %}</div></div>
+  <div class="card stat"><div class="label"><span>Calling Sheet freshness</span></div>
+    <div class="value" style="font-size:20px">{% include "dashboard/components/badge.html" with tone=freshness.overall_status|state_tone text=freshness.overall_status|capfirst %}</div></div>
+  <div class="card stat"><div class="label"><span>Failed runs (recent)</span></div><div class="value">{{ recent_failed|length }}</div></div>
+  <div class="card stat"><div class="label"><span>Integrations tracked</span></div><div class="value">{{ config_status|length }}</div><div class="hint">Only whether credentials are set. Values are never shown.</div></div>
+</section>
+
+<section class="grid g2">
+  <div class="card"><header><div><h2>Data freshness</h2></div></header>
+    <div class="body"><dl class="kv">
+      <dt>Calling Sheet, last successful read</dt><dd>{% if freshness.calling_sheet_last_success %}{{ freshness.calling_sheet_last_success|timesince }} ago{% else %}never{% endif %}</dd>
+      <dt>Transaction workbook, last successful read</dt><dd>{% if freshness.transactions_last_success %}{{ freshness.transactions_last_success|timesince }} ago{% else %}never{% endif %}</dd></dl></div></div>
+  <div class="card"><header><div><h2>Historical coverage</h2></div></header>
+    <div class="body"><dl class="kv">
+      <dt>Balance history</dt><dd>{% if balance_bounds %}{{ balance_bounds.0|date:"j M Y" }} to {{ balance_bounds.1|date:"j M Y" }}{% else %}no data{% endif %}</dd>
+      <dt>Transaction workbook ledger</dt><dd>{% if activity_bounds %}{{ activity_bounds.0|date:"j M Y" }} to {{ activity_bounds.1|date:"j M Y" }}{% else %}no data{% endif %}</dd></dl></div></div>
+</section>
+
+<section class="card"><header><div><h2>Configuration</h2><p>Whether each integration has its credentials set.</p></div></header>
+  <div class="body"><dl class="kv">{% for name, ok in config_status.items %}<dt>{{ name }}</dt><dd>{% if ok %}{% include "dashboard/components/badge.html" with tone="ok" text="Configured" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Not configured" %}{% endif %}</dd>{% endfor %}</dl></div></section>
+
+<section class="card"><header><div><h2>Manual runs</h2><p>Each runs one existing job once, inside this request. Safe to repeat. Some need files or keys that only the worker has, and may report a failure here.</p></div></header>
+  <div class="body"><div class="row">
+    {% for action in quick_actions %}
+    <form method="post" data-confirm="Run {{ action }} now?">{% csrf_token %}<button type="submit" name="action" value="{{ action }}" class="btn">{{ action }}</button></form>
+    {% endfor %}</div></div></section>
+
+<section class="card"><header><div><h2>Recent data runs</h2></div><a class="btn sm" href="{% url 'dashboard:audit' %}">Full audit trail</a></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Source</th><th>Status</th><th class="num">Read</th><th class="num">Valid</th><th class="num">Rejected</th><th>When</th></tr></thead><tbody>
+    {% for log in recent_logs %}<tr><td>{{ log.source }}</td><td>{% include "dashboard/components/badge.html" with tone=log.status|state_tone text=log.get_status_display %}</td><td class="num">{{ log.rows_read|intc }}</td><td class="num">{{ log.rows_valid|intc }}</td><td class="num">{{ log.rows_rejected|intc }}</td><td>{{ log.started_at|date:"j M, g:i a" }}</td></tr>
+    {% empty %}<tr><td colspan="6">{% include "dashboard/components/empty.html" with title="No data runs recorded yet" %}</td></tr>{% endfor %}
+  </tbody></table></div></section>
 {% endblock %}
