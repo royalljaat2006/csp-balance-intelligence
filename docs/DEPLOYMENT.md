@@ -478,6 +478,7 @@ Validation:
 New in this release: the bank-flow statement pipeline, the PMJDY (new accounts) capture, daily estimates, the
 simplified dashboard, and a dedicated `worker-bankflow` service. Migrations are **additive** (new `bankflow_*`
 tables only, `bankflow` 0001-0006; two later migrations only add an index: `bankflow` 0006 and `csp` 0008), so stopping the new worker is a complete rollback.
+**Update 2026-10-17:** `bankflow` 0007-0008 add columns to `bankflow_dailyestimate` and one table; they are still additive and backward compatible. The movement estimator, its first-run backfill, backups and rollback are in `docs/RELEASE-RUNBOOK-2026-10.md` -- follow that for this release.
 
 ### 0. Before you deploy
 1. `.env` on the host: `GOOGLE_SERVICE_ACCOUNT_FILE_HOST` must point at the **real** service-account JSON (a file, not

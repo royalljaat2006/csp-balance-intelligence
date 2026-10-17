@@ -339,7 +339,9 @@ estimate           = combined balance / valid account count of that day
 * A row is **final** when its day is proven complete and every earlier day of the cycle was final. Final rows are never
   rewritten (late transactions go through review); provisional rows are recomputed from the last final row until
   complete. Rows written by the retired rules are replaced by the movement row of the same day with the old values kept
-  in `details.superseded_row`. There is no automated correction workflow yet.
+  in `details.superseded_row`. Changes to an already-final day are never applied silently: `correct_estimate
+  --list-drift` and Review report them, and an active superuser can run `manage.py correct_estimate` (reason required;
+  audit in `EstimateCorrection`). See `docs/RELEASE-RUNBOOK-2026-10.md`.
 * Columns added to `DailyEstimate`: `estimated_combined`, `net_movement`, `eligible_deposits`,
   `eligible_withdrawals`, `is_final`. Account counts come from the Calling Sheet only (PMJDY snapshots are not used).
 

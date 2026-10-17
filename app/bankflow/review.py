@@ -260,6 +260,25 @@ def _failed(date_from, is_staff: bool) -> dict:
     )
 
 
+def _drift(today: dt.date) -> dict:
+    from bankflow import corrections
+
+    drifted = corrections.estimate_drift(today=today)
+    items = [{"csp_code": i["csp_code"], "date": i["date"],
+              "stored_net": i["stored_deposits"] - i["stored_withdrawals"],
+              "current_net": i["current_deposits"] - i["current_withdrawals"],
+              "difference": i["net_difference"]} for i in drifted[-40:]]
+    return _cat(
+        "drift", "Finished estimates built on older statement data",
+        "A day's estimate was finalised, then the bank statement data for that day changed.",
+        "The stored estimate for that day (and the days after it) still uses the older data. It "
+        "is not changed automatically.",
+        len(drifted), "An administrator decides whether to correct it, from the server "
+        "(manage.py correct_estimate). A reason is stored with the old values.",
+        items=items, permitted="Read only here. A correction needs a superuser on the server.",
+    )
+
+
 def review_queue(days: int = 30, *, is_staff: bool = False, today: dt.date | None = None) -> dict:
     today = today or timezone.localdate()
     date_from, date_to = intelligence.resolve_range(days, date_to=today)
@@ -267,7 +286,7 @@ def review_queue(days: int = 30, *, is_staff: bool = False, today: dt.date | Non
         _codes(date_from, date_to), _labels(date_from, date_to),
         _duplicates(date_from, date_to), _counts(today),
         _coverage(date_from, date_to, today), _late(date_from, date_to),
-        _failed(date_from, is_staff),
+        _drift(today), _failed(date_from, is_staff),
     ]
     exc = intelligence.exceptions(date_from, date_to, limit=500)
     csp_items = [i for i in exc["items"] if i["csp_code"]]

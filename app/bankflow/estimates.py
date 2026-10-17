@@ -134,8 +134,17 @@ def _jsonable_state(st: dict) -> dict:
     return {k: (v.isoformat() if isinstance(v, dt.date) else v) for k, v in st.items()}
 
 
-@bumps_generation
-def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
+def build_estimates(
+    estimate_date: dt.date | None = None, *, only_csp: str | None = None,
+    restart_from: dt.date | None = None, annotate: dict | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """Compute the rows for `estimate_date` WITHOUT writing anything.
+
+    Normal run: every tracked CSP resumes from its last FINAL row of the current cycle.
+    Correction run (`only_csp` + `restart_from`): that one CSP restarts from the last row BEFORE
+    `restart_from`, final or not, and recomputes forward, so a final day whose statement data
+    changed is rebuilt (see bankflow.corrections). `annotate` is merged into every rebuilt row's
+    details (the correction id)."""
     estimate_date = estimate_date or timezone.localdate()
     today = timezone.localdate()
     now = timezone.now()
@@ -143,17 +152,20 @@ def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
     hyp_status = hyp.status if hyp else "NOT_RUN"
     verdict = method_status(hyp)
     series = load_series(until=estimate_date)
-    csps = {c.csp_code: c for c in Csp.objects.tracked()}
+    csps = {c.csp_code: c for c in Csp.objects.tracked()
+            if only_csp is None or c.csp_code == only_csp}
     complete = flows.proven_complete_dates()
     complete_sorted = sorted(complete)
 
-    finals = {
-        e.csp_id: e
-        for e in DailyEstimate.objects.filter(
-            method=METHOD, is_final=True, estimate_date__lte=estimate_date,
-            estimated_combined__isnull=False, csp_id__in=list(csps),
-        ).order_by("csp_id", "-estimate_date").distinct("csp_id")
-    }
+    prior = DailyEstimate.objects.filter(
+        method=METHOD, estimated_combined__isnull=False, csp_id__in=list(csps),
+        estimate_date__lte=estimate_date,
+    )
+    if restart_from is not None:
+        prior = prior.filter(estimate_date__lt=restart_from)
+    else:
+        prior = prior.filter(is_final=True)
+    finals = {e.csp_id: e for e in prior.order_by("csp_id", "-estimate_date").distinct("csp_id")}
 
     built: dict[str, dict] = {}
     plans: dict[str, dict] = {}
@@ -184,7 +196,7 @@ def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
         if resume and fin is not None and fin.estimated_combined is not None:
             prev = movement.Day(
                 fin.estimate_date, fin.estimated_combined, fin.current_account_count, {},
-                movement.DayMovement(), False, True, fin.reason_code,
+                movement.DayMovement(), False, fin.is_final, fin.reason_code,
             )
             cum0 = fin.flow_net or ZERO
         else:
@@ -260,6 +272,8 @@ def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
             )
             if (code, d.date) in legacy:
                 row["details"]["superseded_row"] = legacy[(code, d.date)]
+            if annotate:
+                row["details"].update(annotate)
             if d.count is None:
                 row.update(status=S.UNAVAILABLE, reason_code="MISSING_ACCOUNT_COUNT")
             elif not is_eligible(d.count):
@@ -279,7 +293,19 @@ def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
             if reasons and d.date == estimate_date:
                 n_provisional += 1
             built[f"{code}|{d.date}"] = row
+    return built, {"hypothesis_status": hyp_status, "validation_status": verdict,
+                   "provisional": n_provisional}
 
+
+@bumps_generation
+def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
+    estimate_date = estimate_date or timezone.localdate()
+    built, meta = build_estimates(estimate_date)
+    return write_rows(built, estimate_date, meta)
+
+
+def write_rows(built: dict[str, dict], estimate_date: dt.date, meta: dict) -> dict:
+    """Upsert the built rows on (csp, estimate_date), all or nothing."""
     objs = [
         DailyEstimate(**{k: v for k, v in r.items() if k != "hypothesis_run"},
                       hypothesis_run=r.get("hypothesis_run"))
@@ -295,10 +321,10 @@ def compute_daily_estimates(estimate_date: dt.date | None = None) -> dict:
         if r["estimate_date"] == estimate_date:
             by_status[r["status"]] = by_status.get(r["status"], 0) + 1
     logger.info("daily_estimates", stage="ESTIMATE", date=str(estimate_date),
-                counts=by_status, provisional=n_provisional)
+                counts=by_status, provisional=meta["provisional"])
     return {"estimate_date": estimate_date, "rows": len(objs), "by_status": by_status,
-            "provisional": n_provisional, "hypothesis_status": hyp_status,
-            "selected_method": METHOD, "validation_status": verdict}
+            "provisional": meta["provisional"], "hypothesis_status": meta["hypothesis_status"],
+            "selected_method": METHOD, "validation_status": meta["validation_status"]}
 
 
 def estimate_rows(

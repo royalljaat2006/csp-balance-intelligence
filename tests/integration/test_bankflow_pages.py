@@ -187,7 +187,8 @@ def test_review_lists_unmatched_codes_and_holds_yono_withdrawal_out(tmp_path):
     ])
     q = review.review_queue(30, today=d(2026, 10, 14))
     cats = {c["key"]: c for c in q["categories"]}
-    assert set(cats) == {"codes", "labels", "duplicates", "counts", "coverage", "late", "failed"}
+    assert set(cats) == {"codes", "labels", "duplicates", "counts", "coverage", "late", "drift",
+                         "failed"}
     assert cats["codes"]["count"] >= 1
     labels = {i["label"]: i["decision"] for i in cats["labels"]["items"]}
     assert labels.get("yono withdrawal") == "held out until approved"

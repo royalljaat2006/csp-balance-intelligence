@@ -433,7 +433,9 @@ class DailyEstimate(models.Model):
     eligible_withdrawals = money(null=True, blank=True)
     # True once the day's statement data is proven complete AND every earlier day of the cycle
     # was final: a final row is never rewritten by a later run (late rows go through review).
-    is_final = models.BooleanField(default=False)
+    # db_default keeps rows written by the previous release (which does not know this column)
+    # valid during a rolling deploy.
+    is_final = models.BooleanField(default=False, db_default=False)
     details = models.JSONField(default=dict, blank=True)
     calculated_at = models.DateTimeField()
 
@@ -442,3 +444,32 @@ class DailyEstimate(models.Model):
             models.UniqueConstraint(fields=["csp", "estimate_date"], name="uniq_bankflow_estimate")
         ]
         indexes = [models.Index(fields=["estimate_date", "status"])]
+
+
+class EstimateCorrection(models.Model):
+    """Audit record of ONE authorised correction of a CSP's shadow estimates.
+
+    Final DailyEstimate rows are never rewritten by the daily run. When statement data for an
+    already-final day changes (see bankflow.corrections.estimate_drift), an authorised operator can
+    recompute that CSP's current cycle from a chosen day. Every correction is stored here, insert
+    only: who, why, when, which days, and a full snapshot of the rows it superseded."""
+
+    class Outcome(models.TextChoices):
+        APPLIED = "APPLIED", "Applied"
+        NO_CHANGE = "NO_CHANGE", "No change (nothing differed)"
+
+    csp = models.ForeignKey("csp.Csp", on_delete=models.CASCADE, related_name="+")
+    baseline_date = models.DateField()  # the cycle that was corrected
+    from_date = models.DateField()
+    to_date = models.DateField()
+    reason = models.TextField()
+    actor = models.CharField(max_length=150)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    affected_dates = models.JSONField(default=list, blank=True)
+    superseded = models.JSONField(default=list, blank=True)  # old row snapshots, one per day
+    summary = models.JSONField(default=dict, blank=True)  # combined before/after
+
+    class Meta:
+        ordering = ["-requested_at", "-id"]
+        indexes = [models.Index(fields=["csp", "-requested_at"])]

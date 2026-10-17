@@ -54,6 +54,10 @@
         <table class="t"><thead><tr><th>Day</th><th>State</th><th>Detail</th></tr></thead><tbody>
           {% for i in c.items %}<tr><td>{{ i.date|date:"D j M Y" }}</td><td>{{ i.state }}</td><td class="small">{{ i.detail }}</td></tr>{% endfor %}
         </tbody></table>
+      {% elif c.key == "drift" %}
+        <table class="t"><thead><tr><th>CSP</th><th>Day</th><th class="num">Stored net movement</th><th class="num">Net movement now</th><th class="num">Difference</th></tr></thead><tbody>
+          {% for i in c.items %}<tr><td><a href="{% url 'dashboard:csp_explain' i.csp_code %}" class="mono">{{ i.csp_code }}</a></td><td>{{ i.date|date:"D j M Y" }}</td><td class="num">{{ i.stored_net|signed_inr }}</td><td class="num">{{ i.current_net|signed_inr }}</td><td class="num">{{ i.difference|signed_inr }}</td></tr>{% endfor %}
+        </tbody></table>
       {% elif c.key == "late" %}
         <table class="t"><thead><tr><th>Transaction day</th><th class="num">Rows that arrived late</th><th class="num">Value</th></tr></thead><tbody>
           {% for i in c.items %}<tr><td>{{ i.date|date:"D j M Y" }}</td><td class="num">{{ i.count|intc }}</td><td class="num">{{ i.amount|inr }}</td></tr>{% endfor %}
