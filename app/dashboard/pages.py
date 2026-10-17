@@ -361,7 +361,7 @@ def bank_flow(request):
     strictly read-only; an observed result is kept apart from insufficient evidence."""
     if not request.user.is_staff:
         return HttpResponseForbidden("SBI comparison is restricted to staff accounts.")
-    only_changed = request.GET.get("scope", "changed") != "all"
+    only_changed = request.GET.get("scope", "all") == "changed"
     q = request.GET.get("q", "").strip()[:32]
     page, offset, page_size = _paginate(request, page_size=25)
     data = sbi_comparison.sbi_comparison(

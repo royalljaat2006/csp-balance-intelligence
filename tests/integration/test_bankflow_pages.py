@@ -71,24 +71,35 @@ def test_outlook_is_provisional_labelled_and_never_touches_production_tables():
 
 
 # ------------------------------------------------------------------ explanation
-def test_explanation_shows_stored_figures_and_does_not_apply_movement():
+def test_explanation_shows_the_stored_movement_calculation(monkeypatch):
+    from bankflow import estimates
     c = _csp(raw_attrs={"sheet_total_balance": "900000"})
+    _bal(c.csp_code, d(2026, 10, 10), 3000, 300)
     _bal(c.csp_code, d(2026, 10, 14), 3000, 300)
-    _est(c, d(2026, 10, 14), 3000, flow_net=D("300"), flow_coverage=0.5)
     FlowAggregate.objects.create(
         csp=c, flow_date=d(2026, 10, 12), resolution_mode=flows.MODE_EXACT,
         by_category={"deposit": {"count": 2, "credit": "0", "debit": "500"},
                      "withdrawal": {"count": 1, "credit": "200", "debit": "0"},
-                     "transfer": {"count": 1, "credit": "0", "debit": "999"}})
+                     "transfer": {"count": 1, "credit": "0", "debit": "999"},
+                     "unclassified": {"count": 3, "credit": "7", "debit": "0"}})
+    monkeypatch.setattr(flows, "proven_complete_dates",
+                        lambda: {d(2026, 10, 11), d(2026, 10, 12), d(2026, 10, 13)})
+    estimates.compute_daily_estimates(TODAY)
     x = explain.explain_estimate(c.csp_code, today=TODAY)
     assert x["baseline"]["per_account_average"] == D("3000")
-    assert x["combined_baseline"] == D("900000")
+    assert x["combined_baseline"] == D("900000.00")
     assert x["check"]["state"] == "consistent"
     m = x["movement"]
-    assert (m["deposits"], m["withdrawals"], m["net"]) == (D(500), D(200), D(300))  # transfer excluded
-    assert x["estimate"]["per_account_average"] == D("3000")   # movement NOT added
-    assert "does not add it" in x["not_applied"]
-    assert any("Provisional" in f["text"] for f in x["flags"])
+    assert (m["deposits"], m["withdrawals"], m["net"]) == (D(500), D(200), D(300))  # transfer out
+    assert (m["counted_txns"], m["excluded_txns"], m["unclassified_txns"]) == (3, 1, 3)
+    assert m["reconciles"] is True
+    assert x["combined_now"] == D("900300.00")
+    assert x["estimate"]["per_account_average"] == D("3001.00")  # 900,300 / 300 -- movement IS applied
+    assert "not_applied" not in x
+    assert x["estimate"]["final"] is False  # 13 Oct is complete but 14 Oct has no statement
+    assert any("No bank statement covers this day" in r for r in x["estimate"]["provisional_reasons"])
+    assert any("Shadow estimate" in f["text"] for f in x["flags"])
+    assert [row["status"] for row in m["days"]] == ["Final", "Final", "Final", "Provisional"]
     assert explain.explain_estimate("NOPE") is None
 
 
@@ -105,21 +116,41 @@ def test_explanation_for_a_csp_without_an_estimate_says_so():
 
 
 # ------------------------------------------------------------------ SBI comparison
-def test_comparison_percentages_aggregates_and_zero_reported_handling():
+def test_comparison_percentages_aggregates_and_zero_reported_handling(monkeypatch):
+    days = {d(2026, 8, 1) + dt.timedelta(days=i) for i in range(40)}
+    monkeypatch.setattr(flows, "proven_complete_dates", lambda: days)
     a, b = _csp("1A850001"), _csp("1A850002")
     _bal(a.csp_code, d(2026, 8, 1), 1000, 300)
-    _bal(a.csp_code, d(2026, 9, 5), 1100, 330)     # predicted 1000*330/300 = 1100: exact
+    _bal(a.csp_code, d(2026, 9, 5), 1000, 330)  # (1000 x 300 + 30,000) / 330 = 1000: exact
     _bal(b.csp_code, d(2026, 8, 1), 1000, 300)
-    _bal(b.csp_code, d(2026, 9, 5), 0, 330)        # reported zero -> % is N/A
+    _bal(b.csp_code, d(2026, 9, 5), 0, 330)     # reported zero -> % is N/A
+    FlowAggregate.objects.create(
+        csp=a, flow_date=d(2026, 8, 20), resolution_mode=flows.MODE_EXACT,
+        by_category={"deposit": {"count": 1, "credit": "0", "debit": "30000"}})
+    # the second refresh repeats nothing: make a's value actually change so it is a refresh
+    DailyBalance.objects.filter(csp_id=a.csp_code, balance_date=d(2026, 9, 5)).update(
+        daily_avg_balance=D("1000.50"))
     r = sbi_comparison.sbi_comparison()
     rows = {x["csp_code"]: x for x in r["rows"]}
-    assert rows["1A850001"]["pct_variance"] == 0 and rows["1A850001"]["difference"] == D("0.00")
+    assert rows["1A850001"]["predicted"] == D("1000.00")
+    assert rows["1A850001"]["net_movement"] == D("30000.00")
     assert rows["1A850002"]["pct_variance"] is None
+    assert rows["1A850002"]["predicted"] == D("909.09")  # no movement: only the divisor changes
     s = r["summary"]
     assert s["valid_comparisons"] == 2 and s["excluded_zero_reported"] == 1
-    assert s["simple_avg_pct_variance"] == 0.0
-    assert s["aggregate"]["reported_total"] == D(1100) * 330 + 0
+    assert s["mean_coverage"] > 0.8
+    assert s["aggregate"]["reported_total"] == D("1000.50") * 330 + 0
     assert r["gate"]["has_run"] is False and r["gate"]["satisfied"] is False
+    assert {c["csp_code"]: c["evidence"] for c in r["by_csp"]} == {
+        "1A850001": "INSUFFICIENT_EVIDENCE", "1A850002": "INSUFFICIENT_EVIDENCE"}
+
+
+def test_a_refresh_without_statement_coverage_is_counted_but_not_compared():
+    a = _csp()
+    _bal(a.csp_code, d(2026, 8, 1), 1000, 300)
+    _bal(a.csp_code, d(2026, 9, 5), 1100, 330)
+    r = sbi_comparison.sbi_comparison()
+    assert r["rows"] == [] and r["total_refreshes"] == 1 and r["not_comparable"] == 1
 
 
 def test_the_gate_is_never_satisfied_by_a_thin_history():

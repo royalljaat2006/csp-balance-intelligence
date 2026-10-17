@@ -1076,8 +1076,9 @@ def exceptions(date_from: dt.date, date_to: dt.date, limit: int = 100) -> dict:
     if insufficient:
         items.append({
             "csp_code": None, "name": "Network", "type": "INSUFFICIENT_HISTORY", "severity": "low",
-            "reason": f"{insufficient} CSP estimate(s) are carry-forward only; the estimator is "
-                      f"{est['estimator']['status']}: {est['estimator']['detail']}",
+            "reason": f"{insufficient} CSP estimate(s) are shadow estimates not yet validated; "
+                      f"the estimator is {est['estimator']['status']}: "
+                      f"{est['estimator']['detail']}",
             "next_action": "Load Calling Sheet history and statements overlapping SBI refreshes.",
             "metrics": {"csps": insufficient}, "evidence_coverage": fl_["coverage"]})
     if meta["network_flow_coverage"] < settings.ALERT_MIN_NETWORK_COVERAGE:

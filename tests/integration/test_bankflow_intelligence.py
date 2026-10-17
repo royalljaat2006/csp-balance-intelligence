@@ -283,7 +283,7 @@ def test_overview_keeps_sbi_reported_and_estimated_values_apart(staff, world):
     assert "0<small>reliable</small>" in flat  # no estimate counts as reliable
     listing = staff.get("/dashboard/csps/").content.decode()
     assert "/dashboard/csp/A/" in listing  # rows link to the CSP page
-    assert "Carry-forward, not validated" in listing
+    assert "Shadow estimate, not validated" in listing
 
 
 def test_overview_flags_stale_sources_and_the_csp_list_filters(staff, world):

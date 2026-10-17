@@ -5,7 +5,7 @@ import datetime as dt
 import decimal
 
 import pytest
-from bankflow.models import DailyEstimate
+from bankflow import estimates
 from csp.models import Csp, DailyBalance
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -44,12 +44,7 @@ def world():
         DailyBalance.objects.create(
             csp=csp, balance_date=today - dt.timedelta(days=back), daily_avg_balance=D(val),
             account_count=320, source="calling_sheet")
-    DailyEstimate.objects.create(
-        csp=csp, estimate_date=today, method="carry_forward", status="INSUFFICIENT_EVIDENCE",
-        reason_code="NO_VALIDATED_MODEL", baseline_value=D("3100"),
-        baseline_date=today - dt.timedelta(days=10), last_seen_date=today,
-        estimated_value=D("3100"), estimated_delta=D(0), baseline_account_count=320,
-        current_account_count=320, account_count_change=0, calculated_at=timezone.now())
+    estimates.compute_daily_estimates(today)
     return csp
 
 
@@ -82,7 +77,9 @@ def test_csp_pages_label_the_estimate_as_shadow_and_not_a_balance(staff, world):
     detail = staff.get("/dashboard/csp/1A850001/").content.decode()
     assert "Alpha Kiosk" in detail and "SBI-reported" in detail and "Estimate" in detail
     explain = staff.get("/dashboard/csp/1A850001/explain/").content.decode()
-    assert "Shadow estimate" in explain and "Movement is shown, not added" in explain
+    assert "Shadow estimate" in explain and "Movement is shown, not added" not in explain
+    assert "Estimated combined balance" in explain and "Estimated average per account" in explain
+    assert "NOT scaled" in explain or "unchanged since the baseline" in explain
     assert staff.get("/dashboard/csp/NOPE/explain/").status_code == 404
 
 

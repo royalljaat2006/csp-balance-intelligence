@@ -1,24 +1,22 @@
 """
-Four-way, time-ordered comparison of Avg Balance estimators.
+Held-out evaluation of the movement estimator against the carry-forward baseline.
 
-  carry_forward     a1 = a0                                  (reference, never "validated")
-  growth_only       a1 = a0 * n1 / n0                        (account-count hypothesis)
-  flow_only         a1 = a0 + b * x                          x = attributed net customer flow
-                                                             over the interval / n1 (per account)
-  growth_and_flow   a1 = a0 * n1 / n0 + b * x
+For each SBI refresh of a CSP (the Calling Sheet Avg Balance changing between two readings) the
+movement rule predicts the NEW value from the PREVIOUS reading alone:
 
-Where a0/n0 are the previous refreshed value and its count, a1/n1 the next, and the interval is
-(previous-first-seen, new-first-seen]. The coefficient b is fitted through the origin on training
-pairs only. Expanding-window: a held-out event is predicted with a b fitted on pairs whose new
-value was already known at that event's prediction origin (= earliest previous-value date among
-its pairs), and the first MIN_TRAIN_EVENTS events are training-only, so no pair ever helps train
-the model that scores it. Pairs need flow coverage >= MIN_COVERAGE of the interval, measured as
-the share of days with PROVEN-complete statement data -- an interval with no statements is not
-"zero flow", it is excluded.
+    predicted = (previous Avg Balance x previous count + net eligible movement) / count at refresh
 
-Flow signs use the existing, UNCONFIRMED `customer_wd_dep` mapping (bankflow.flows). Nothing here
-assumes pool net flow equals the change in customers' balances: b is whatever the data supports,
-and if the data supports nothing the verdict is INSUFFICIENT_EVIDENCE / NOT_SUPPORTED.
+where the movement is the attributed customer deposits minus withdrawals over
+(previous-first-seen, new-first-seen] -- the same window the daily estimator walks. The reported
+value is never an input. The rule has no fitted parameters, so there is nothing to train: every
+refresh with enough statement coverage is a genuine held-out test, and there is no look-ahead.
+
+The reference is carry-forward (the previous value unchanged). A pair needs flow coverage >=
+MIN_COVERAGE of its interval, measured as the share of days with PROVEN-complete statement data:
+an interval with no statements is not "zero movement", the pair is excluded and counted.
+
+Verdicts come from the same rules as before (account_hypothesis.classify): p90, events, monthly
+cycles, win share, gain and bootstrap interval. Nothing here approves anything for production.
 """
 
 from __future__ import annotations
@@ -26,22 +24,16 @@ from __future__ import annotations
 import bisect
 import datetime as dt
 from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
 
-from bankflow import flows
-from bankflow.account_hypothesis import (
-    ScoredRow,
-    classify,
-    predict,
-    score_rows,
-)
+from bankflow import flows, movement
+from bankflow.account_hypothesis import Pair, ScoredRow, classify, score_rows
 from bankflow.models import FlowAggregate
 
 MIN_COVERAGE = 0.8
-MIN_TRAIN_EVENTS = 3
-MIN_TRAIN_PAIRS = 5
-METHODS = ("flow_only", "growth_and_flow")
-LABELS = {"flow_only": "Flow-only model", "growth_and_flow": "Growth-and-flow model"}
+METHOD = movement.METHOD
+LABELS = {METHOD: "Movement estimator"}
 
 
 def flow_index(until: dt.date | None = None):
@@ -84,96 +76,50 @@ def _coverage(complete: list[dt.date], start: dt.date, end: dt.date) -> float:
     return (bisect.bisect_right(complete, end) - bisect.bisect_right(complete, start)) / total
 
 
-def _fit(xs: list[float], ys: list[float]) -> float | None:
-    den = sum(x * x for x in xs)
-    return None if den == 0 else sum(x * y for x, y in zip(xs, ys, strict=True)) / den
+@dataclass(frozen=True)
+class Evaluated:
+    """One SBI refresh with the movement prediction made for it (or why it was left out)."""
+
+    pair: Pair
+    movement: Decimal       # net eligible movement over the interval (proven-complete days)
+    coverage: float         # share of the interval's days with proven-complete statements
+    predicted: Decimal      # per-account prediction for the refresh date
+    usable: bool            # coverage >= MIN_COVERAGE
 
 
-class _Row:
-    __slots__ = ("pair", "x", "coverage")
-
-    def __init__(self, pair, x, coverage):
-        self.pair, self.x, self.coverage = pair, x, coverage
-
-
-def _predictions(row: _Row, b_flow: float | None, b_both: float | None) -> dict:
-    p = row.pair
-    growth = predict("proportional", p.prev_value, p.prev_count, p.new_count)
-    return {
-        "carry_forward": p.prev_value,
-        "growth_only": growth,
-        "flow_only": p.prev_value + Decimal(str((b_flow or 0.0) * row.x)),
-        "growth_and_flow": growth + Decimal(str((b_both or 0.0) * row.x)),
-    }
-
-
-def _fit_params(train: list[_Row]) -> tuple[float | None, float | None]:
-    xs = [r.x for r in train]
-    b_flow = _fit(xs, [float(r.pair.new_value - r.pair.prev_value) for r in train])
-    b_both = _fit(
-        xs,
-        [
-            float(
-                r.pair.new_value - predict("proportional", r.pair.prev_value,
-                                           r.pair.prev_count, r.pair.new_count)
-            )
-            for r in train
-        ],
-    )
-    return b_flow, b_both
+def evaluate(pairs: list[Pair], *, until: dt.date | None = None) -> list[Evaluated]:
+    cum, complete = flow_index(until)
+    out = []
+    for p in pairs:
+        cov = _coverage(complete, p.prev_date, p.event_date)
+        mv = _window_flow(cum, p.csp, p.prev_date, p.event_date)
+        predicted = movement.predict_per_account(p.prev_value, p.prev_count, mv, p.new_count)
+        out.append(Evaluated(p, mv, cov, predicted, cov >= MIN_COVERAGE))
+    return out
 
 
 def compare(pairs: list, *, until: dt.date | None = None) -> dict:
-    cum, complete = flow_index(until)
-    usable: list[_Row] = []
-    dropped_coverage = 0
-    for p in pairs:
-        cov = _coverage(complete, p.prev_date, p.event_date)
-        if cov < MIN_COVERAGE:
-            dropped_coverage += 1
-            continue
-        flow = _window_flow(cum, p.csp, p.prev_date, p.event_date)
-        usable.append(_Row(p, float(flow) / p.new_count, cov))
-
-    events = sorted({r.pair.event_date for r in usable})
+    evaluated = evaluate(pairs, until=until)
+    usable = [e for e in evaluated if e.usable]
+    events = sorted({e.pair.event_date for e in usable})
     basis = {
         "pairs_total": len(pairs),
         "pairs_with_flow_coverage": len(usable),
-        "pairs_dropped_low_coverage": dropped_coverage,
+        "pairs_dropped_low_coverage": len(evaluated) - len(usable),
         "min_coverage": MIN_COVERAGE,
         "events_with_flow_coverage": len(events),
-        "min_train_events": MIN_TRAIN_EVENTS,
+        "mean_coverage": (sum(e.coverage for e in usable) / len(usable)) if usable else None,
         "flow_definition": flows.DEFAULT_DEFINITION,
-        "flow_mapping_confirmed": False,
+        "fitted_parameters": 0,
     }
-
-    held: list[ScoredRow] = []
-    by_event: dict[dt.date, list[_Row]] = defaultdict(list)
-    for r in usable:
-        by_event[r.pair.event_date].append(r)
-    for i, ev in enumerate(events):
-        if i < MIN_TRAIN_EVENTS:
-            continue  # training-only
-        origin = min(r.pair.prev_date for r in by_event[ev])
-        train = [r for r in usable if r.pair.event_date <= origin]
-        if len(train) < MIN_TRAIN_PAIRS:
-            continue
-        b_flow, b_both = _fit_params(train)
-        for r in by_event[ev]:
-            held.append(ScoredRow(r.pair.csp, ev, r.pair.new_value,
-                                  _predictions(r, b_flow, b_both)))
+    held = [
+        ScoredRow(e.pair.csp, e.pair.event_date, e.pair.new_value,
+                  {"carry_forward": e.pair.prev_value, METHOD: e.predicted})
+        for e in usable
+    ]
     basis["held_out_pairs"] = len(held)
-
-    # parameters for production use: fitted on every usable pair
-    b_flow_all, b_both_all = _fit_params(usable) if usable else (None, None)
-    params = {"flow_only": {"beta": b_flow_all}, "growth_and_flow": {"beta": b_both_all}}
-
-    methods = {}
-    for m in METHODS:
-        metrics = score_rows(held, ("carry_forward", m), m)
-        status, detail = classify(metrics, LABELS[m])
-        if params[m]["beta"] is None and status in ("VALIDATED", "PROVISIONAL"):
-            status, detail = "INSUFFICIENT_EVIDENCE", "No usable flow signal to fit a coefficient."
-        methods[m] = {"status": status, "detail": detail, "metrics": metrics,
-                      "parameters": params[m]}
-    return {"basis": basis, "methods": methods}
+    metrics = score_rows(held, ("carry_forward", METHOD), METHOD)
+    status, detail = classify(metrics, LABELS[METHOD])
+    return {"basis": basis, "methods": {METHOD: {
+        "status": status, "detail": detail, "metrics": metrics, "parameters": {},
+    }}}

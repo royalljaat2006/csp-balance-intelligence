@@ -1,4 +1,6 @@
-"""Daily estimates, hypothesis runs, 06:00 baseline snapshot, API + dashboard."""
+"""Daily estimates (basics), validation runs, 06:00 baseline snapshot, API + dashboard.
+
+The movement arithmetic itself is covered in test_movement_estimator.py."""
 
 import datetime as dt
 import decimal
@@ -33,22 +35,22 @@ def _est(code, estimate_date=TODAY):
     return DailyEstimate.objects.get(csp_id=code, estimate_date=estimate_date)
 
 
-def test_no_hypothesis_evidence_gives_carry_forward_insufficient():
+def test_unvalidated_estimate_is_a_labelled_shadow_value_not_a_scaled_average():
     _csp("A")
     _bal("A", d(2026, 9, 22), "1000", 350)
     _bal("A", TODAY, "1000", 360)
     estimates.compute_daily_estimates(TODAY)
     e = _est("A")
-    assert e.status == "INSUFFICIENT_EVIDENCE" and e.method == "carry_forward"
-    assert e.reason_code == "COUNT_RULE_NOT_VALIDATED"
-    assert e.estimated_value == D("1000.00") and e.estimated_delta == D("0.00")
+    assert e.status == "INSUFFICIENT_EVIDENCE" and e.method == "movement"
     assert (e.baseline_account_count, e.current_account_count, e.account_count_change) == (
         350, 360, 10,
     )
     assert e.baseline_date == d(2026, 9, 22)
     assert e.expected_error_pct is None
-    # the unvalidated candidate is information only, never the estimate
-    assert e.details["unvalidated_count_scaled_value"] == "1028.57"
+    # the combined balance is untouched by the count change: 1000 x 350 = 350,000; the per-account
+    # figure only changes its divisor (350,000 / 360), it is NOT scaled up
+    assert e.estimated_combined == D("350000.00")
+    assert e.estimated_value == D("972.22") and e.estimated_value < e.baseline_value
 
 
 def test_never_writes_to_daily_balance():
@@ -71,7 +73,7 @@ def test_unchanged_count_missing_baseline_gate_and_untracked():
     _csp("OLD", status="historical_only")  # not tracked: no row
     _bal("OLD", TODAY, "100", 300)
     estimates.compute_daily_estimates(TODAY)
-    assert _est("SAME").reason_code == "COUNT_UNCHANGED_CARRY_FORWARD"
+    assert _est("SAME").estimated_value == D("800.00") and _est("SAME").method == "movement"
     assert _est("NONE").status == "UNAVAILABLE" and _est("NONE").estimated_value is None
     small = _est("SMALL")
     assert small.status == "UNAVAILABLE" and small.reason_code == "BELOW_200_ACCOUNT_GATE"
@@ -87,12 +89,14 @@ def test_demo_and_carry_forward_rows_are_not_baselines():
     assert _est("A").status == "UNAVAILABLE" and _est("A").reason_code == "NO_BASELINE"
 
 
-def test_missing_account_count_keeps_carry_forward():
+def test_a_baseline_with_no_valid_account_count_is_unavailable():
     _csp("A", n=300)
     _bal("A", d(2026, 9, 1), "800", None)
-    _bal("A", TODAY, "800", 300)
+    _bal("A", d(2026, 9, 5), "900", 0)  # a zero count is invalid too
+    _bal("A", TODAY, "900", 0)
     estimates.compute_daily_estimates(TODAY)
-    assert _est("A").reason_code == "MISSING_ACCOUNT_COUNT"
+    assert _est("A").status == "UNAVAILABLE"
+    assert _est("A").reason_code == "MISSING_ACCOUNT_COUNT" and _est("A").estimated_value is None
 
 
 def test_rerun_is_idempotent_and_keeps_history():
@@ -101,49 +105,36 @@ def test_rerun_is_idempotent_and_keeps_history():
     estimates.compute_daily_estimates(TODAY)
     estimates.compute_daily_estimates(TODAY)
     estimates.compute_daily_estimates(TODAY - dt.timedelta(days=1))
-    assert DailyEstimate.objects.filter(csp_id="A").count() == 2
+    assert DailyEstimate.objects.filter(csp_id="A").count() == 2  # today, and yesterday: no baseline yet
 
 
 def _seed_history(events=10, csps=4):
-    """`events` monthly refreshes where the value really tracks the account count."""
+    """`events` monthly refreshes of a value that does NOT follow the statements."""
     for i in range(csps):
         _csp(f"P{i}")
     for e in range(events + 1):
         day = d(2026, 1, 1) + dt.timedelta(days=e * 30)
         n = 350 + e * 10
         for i in range(csps):
-            _bal(f"P{i}", day, str((D("1000") * D(n) / D(350)).quantize(D("0.01"))), n)
+            _bal(f"P{i}", day, str(D("1000") + e), n)
     return d(2026, 1, 1) + dt.timedelta(days=events * 30)
 
 
-def test_validated_rule_applies_proportion_and_reports_error_only_then():
-    last_day = _seed_history()
+def test_without_statement_evidence_the_estimator_is_never_validated():
+    _seed_history()
     _, status, _, run = run_hypothesis_test()
-    assert status == "VALIDATED" and run is not None
-    nxt = last_day + dt.timedelta(days=1)  # count rises again, value not yet refreshed
-    last = DailyBalance.objects.get(csp_id="P0", balance_date=last_day)
-    _bal("P0", nxt, str(last.daily_avg_balance), last.account_count + 10)
-    estimates.compute_daily_estimates(nxt)
-    e = DailyEstimate.objects.get(csp_id="P0", estimate_date=nxt)
-    assert e.status == "VALIDATED" and e.method == "growth_only"
-    assert e.estimated_value > e.baseline_value
-    assert e.expected_error_pct is not None and e.hypothesis_run_id == run.pk
-
-
-def test_insufficient_history_never_invents_error_or_validation():
-    _seed_history(events=1, csps=2)
-    _, status, _, _ = run_hypothesis_test()
-    assert status == "INSUFFICIENT_EVIDENCE"
+    assert status == "INSUFFICIENT_EVIDENCE" and run is not None
+    assert run.selected_method == "carry_forward"
     estimates.compute_daily_estimates(d(2026, 1, 8))
     assert not DailyEstimate.objects.exclude(expected_error_pct=None).exists()
     assert not DailyEstimate.objects.filter(status__in=["VALIDATED", "PROVISIONAL"]).exists()
 
 
-def test_hypothesis_uses_only_data_up_to_cutoff():
+def test_validation_uses_only_data_up_to_cutoff():
     _seed_history(events=10, csps=4)
     _, full, _, _ = run_hypothesis_test(persist=False)
     _, early, _, _ = run_hypothesis_test(persist=False, until=d(2026, 1, 15))
-    assert full == "VALIDATED" and early == "INSUFFICIENT_EVIDENCE"
+    assert early == "INSUFFICIENT_EVIDENCE" and full == "INSUFFICIENT_EVIDENCE"
 
 
 def test_hypothesis_run_is_insert_only_history():
@@ -220,7 +211,10 @@ def test_estimates_api_scope_and_labelling(client, api_key):
     assert res.status_code == 200
     row = res.json()["data"][0]
     assert row["observed"]["avg_balance"] == 1000.0
-    assert row["estimate"]["method"] == "carry_forward"
+    assert row["estimate"]["method"] == "movement"
+    assert row["estimate"]["combined_balance"] == 350000.0
+    assert row["movement"] == {"eligible_deposits": 0.0, "eligible_withdrawals": 0.0,
+                               "net_eligible": 0.0}
     assert row["status"] == "INSUFFICIENT_EVIDENCE" and row["expected_error_pct"] is None
     assert client.get(url + "?status=BOGUS", **h).status_code == 422
     summ = client.get(url + "/summary", **h).json()["data"]
@@ -238,4 +232,4 @@ def test_dashboard_shows_estimates_distinct_from_observed(client):
     estimates.compute_daily_estimates(TODAY)
     page = client.get("/dashboard/csp/A/").content.decode()
     assert "SBI-reported average" in page and "Our estimate" in page
-    assert "Carry-forward, not validated" in page  # the estimate is labelled, never a balance
+    assert "Shadow estimate, not validated" in page  # the estimate is labelled, never a balance

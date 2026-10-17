@@ -317,76 +317,50 @@ service `bankflow/estimates.py`; API `GET /api/v1/bank-flow/estimates[/summary]`
 `GET /api/v1/bank-flow/account-count-hypothesis` (scope `report:read`); dashboard section on
 `/dashboard/bank-flow/`. Each row separates **observed** (SBI, Calling Sheet) from **estimate** (model).
 
+**The estimator (updated 2026-10-17): movement, shadow only.** Per CSP and per cycle:
+
+```
+combined baseline  = Calling Sheet Avg Balance (per account) x valid account count
+net movement (day) = eligible deposits (pool debits) - eligible withdrawals (pool credits)
+combined balance   = previous combined balance + net movement
+estimate           = combined balance / valid account count of that day
+```
+
+* A cycle starts on the day a new Avg Balance is first seen. That day is the baseline alone; the day's own
+  statement movement is **not** applied. Movement applies from the next day. Earlier cycles are kept.
+* **An account-count change never scales the combined balance**; it only changes the divisor from the day it is
+  received. Blank, zero and non-numeric counts are invalid: the last valid count stays in use and the row is flagged.
+  (The retired rule "Avg Balance rises in proportion to the count" is kept only as a stored diagnostic.)
+* Eligible labels are the statement allow-list in `normalize.CHANNEL_MAP`; everything else, including `yono
+  withdrawal`, never changes the estimate. The transaction workbook keeps its own seven-type list.
+* No eligible movement: carry the combined balance forward. Missing or incomplete statement: carry forward (or apply
+  the part of the day that exists) and mark the row **provisional** -- a missing statement is never read as no activity.
+  Today is partial until its statement is complete.
+* A row is **final** when its day is proven complete and every earlier day of the cycle was final. Final rows are never
+  rewritten (late transactions go through review); provisional rows are recomputed from the last final row until
+  complete. Rows written by the retired rules are replaced by the movement row of the same day with the old values kept
+  in `details.superseded_row`. There is no automated correction workflow yet.
+* Columns added to `DailyEstimate`: `estimated_combined`, `net_movement`, `eligible_deposits`,
+  `eligible_withdrawals`, `is_final`. Account counts come from the Calling Sheet only (PMJDY snapshots are not used).
+
 | Status | Meaning |
 |---|---|
-| `VALIDATED` | account-count rule met the pre-registered criteria (>= 8 refresh events, >= 30 count-change pairs, beats carry-forward in >= 2/3 of events, >= 5% MAE gain, bootstrap CI above 0). Only this status carries `expected_error_pct` (measured p90 abs % error). |
-| `PROVISIONAL` | rule ahead of carry-forward on >= 3 events / >= 10 pairs but below the validation bar. No error figure. |
-| `INSUFFICIENT_EVIDENCE` | estimate is the unvalidated carry-forward (last observed value). Default. |
-| `UNAVAILABLE` | no baseline, or below the 200-account gate (`csp.rules.is_eligible`, unchanged). |
+| `VALIDATED` | the movement estimator met the pre-registered criteria on held-out SBI refreshes (>= 8 refresh events, >= 30 pairs, >= 6 monthly cycles, beats carry-forward in >= 2/3 of events, >= 5% MAE gain, bootstrap CI above 0). Only this status carries `expected_error_pct`. A separate approval is still required before production use; none is recorded. |
+| `PROVISIONAL` | ahead of carry-forward on >= 3 events / >= 10 pairs but below the validation bar. No error figure. |
+| `INSUFFICIENT_EVIDENCE` | a shadow estimate not shown to beat carry-forward. Default. |
+| `UNAVAILABLE` | no baseline, no valid count, or below the 200-account gate (`csp.rules.is_eligible`, unchanged). |
 
-Attributed pool flow (exact KO matches, proven-complete days) is shown with its coverage but is **not** in
-the estimated value: no flow model has passed validation.
+Held-out evaluation (`evaluate_account_count_hypothesis`, `bankflow/model_comparison.py`): for each SBI refresh the rule
+predicts the new value from the previous reading only, `(a0 x n0 + net movement over the interval) / n1`, against
+carry-forward. There are no fitted parameters, so every refresh with at least 80 % of its days covered by
+proven-complete statements is a true held-out test; the rest are counted as not comparable, never scored as zero
+movement. Verdict thresholds are fixed in code (`account_hypothesis.classify`). Real SBI accuracy is unknown until
+enough refreshes and monthly cycles accumulate: until then the verdict is `INSUFFICIENT_EVIDENCE`.
 
-Account-count hypothesis (`evaluate_account_count_hypothesis`): candidates `carry_forward`,
-`proportional` (primary: a1 = a0 * n1/n0, i.e. 350 -> 360 = +2.857%), `total_constant`. Pairs are
-consecutive value refreshes per CSP; only pairs whose count changed count as evidence; metrics are per refresh
-event. Candidates have no fitted parameters, so there is no train/test leakage; thresholds are fixed in code.
-
-```bash
-cd app
-uv run python manage.py migrate bankflow
-uv run python manage.py evaluate_account_count_hypothesis [--json]
-uv run python manage.py compute_daily_estimates [--date YYYY-MM-DD]
-uv run python manage.py snapshot_calling_sheet_baseline [--date YYYY-MM-DD] [--not-before 06:00]
-```
-
-### 06:00 IST baseline snapshot -- scheduling (NOT enabled by this repo)
-
-`snapshot_calling_sheet_baseline` is insert-only (first capture per CSP per day wins) and logs each run to
-`IngestLog` (`source=baseline_snapshot`; `partial` when no readings, `failed` with the error). Rerunning is a no-op.
-The worker loop has no time-of-day scheduling and was left unchanged. To enable, after approval, add a host cron
-entry (same pattern as the other host jobs in DEPLOYMENT.md):
-
-```cron
-CRON_TZ=Asia/Kolkata
-0 6 * * *  cd /opt/projects/<project> && docker compose exec -T worker-calling-sheet python manage.py snapshot_calling_sheet_baseline --not-before 06:00 && docker compose exec -T worker-calling-sheet python manage.py compute_daily_estimates
-```
-
-## Decision dashboard, PMJDY counts and the four-way estimator comparison (added 2026-10-13)
-
-**Home (`/dashboard/`)** is now the flow *PMJDY account growth -> transaction flow -> daily estimated Avg Balance
--> CSP actions*. The previous overview is untouched at `/dashboard/overview/` ("Classic overview"). Every figure
-comes from `bankflow/intelligence.py`, which the API calls too:
-
-| API (scope `report:read`) | Purpose |
-|---|---|
-| `GET /api/v1/bank-flow/dashboard-summary` | headline metrics, each with source, interval, freshness |
-| `GET /api/v1/bank-flow/network-movement` | daily credits/debits/net, account growth, observed vs estimated; `granularity=hourly` for the transaction sheet |
-| `GET /api/v1/bank-flow/csp-growth` | Growth Explorer rows (search / status / flag / sort / pagination) |
-| `GET /api/v1/bank-flow/exceptions` | Action Centre items with reason, metrics, evidence coverage, next action |
-| `GET /api/v1/bank-flow/estimates[/summary]`, `/account-count-hypothesis` | estimates and the estimator verdict |
-
-**Names.** Until 2026-10-14 the headline figures were *pool credits*, *pool debits* and *net pool flow*
-because the deposit/withdrawal direction was unconfirmed. It is now confirmed (see "Flow semantics"), so the
-dashboard shows *withdrawn by customers* (pool credits), *deposited by customers* (pool debits) and
-*deposits minus withdrawals*; the pool-direction fields are still returned.
-
-**PMJDY counts.** `AccountCountObservation` is insert-only history of the PMJDY tab; the newest row is the current
-count (3,000 -> 3,090 means current 3,090, growth +90). A row is written when the count changes or when the IST day
-has none yet. `ingest_pmjdy` is rate-limited by `PMJDY_MIN_INTERVAL_SECONDS` (default 3600) so frequent polling cannot
-exhaust the Sheets quota; a failed or malformed read writes nothing. **The PMJDY tab layout is not verified**: set
-`PMJDY_WORKSHEET_NAME`, `PMJDY_HEADER_ROW`, `PMJDY_CODE_HEADERS`, `PMJDY_COUNT_HEADERS` to match it; an unmatched
-header fails loudly. If PMJDY has no reading at a baseline date, comparing it with a Calling Sheet count is refused
 (`COUNT_SOURCE_MISMATCH`), never treated as growth.
 
-**Estimator selection** (`evaluate_account_count_hypothesis`): `carry_forward` (reference), `growth_only`,
-`flow_only`, `growth_and_flow`, scored on held-out data in time order. Flow models fit one coefficient through the
-origin on pairs whose new value was known before the prediction origin; the first 3 events are training-only; a pair
-needs >= 80 % of its interval covered by proven-complete statement days. Validation needs >= 8 events, >= 30 pairs,
->= 6 monthly cycles (CSPs refreshing on different days of one month are one cycle), a win in 2/3 of events, a >= 5 %
-MAE gain and a bootstrap CI above 0. `growth_and_flow` fits flows on what growth leaves unexplained, so the growth
-effect is not counted twice. Estimates use the selected method only when it is `VALIDATED`/`PROVISIONAL`; otherwise they
-equal the last SBI value and say so.
+**Estimator selection** (superseded 2026-10-17): the four-way comparison (`growth_only`, `flow_only`, `growth_and_flow`
+with fitted coefficients) was replaced by the single movement rule described above, scored against carry-forward.
 
 ### Automation (the `worker-bankflow` service)
 

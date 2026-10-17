@@ -400,7 +400,9 @@ class DailyEstimate(models.Model):
 
     csp = models.ForeignKey("csp.Csp", on_delete=models.CASCADE, related_name="+")
     estimate_date = models.DateField()
-    method = models.CharField(max_length=32)  # carry_forward | account_count_proportional
+    # movement (the approved shadow estimator) | none; older rows may say carry_forward or
+    # account_count_proportional (the retired rules) and are kept as history
+    method = models.CharField(max_length=32)
     status = models.CharField(max_length=24, choices=Status.choices)
     reason_code = models.CharField(max_length=48)
     # observed (SBI) side
@@ -422,6 +424,16 @@ class DailyEstimate(models.Model):
     hypothesis_run = models.ForeignKey(
         HypothesisRun, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # movement estimator (bankflow.movement): the estimate is the COMBINED balance (per-account
+    # Avg Balance x account count at the baseline, then + eligible movement each day) divided by
+    # the valid account count of the day. `estimated_value` is that per-account figure.
+    estimated_combined = money(null=True, blank=True)
+    net_movement = money(null=True, blank=True)  # that day's eligible deposits - withdrawals
+    eligible_deposits = money(null=True, blank=True)
+    eligible_withdrawals = money(null=True, blank=True)
+    # True once the day's statement data is proven complete AND every earlier day of the cycle
+    # was final: a final row is never rewritten by a later run (late rows go through review).
+    is_final = models.BooleanField(default=False)
     details = models.JSONField(default=dict, blank=True)
     calculated_at = models.DateTimeField()
 

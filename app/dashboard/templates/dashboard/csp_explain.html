@@ -25,29 +25,32 @@
     <header><div><h2>How the figures fit together</h2><p>Per-account averages are rupees per account; combined balances are the whole CSP.</p></div></header>
     <div class="body">
       <ol class="steps">
-        <li><div><h3>Starting point: the SBI-reported average</h3></div>
+        <li><div><h3>1. Starting point: the SBI-reported average</h3></div>
           <div class="val">{{ x.baseline.per_account_average|inr }}</div>
-          <p class="why">Received {{ x.baseline.received_on|date:"j M Y" }} ({{ x.baseline.days_since_received|ago_days }}). It starts a new cycle on that day; money movement counts from the next day. Source: {{ x.baseline.source }}.</p></li>
-        <li><div><h3>Account count used</h3></div>
+          <p class="why">Per account. Received {{ x.baseline.received_on|date:"j M Y" }} ({{ x.baseline.days_since_received|ago_days }}). It starts a new cycle on that day; bank movement counts from the next day. Source: {{ x.baseline.source }}.</p></li>
+        <li><div><h3>2. Account count used</h3></div>
           <div class="val">{{ x.account_count.at_baseline|intc }}{% if x.account_count.current != x.account_count.at_baseline %} &rarr; {{ x.account_count.current|intc }}{% endif %}</div>
-          <p class="why">Count when the SBI value arrived{% if x.account_count.current != x.account_count.at_baseline %}, and the latest count{% endif %}. Last read {% if x.account_count.last_reading %}{{ x.account_count.last_reading|date:"j M" }} ({{ x.account_count.reading_age_days|ago_days }}){% else %}never{% endif %}{% if x.account_count.stale %}. <b>Stale: the last known count is being used.</b>{% endif %}</p></li>
-        <li><div><h3>Combined balance at the baseline</h3></div>
+          <p class="why">{{ x.account_count.effect }} Last read {% if x.account_count.last_reading %}{{ x.account_count.last_reading|date:"j M" }} ({{ x.account_count.reading_age_days|ago_days }}){% else %}never{% endif %}{% if x.account_count.stale %}. <b>Stale or invalid latest reading: the last valid count is being used.</b>{% endif %}</p></li>
+        <li><div><h3>3. Combined balance at the baseline</h3></div>
           <div class="val">{{ x.combined_baseline|inr }}</div>
-          <p class="why">Average &times; account count = {{ x.baseline.per_account_average|inr }} &times; {{ x.account_count.at_baseline|intc }}.</p></li>
-        <li><div><h3>Eligible deposits since then</h3></div>
+          <p class="why">Average &times; account count = {{ x.baseline.per_account_average|inr }} &times; {{ x.account_count.at_baseline|intc }}. This is the whole CSP, not one account.</p></li>
+        <li><div><h3>4. Eligible deposits since then</h3></div>
           <div class="val">{{ x.movement.deposits|inr }}</div>
-          <p class="why">Approved deposit types from bank statements, matched exactly to this CSP, after {{ x.movement.from_exclusive|date:"j M" }}.</p></li>
-        <li><div><h3>Eligible withdrawals since then</h3></div>
+          <p class="why">Pool-account debits of the approved deposit types, matched exactly to this CSP, after {{ x.movement.from_exclusive|date:"j M" }}. They raise the balance.</p></li>
+        <li><div><h3>5. Eligible withdrawals since then</h3></div>
           <div class="val">{{ x.movement.withdrawals|inr }}</div>
-          <p class="why">Approved withdrawal types, same rules. A pool debit is a customer deposit; a pool credit is a customer withdrawal.</p></li>
-        <li><div><h3>Net movement</h3></div>
+          <p class="why">Pool-account credits of the approved withdrawal types, same rules. They lower the balance.</p></li>
+        <li><div><h3>6. Net eligible movement</h3></div>
           <div class="val">{{ x.movement.net|signed_inr }}</div>
-          <p class="why">Deposits minus withdrawals over {{ x.movement.days_with_statements }} statement day{{ x.movement.days_with_statements|pluralize }} of {{ x.movement.window_days }}{% if x.movement.coverage is not None %} ({{ x.movement.coverage|pct0 }} proven complete){% endif %}. Days without a statement are not treated as zero.</p></li>
-        <li><div><h3>Stored estimate (per account)</h3></div>
+          <p class="why">Deposits minus withdrawals over {{ x.movement.window_days }} day{{ x.movement.window_days|pluralize }}: {{ x.movement.complete_days }} final, the rest provisional{% if x.movement.coverage is not None %} ({{ x.movement.coverage|pct0 }} of days proven complete){% endif %}. A day with no statement is carried forward, never counted as zero activity.</p></li>
+        <li><div><h3>7. Estimated combined balance</h3></div>
+          <div class="val">{{ x.combined_now|inr }}</div>
+          <p class="why">Step 3 + step 6.{% if x.movement.reconciles is True %} The stored daily rows add up to this figure.{% elif x.movement.reconciles is False %} <b>The stored daily rows do not add up to this figure. Do not rely on it until checked.</b>{% endif %}</p></li>
+        <li><div><h3>8. Estimated average per account</h3></div>
           <div class="val">{{ x.estimate.per_account_average|inr }}</div>
-          <p class="why"><b>{{ x.estimate.status|est_label }}.</b> {{ x.estimate.method_words }} {{ x.estimate.reason_words }}{% if x.estimate.expected_error_pct is not None %} Measured typical error: {{ x.estimate.expected_error_pct|floatformat:1 }}%.{% endif %}</p></li>
+          <p class="why">Step 7 &divide; {{ x.account_count.current|intc }} accounts. <b>{{ x.estimate.status|est_label }}.</b> {{ x.estimate.reason_words }}{% if x.estimate.expected_error_pct is not None %} Measured typical error: {{ x.estimate.expected_error_pct|floatformat:1 }}%.{% endif %}</p></li>
       </ol>
-      <div class="callout info" style="margin-top:10px">{% include "dashboard/_icon.html" with name="info" %}<div><b>Movement is shown, not added.</b> {{ x.not_applied }}</div></div>
+      <div class="callout info" style="margin-top:10px">{% include "dashboard/_icon.html" with name="info" %}<div><b>How the method works.</b> {{ x.estimate.method_words }}</div></div>
     </div>
   </div>
 
@@ -57,6 +60,14 @@
       <div class="body"><p>{{ x.check.text }}</p>
         {% if x.check.sheet_total is not None %}<dl class="kv" style="margin-top:10px"><dt>Sheet's own total balance</dt><dd>{{ x.check.sheet_total|inr }}</dd><dt>Average &times; account count</dt><dd>{{ x.check.average_x_count|inr }}</dd><dt>Difference</dt><dd>{{ x.check.difference|signed_inr }}</dd></dl>{% endif %}
         <p class="small muted" style="margin-top:8px">Read-only check against the Calling Sheet's total for this CSP. It does not prove the same for every CSP.</p></div></div>
+    <div class="card"><header><div><h2>Data used</h2><p>What the movement is built from.</p></div>
+      {% if x.estimate.final %}{% include "dashboard/components/badge.html" with tone="ok" text="Final" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Provisional" %}{% endif %}</header>
+      <div class="body"><dl class="kv"><dt>Counted transactions</dt><dd>{{ x.movement.counted_txns|intc }}</dd>
+        <dt>Excluded types</dt><dd>{{ x.movement.excluded_txns|intc }}</dd>
+        <dt>Unclassified labels</dt><dd>{{ x.movement.unclassified_txns|intc }}</dd>
+        <dt>Shared references</dt><dd>{{ x.movement.duplicate_refs|intc }}</dd></dl>
+        <p class="small muted" style="margin-top:8px">Excluded and unclassified rows never change the estimate. Shared references are flagged for review and still counted until reviewed.</p>
+        {% for r in x.estimate.provisional_reasons %}<p class="small" style="margin-top:6px">{{ r }}</p>{% endfor %}</div></div>
     <div class="card"><header><div><h2>Estimator status</h2></div>{% include "dashboard/components/badge.html" with tone=x.estimator.status|est_tone text=x.estimator.status|est_label %}</header>
       <div class="body"><p class="small">{{ x.estimator.detail }}</p></div>
       {% if user.is_staff %}<footer>Validation is shown on <a href="{% url 'dashboard:bank_flow' %}">SBI comparison</a>.</footer>{% endif %}</div>
@@ -64,11 +75,12 @@
 </section>
 
 <section class="card">
-  <header><div><h2>Daily movement since the baseline</h2><p>Statement days for this CSP, with whether each day is proven complete.</p></div></header>
+  <header><div><h2>Day by day since the baseline</h2><p>The stored estimate for each day of this cycle. A final day never changes; a provisional day is recalculated until its bank statement is complete.</p></div></header>
   <div class="body flush table-wrap">
-    {% if x.movement.days %}<table class="t"><thead><tr><th>Day</th><th class="num">Deposits</th><th class="num">Withdrawals</th><th class="num">Net</th><th>Day status</th></tr></thead><tbody>
-      {% for d in x.movement.days %}<tr><td>{{ d.date|date:"D j M" }}</td><td class="num">{{ d.deposits|inr }}</td><td class="num">{{ d.withdrawals|inr }}</td><td class="num">{{ d.net|signed_inr }}</td><td>{{ d.status }}</td></tr>{% endfor %}
-    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No eligible movement since the baseline" text="Either nothing happened or no statement covers these days. Check Data readiness before reading this as zero." href=readiness_url go="Open data readiness" %}{% endif %}
+    {% if x.movement.days %}<table class="t"><thead><tr><th>Day</th><th class="num">Deposits</th><th class="num">Withdrawals</th><th class="num">Net</th><th class="num">Combined balance</th><th class="num">Accounts</th><th class="num">Per account</th><th>Status</th></tr></thead><tbody>
+      {% for d in x.movement.days %}<tr><td>{{ d.date|date:"D j M" }}</td><td class="num">{{ d.deposits|inr }}</td><td class="num">{{ d.withdrawals|inr }}</td><td class="num">{{ d.net|signed_inr }}</td><td class="num">{{ d.combined|inr }}</td><td class="num">{{ d.count|intc }}</td><td class="num">{{ d.per_account|inr }}</td>
+        <td>{% if d.final %}{% include "dashboard/components/badge.html" with tone="ok" text="Final" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Provisional" %}{% endif %}<span class="sub">{{ d.note }}</span></td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No days after the baseline yet" text="The baseline arrived today, so the estimate equals it. Movement counts from the next day." href=readiness_url go="Open data readiness" %}{% endif %}
   </div>
 </section>
 {% endif %}

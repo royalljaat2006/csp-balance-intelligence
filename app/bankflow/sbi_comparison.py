@@ -2,9 +2,11 @@
 Estimate vs SBI-reported value -- read-only evidence for the validation gate.
 
 Every row is one SBI refresh of one CSP (a change in its Avg Balance between two readings). The
-prediction is made from the PREVIOUS reading and the two account counts only -- the reported value
-is never an input -- using the existing `account_hypothesis.predict` (the account-count rule, the
-only rule the estimator is allowed to apply). The carry-forward baseline is the previous reading.
+prediction is the movement rule (bankflow.movement.predict_per_account): the PREVIOUS reading times
+its account count, plus the eligible deposits minus withdrawals over the interval, divided by the
+count at the refresh. The reported value is never an input. The carry-forward baseline is the
+previous reading. A refresh whose interval has too little proven-complete statement data is not a
+valid comparison: it is counted and left out, never scored as "no movement".
 
 This module only compares and summarises. Verdicts come from the stored `HypothesisRun`
 (`account_hypothesis.classify`); nothing here marks the predictor validated.
@@ -20,6 +22,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from bankflow import account_hypothesis as ah
+from bankflow import model_comparison as mc
 from bankflow.models import HypothesisRun
 
 ZERO = Decimal(0)
@@ -34,14 +37,16 @@ def _pct(pred: Decimal, reported: Decimal) -> Decimal | None:
     return None if reported == 0 else ((pred - reported) / reported * 100)
 
 
-def _row(p: ah.Pair) -> dict:
-    pred = ah.predict(ah.PRIMARY, p.prev_value, p.prev_count, p.new_count)
+def _row(e: mc.Evaluated) -> dict:
+    p = e.pair
+    pred = e.predicted
     cf = p.prev_value
     return {
         "csp_code": p.csp, "event_date": p.event_date, "previous_date": p.prev_date,
         "previous_value": p.prev_value, "reported": p.new_value, "predicted": pred.quantize(CENT),
         "carry_forward": cf, "previous_count": p.prev_count, "new_count": p.new_count,
-        "count_changed": p.count_changed,
+        "count_changed": p.count_changed, "net_movement": e.movement.quantize(CENT),
+        "coverage": e.coverage, "valid": e.usable,
         "difference": (pred - p.new_value).quantize(CENT),
         "pct_variance": _pct(pred, p.new_value),
         "carry_forward_difference": (cf - p.new_value).quantize(CENT),
@@ -60,6 +65,7 @@ def summarise(rows: list[dict]) -> dict:
                   a large CSP weighs more than a small one;
     simple_avg_*  the plain mean of the per-CSP % variances, zero-reported rows excluded."""
     n = len(rows)
+    coverage = [r["coverage"] for r in rows]
     pct = [r["pct_variance"] for r in rows if r["pct_variance"] is not None]
     cf_pct = [r["carry_forward_pct_variance"] for r in rows
               if r["carry_forward_pct_variance"] is not None]
@@ -70,6 +76,7 @@ def summarise(rows: list[dict]) -> dict:
     cf_mae = _mean([abs(r["carry_forward_difference"]) for r in rows])
     return {
         "valid_comparisons": n, "excluded_zero_reported": n - len(pct),
+        "mean_coverage": _mean(coverage),
         "aggregate": {
             "predicted_total": sum_pred, "carry_forward_total": sum_cf,
             "reported_total": sum_rep,
@@ -109,8 +116,36 @@ def _cycles(events: list[dict]) -> list[dict]:
              "wins": sum(1 for e in es if e["model_won"])} for m, es in sorted(by.items())]
 
 
+def by_csp(rows: list[dict]) -> list[dict]:
+    """One line per CSP: its valid comparisons against carry-forward. A CSP's own 90th-percentile
+    error needs many refreshes, so with fewer the line says INSUFFICIENT_EVIDENCE."""
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        grouped[r["csp_code"]].append(r)
+    out = []
+    for code, rs in sorted(grouped.items()):
+        pct = [abs(float(r["pct_variance"])) for r in rs if r["pct_variance"] is not None]
+        mae = _mean([abs(r["difference"]) for r in rs])
+        cf = _mean([abs(r["carry_forward_difference"]) for r in rs])
+        enough = len(rs) >= ah.MIN_EVENTS_VALIDATED
+        out.append({
+            "csp_code": code, "comparisons": len(rs), "mean_abs_error": mae,
+            "carry_forward_mean_abs_error": cf,
+            "mean_abs_pct_variance": _mean(pct),
+            "p90_abs_pct_variance": (sorted(pct)[min(len(pct) - 1, int(0.9 * len(pct)))]
+                                     if pct else None),
+            "beats_carry_forward": (mae < cf) if mae is not None and cf is not None else None,
+            "mean_coverage": _mean([r["coverage"] for r in rs]),
+            "evidence": ("sufficient" if enough else "INSUFFICIENT_EVIDENCE"),
+            "evidence_note": (None if enough else
+                              f"{len(rs)} comparison(s); a per-CSP verdict needs at least "
+                              f"{ah.MIN_EVENTS_VALIDATED}."),
+        })
+    return out
+
+
 def _method_metrics(run: HypothesisRun) -> dict:
-    """Stored metrics for the account-count rule (the only rule the estimator may apply)."""
+    """Stored metrics for the movement estimator's latest run."""
     return run.metrics or {}
 
 
@@ -126,7 +161,7 @@ def gate(run: HypothesisRun | None) -> dict:
         }
     m = _method_metrics(run)
     cmp_ = m.get("primary_vs_carry_forward") or {}
-    p90 = ((m.get("candidates") or {}).get(ah.PRIMARY) or {}).get("p90_ape_pct")
+    p90 = ((m.get("candidates") or {}).get(mc.METHOD) or {}).get("p90_ape_pct")
     ci = cmp_.get("mae_gain_ci95_over_events") or [None, None]
     n_events, n_cycles, n_pairs = m.get("n_events", 0), m.get("n_cycles", 0), m.get("n_pairs", 0)
     win, gain = cmp_.get("event_win_share"), cmp_.get("relative_mae_gain")
@@ -168,10 +203,12 @@ def gate(run: HypothesisRun | None) -> dict:
 
 
 def sbi_comparison(
-    *, only_count_changed: bool = True, search: str = "", limit: int = 50, offset: int = 0
+    *, only_count_changed: bool = False, search: str = "", limit: int = 50, offset: int = 0
 ) -> dict:
     pairs = ah.pairs_from_series(ah.load_series())
-    rows_all = [_row(p) for p in pairs]
+    evaluated = [_row(e) for e in mc.evaluate(pairs)]
+    rows_all = [r for r in evaluated if r["valid"]]
+    not_comparable = len(evaluated) - len(rows_all)
     rows = [r for r in rows_all if r["count_changed"]] if only_count_changed else rows_all
     needle = search.strip().lower()
     if needle:
@@ -181,15 +218,20 @@ def sbi_comparison(
     run = HypothesisRun.objects.first()
     return {
         "only_count_changed": only_count_changed,
-        "total_refreshes": len(rows_all),
+        "total_refreshes": len(evaluated),
+        "not_comparable": not_comparable,
+        "min_coverage": mc.MIN_COVERAGE,
         "summary": summarise(rows),
+        "by_csp": by_csp(rows),
         "events": events, "cycles": _cycles(events),
         "gate": gate(run),
         "rows": rows[offset: offset + limit], "total_rows": len(rows),
         "unit": "rupees per account (SBI Avg Balance is a per-account average)",
         "notes": [
-            "Each row is an SBI refresh. The prediction uses only the previous reading and the "
-            "account counts, never the reported value.",
+            "Each row is an SBI refresh. The prediction uses only the previous reading, the "
+            "account counts and the eligible movement since, never the reported value.",
+            f"A refresh needs at least {mc.MIN_COVERAGE:.0%} of its days covered by complete bank "
+            "statements to be compared; the rest are counted as not comparable.",
             "A reported value of zero has no percentage variance (N/A) and is left out of the "
             "percentage averages.",
             "These are observed comparisons. Insufficient evidence is not a pass.",

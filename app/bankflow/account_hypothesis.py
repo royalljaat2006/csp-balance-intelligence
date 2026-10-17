@@ -1,5 +1,10 @@
 """
-Account-count hypothesis test.
+Account-count hypothesis test -- now a DIAGNOSTIC only.
+
+The business rule is that an account-count change never scales the combined balance, so the
+proportional rule below is no longer a candidate estimator; it is still scored (and stored under
+`account_count_rule_diagnostic`) so the evidence remains visible. The estimator that is validated
+is the movement rule (bankflow.model_comparison).
 
 Hypothesis under test (NOT assumed true): when a CSP's account count rises from
 n0 to n1 between two SBI Avg Balance refreshes, the new Avg Balance is
@@ -277,49 +282,42 @@ _RANK = {VALIDATED: 3, PROVISIONAL: 2, INSUFFICIENT: 1, NOT_SUPPORTED: 0}
 
 @bumps_generation
 def run_hypothesis_test(*, persist: bool = True, until: dt.date | None = None):
-    """Evaluate on DailyBalance history; returns (metrics, status, detail, run|None).
+    """Evaluate the movement estimator on DailyBalance + statement history; returns
+    (metrics, status, detail, run|None).
 
-    Compares four estimators with time-ordered validation: carry_forward (reference),
-    growth_only, flow_only, growth_and_flow (see bankflow.model_comparison). The selected
-    method is the best candidate by verdict then relative gain; if none leads, carry_forward."""
+    The estimator under test is the agreed movement rule (bankflow.movement), scored against
+    carry-forward on held-out SBI refreshes. The old account-count rule is scored too but only as
+    a stored diagnostic: it can never be selected. `selected_method` is `movement` when the
+    verdict is VALIDATED or PROVISIONAL, otherwise `carry_forward`."""
     from bankflow import model_comparison
     from bankflow.models import HypothesisRun
 
     series = load_series(until=until)
     pairs = pairs_from_series(series)
-    growth = evaluate_pairs(pairs)
-    g_status, g_detail = classify(growth, "Proportional rule")
     comparison = model_comparison.compare(pairs, until=until)
-
-    options: list[tuple] = [("growth_only", g_status, g_detail, growth, {})]
-    for name, res in comparison["methods"].items():
-        options.append((name, res["status"], res["detail"], res["metrics"], res["parameters"]))
-    best = max(
-        options,
-        key=lambda o: (_RANK[o[1]], o[3]["primary_vs_carry_forward"]["relative_mae_gain"] or -9),
+    res = comparison["methods"][model_comparison.METHOD]
+    status, detail, metrics = res["status"], res["detail"], dict(res["metrics"])
+    selected = (
+        model_comparison.METHOD if status in (VALIDATED, PROVISIONAL) else "carry_forward"
     )
-    if _RANK[best[1]] >= _RANK[PROVISIONAL]:
-        selected, status, detail, params = best[0], best[1], best[2], best[4]
-    else:
-        selected, params = "carry_forward", {}
-        status = best[1] if best[1] == NOT_SUPPORTED else INSUFFICIENT
-        detail = best[2] if status == best[1] else g_detail
-        if all(o[1] == NOT_SUPPORTED for o in options):
-            status = NOT_SUPPORTED
 
+    growth = evaluate_pairs(pairs)
+    g_status, g_detail = classify(growth, "Account-count rule")
     all_dates = sorted({d for rows in series.values() for d, _, _ in rows})
-    metrics = dict(growth)
+    metrics["n_pairs_all"] = len(pairs)
     metrics["comparison"] = {
         "basis": comparison["basis"],
+        "selected": selected,
         "methods": {k: {"status": v["status"], "detail": v["detail"], "metrics": v["metrics"],
                         "parameters": v["parameters"]} for k, v in comparison["methods"].items()},
-        "growth_only": {"status": g_status, "detail": g_detail},
-        "selected": selected,
+    }
+    metrics["account_count_rule_diagnostic"] = {
+        "status": g_status, "detail": g_detail, "metrics": growth,
+        "note": "Diagnostic only. An account-count change does not scale the combined balance.",
     }
     config = {
-        "primary": PRIMARY,
-        "candidates": list(CANDIDATES),
-        "estimators_compared": ["carry_forward", "growth_only", "flow_only", "growth_and_flow"],
+        "estimator": model_comparison.METHOD,
+        "reference": "carry_forward",
         "min_events_validated": MIN_EVENTS_VALIDATED,
         "min_pairs_validated": MIN_PAIRS_VALIDATED,
         "min_cycles_validated": MIN_CYCLES_VALIDATED,
@@ -328,6 +326,8 @@ def run_hypothesis_test(*, persist: bool = True, until: dt.date | None = None):
         "min_cycles_provisional": MIN_CYCLES_PROVISIONAL,
         "min_rel_gain": MIN_REL_GAIN,
         "min_event_win_share": MIN_EVENT_WIN_SHARE,
+        "p90_limit_pct": 5.0,
+        "min_flow_coverage": model_comparison.MIN_COVERAGE,
         "bootstrap_reps": BOOTSTRAP_REPS,
         "bootstrap_seed": BOOTSTRAP_SEED,
         "until": until.isoformat() if until else None,
@@ -335,15 +335,14 @@ def run_hypothesis_test(*, persist: bool = True, until: dt.date | None = None):
         "first_observation": all_dates[0].isoformat() if all_dates else None,
         "last_observation": all_dates[-1].isoformat() if all_dates else None,
         "limitations": [
-            "Count used for a value is the count on the first date the value was seen; the sheet "
-            "has no measurement date.",
-            "Avg Balance is a per-account average; refresh times differ per CSP and are unknown.",
-            "growth_only has no fitted parameters (no train/test leakage); flow models use an "
-            "expanding window and train only on pairs whose new value was known before the "
-            "prediction origin.",
-            "Flow sign convention (customer_wd_dep) rests on the UNCONFIRMED channel mapping.",
-            "Picking the best of several estimators is itself a selection; the verdict is for the "
-            "selected one against carry-forward with its own held-out data.",
+            "The count used for a value is the count on the first date the value was seen; the "
+            "sheet has no measurement date.",
+            "Avg Balance is a per-account average; refresh times differ per CSP and are unknown, "
+            "and a refresh that repeats the previous value cannot be detected.",
+            "The movement rule has no fitted parameters, so no pair is used for training.",
+            "Only proven-complete statement days enter the interval's movement, and a pair needs "
+            "at least 80% of its days covered; pairs below that are excluded and counted.",
+            "Event dates are the day the new value was first seen, not SBI's own measurement date.",
         ],
     }
     run = None
@@ -356,7 +355,7 @@ def run_hypothesis_test(*, persist: bool = True, until: dt.date | None = None):
             metrics=_jsonable(metrics),
             config=config,
             selected_method=selected,
-            parameters=_jsonable(params),
+            parameters={},
         )
     return metrics, status, detail, run
 

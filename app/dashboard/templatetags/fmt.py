@@ -118,7 +118,7 @@ _STATE_TONE = {"fresh": "ok", "ok": "ok", "on_time": "ok", "done": "ok", "comple
 _STATUS_WORD = {"ok": "Ready", "warn": "Check", "bad": "Problem"}
 _EST_LABEL = {
     "VALIDATED": "Reliable", "PROVISIONAL": "Provisional",
-    "INSUFFICIENT_EVIDENCE": "Carry-forward, not validated", "UNAVAILABLE": "No estimate",
+    "INSUFFICIENT_EVIDENCE": "Shadow estimate, not validated", "UNAVAILABLE": "No estimate",
     "NOT_COMPUTED": "Not calculated yet",
 }
 _EST_TONE = {"VALIDATED": "ok", "PROVISIONAL": "warn", "INSUFFICIENT_EVIDENCE": "shadow",

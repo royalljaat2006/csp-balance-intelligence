@@ -18,11 +18,12 @@
 {% endif %}
 
 <section class="grid g4" aria-label="Summary">
-  {% include "dashboard/components/stat.html" with label="Valid comparisons" value=c.summary.valid_comparisons|intc hint="SBI refreshes with a prediction and a reported value, in the selection below." %}
+  {% include "dashboard/components/stat.html" with label="Valid comparisons" value=c.summary.valid_comparisons|intc hint="SBI refreshes with a prediction, a reported value and enough complete bank statements, in the selection below." %}
   {% include "dashboard/components/stat.html" with label="Aggregate variance" value=c.summary.aggregate.variance_pct|pct1 hint="Total predicted against total reported, weighted by account count." %}
   {% include "dashboard/components/stat.html" with label="Average of CSP variances" value=c.summary.simple_avg_pct_variance|pct1 hint="Plain average of each comparison's % variance. Zero-reported rows are excluded." %}
   {% include "dashboard/components/stat.html" with label="Mean error vs carry-forward" value=c.summary.mean_abs_error|inr hint="Average gap per account between the prediction and the SBI-reported value." %}
 </section>
+<p class="small muted">{{ c.not_comparable|intc }} of {{ c.total_refreshes|intc }} SBI refresh{{ c.total_refreshes|pluralize:",es" }} could not be compared because fewer than {{ c.min_coverage|pct0 }} of their days have complete bank statements. They are counted, not scored as "no movement". Data completeness of the comparisons shown: {{ c.summary.mean_coverage|pct0 }}.</p>
 <p class="small muted">Aggregate carry-forward variance {{ c.summary.aggregate.carry_forward_variance_pct|pct1 }} &middot; mean carry-forward error {{ c.summary.carry_forward_mean_abs_error|inr }} &middot; {{ c.summary.excluded_zero_reported|intc }} comparison{{ c.summary.excluded_zero_reported|pluralize }} with a reported value of zero (variance N/A).{% if c.summary.beats_carry_forward is not None %} The estimator {% if c.summary.beats_carry_forward %}has a lower{% else %}does not have a lower{% endif %} mean error than carry-forward in this selection.{% endif %}</p>
 
 <section class="card">
@@ -52,15 +53,25 @@
 </section>
 
 <section class="card">
-  <header><div><h2>Every comparison</h2><p>{{ c.unit|capfirst }}. The prediction uses only the previous reading and the account counts.</p></div>
+  <header><div><h2>By CSP</h2><p>Each CSP's own comparisons against carry-forward. A CSP's own 90th-percentile error needs at least 8 refreshes; with fewer, the evidence is insufficient.</p></div></header>
+  <div class="body flush table-wrap">
+    {% if c.by_csp %}<table class="t"><thead><tr><th>CSP</th><th class="num">Comparisons</th><th class="num">Mean error</th><th class="num">Carry-forward error</th><th class="num">Mean % variance (absolute)</th><th class="num">Data covered</th><th>Evidence</th></tr></thead><tbody>
+      {% for r in c.by_csp|slice:":25" %}<tr><td><a href="{% url 'dashboard:csp_detail' r.csp_code %}" class="mono">{{ r.csp_code }}</a></td><td class="num">{{ r.comparisons|intc }}</td><td class="num">{{ r.mean_abs_error|inr }}</td><td class="num">{{ r.carry_forward_mean_abs_error|inr }}</td><td class="num">{{ r.mean_abs_pct_variance|pct1 }}</td><td class="num">{{ r.mean_coverage|pct0 }}</td>
+        <td>{% if r.evidence == "sufficient" %}{% include "dashboard/components/badge.html" with tone="ok" text="Enough refreshes" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Insufficient evidence" %}<span class="sub">{{ r.evidence_note }}</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table>{% else %}{% include "dashboard/components/empty.html" with title="No CSP comparisons yet" text="Insufficient evidence: no SBI refresh has enough complete bank statements to compare." %}{% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <header><div><h2>Every comparison</h2><p>{{ c.unit|capfirst }}. The prediction uses only the previous reading, the account counts and the eligible movement since.</p></div>
     <form class="filters" method="get">
       <label>CSP code<input type="search" name="q" value="{{ q }}" placeholder="e.g. 1A850001"></label>
       <label>Show<select name="scope" data-autosubmit><option value="changed"{% if scope == "changed" %} selected{% endif %}>Only where the account count changed</option><option value="all"{% if scope == "all" %} selected{% endif %}>Every SBI refresh</option></select></label>
       <button class="btn primary" type="submit">Apply</button></form></header>
   <div class="body flush table-wrap">
-    {% if c.rows %}<table class="t"><thead><tr><th>CSP</th><th>SBI refresh</th><th class="num">Previous</th><th class="num">Predicted</th><th class="num">SBI-reported</th><th class="num">Difference</th><th class="num">Variance</th><th class="num">Carry-forward variance</th></tr></thead><tbody>
+    {% if c.rows %}<table class="t"><thead><tr><th>CSP</th><th>SBI refresh</th><th class="num">Previous</th><th class="num">Net movement</th><th class="num">Predicted</th><th class="num">SBI-reported</th><th class="num">Difference</th><th class="num">Variance</th><th class="num">Carry-forward variance</th></tr></thead><tbody>
       {% for r in c.rows %}<tr><td><a href="{% url 'dashboard:csp_detail' r.csp_code %}" class="mono">{{ r.csp_code }}</a></td><td>{{ r.event_date|date:"j M Y" }}<span class="sub">accounts {{ r.previous_count|intc }} &rarr; {{ r.new_count|intc }}</span></td>
-        <td class="num">{{ r.previous_value|inr }}</td><td class="num">{{ r.predicted|inr }}</td><td class="num">{{ r.reported|inr }}</td><td class="num">{{ r.difference|signed_inr }}</td>
+        <td class="num">{{ r.previous_value|inr }}</td><td class="num">{{ r.net_movement|signed_inr }}<span class="sub">{{ r.coverage|pct0 }} of days covered</span></td><td class="num">{{ r.predicted|inr }}</td><td class="num">{{ r.reported|inr }}</td><td class="num">{{ r.difference|signed_inr }}</td>
         <td class="num">{% if r.pct_variance is None %}N/A{% else %}{{ r.pct_variance|pct1 }}{% endif %}</td><td class="num">{% if r.carry_forward_pct_variance is None %}N/A{% else %}{{ r.carry_forward_pct_variance|pct1 }}{% endif %}</td></tr>{% endfor %}
     </tbody></table>
     {% include "dashboard/components/pager.html" %}

@@ -1,7 +1,8 @@
 """
-manage.py evaluate_account_count_hypothesis -- test "an account-count rise moves
-Avg Balance proportionally (350 -> 360 = +2.857%)" against DailyBalance history
-and record the verdict (HypothesisRun). Read-only on balance data.
+manage.py evaluate_account_count_hypothesis -- score the movement estimator against
+carry-forward on held-out SBI refreshes (DailyBalance history + bank statements) and record the
+verdict (HypothesisRun). The old account-count rule is kept only as a stored diagnostic.
+Read-only on balance data.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from bankflow.account_hypothesis import run_hypothesis_test
 
 
 class Command(BaseCommand):
-    help = "Score the account-count proportionality hypothesis against observed refreshes."
+    help = "Score the movement estimator against carry-forward on observed SBI refreshes."
 
     def add_arguments(self, parser):
         parser.add_argument("--until", help="Only use observations up to YYYY-MM-DD.")

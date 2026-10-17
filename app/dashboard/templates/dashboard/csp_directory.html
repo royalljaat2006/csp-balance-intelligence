@@ -90,6 +90,6 @@
   {% include "dashboard/components/empty.html" with title="No CSP matches" text="Try a different name or code, or clear the filters." href="?" go="Clear filters" %}
   {% endif %}
 </section>
-<p class="small muted">Provisional means the estimate has not been checked against SBI refreshes; where the method is carry-forward it equals the last SBI-reported value. A dash means no figure exists. Production balances, slabs and incentives are unaffected by anything on this page.</p>
+<p class="small muted">Provisional means the estimate has not been checked against SBI refreshes: it is the SBI-reported value plus eligible bank movement since. A dash means no figure exists. Production balances, slabs and incentives are unaffected by anything on this page.</p>
 {% endif %}
 {% endblock %}

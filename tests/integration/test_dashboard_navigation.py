@@ -209,7 +209,7 @@ def test_an_unvalidated_estimate_is_labelled_provisional_never_reliable(staff):
     estimates.compute_daily_estimates(TODAY)
     html = staff.get("/dashboard/csps/").content.decode()
     body = html.split("<tbody>")[1].split("</tbody>")[0]
-    assert "Provisional" in body and "Carry-forward, not validated" in body
+    assert "Provisional" in body and "Shadow estimate, not validated" in body
     assert "Reliable" not in body
     detail = staff.get("/dashboard/csp/N/").content.decode()
     assert "Our estimate" in detail and "not a confirmed balance" in detail

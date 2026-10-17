@@ -1,18 +1,18 @@
 """
 "Why is this CSP's estimate this value?" -- read-only.
 
-Assembles, for one CSP, what the existing services already stored and computed:
+Reads what the daily estimator stored for one CSP; nothing is recalculated here:
 
   baseline          DailyEstimate.baseline_value / baseline_date  (SBI Avg Balance, per account)
-  account count     DailyEstimate baseline / current count, and where it came from
-  combined balance  baseline x account count -- the agreed reading of the Calling Sheet value
-  eligible flows    FlowAggregate (withdrawals and deposits only, exact CSP matches only)
-  estimate          DailyEstimate.estimated_value with its own method, status and reason
+  account count     the count at the baseline and the valid count used for the estimate
+  combined balance  baseline x account count, then + eligible deposits - eligible withdrawals
+  daily movement    one stored row per day of the cycle (eligible deposits, withdrawals, net,
+                    combined balance, per-account estimate, final/provisional)
+  estimate          DailyEstimate.estimated_value = combined balance / valid account count
 
-Nothing is estimated here. The movement figures are shown as evidence; they are NOT added to the
-estimate, because the stored estimator does not do that (see `not_applied`). The cross-check of
-the sheet's own total balance against average x count is a read-only consistency test of the
-baseline interpretation, using the raw total the Calling Sheet ingest keeps in `Csp.raw_attrs`.
+The cross-check of the sheet's own total balance against average x count is a read-only
+consistency test of the baseline interpretation, using the raw total the Calling Sheet ingest
+keeps in `Csp.raw_attrs`.
 """
 
 from __future__ import annotations
@@ -24,38 +24,46 @@ from csp.models import Csp, DailyBalance
 from csp.rules import ELIGIBILITY_MIN_ACCOUNTS
 from django.utils import timezone
 
-from bankflow import flows, intelligence
-from bankflow.models import DailyEstimate, FlowAggregate, HypothesisRun
+from bankflow import intelligence, movement
+from bankflow.models import DailyEstimate, HypothesisRun
 
 ZERO = Decimal(0)
-STALE_COUNT_DAYS = 3  # same threshold the estimator uses for an old Calling Sheet reading
 
 METHOD_WORDS = {
-    "carry_forward": "The last SBI-reported average is carried forward unchanged.",
-    "account_count_proportional": "The SBI-reported average is scaled by the change in "
-                                  "account count.",
-    "growth_only": "The SBI-reported average is scaled by the change in account count.",
-    "flow_only": "The SBI-reported average is adjusted by money movement.",
-    "growth_and_flow": "The SBI-reported average is adjusted for account growth and money "
-                       "movement.",
+    "movement": "Combined balance = the SBI-reported average x the account count at the baseline, "
+                "plus eligible deposits minus eligible withdrawals each day after it. The "
+                "per-account figure is that combined balance divided by the valid account count.",
+    "carry_forward": "(Retired rule) The last SBI-reported average was carried forward unchanged.",
+    "account_count_proportional": "(Retired rule) The SBI-reported average was scaled by the "
+                                  "change in account count. This is no longer used.",
     "none": "No estimate is produced for this CSP.",
 }
 REASON_WORDS = {
-    "NO_VALIDATED_MODEL": "No estimator has passed validation, so the SBI value is carried "
-                          "forward.",
-    "COUNT_UNCHANGED_CARRY_FORWARD": "The account count has not changed since the SBI value "
-                                     "arrived, so the SBI value is carried forward.",
-    "COUNT_RULE_NOT_VALIDATED": "The account count changed, but the rule for using it has not "
-                                "passed validation, so the SBI value is carried forward.",
+    movement.R_BASELINE_DAY: "This is the day the SBI value arrived: the estimate is the SBI "
+                             "value alone, and that day's bank movement is not applied again.",
+    movement.R_APPLIED: "Eligible deposits and withdrawals from complete bank statements were "
+                        "applied to the combined balance.",
+    movement.R_NO_MOVEMENT: "The bank statement is complete and shows no eligible movement for "
+                            "this CSP, so the combined balance is carried forward.",
+    movement.R_GAP: "No bank statement covers this day. The combined balance is carried forward "
+                    "and the estimate is provisional; a missing statement is not read as no "
+                    "activity.",
+    movement.R_PARTIAL: "The day's statement is not proven complete. The movement seen so far "
+                        "is applied and the estimate is provisional.",
+    movement.R_TODAY: "Today is still in progress. Movement so far is applied and will change "
+                      "until the statement is complete.",
     "BELOW_200_ACCOUNT_GATE": "This CSP has fewer than 200 accounts (the eligibility gate), so "
-                              "no estimate is produced.",
+                              "no per-account estimate is produced.",
     "NO_BASELINE": "No SBI-reported value has been received for this CSP.",
-    "MISSING_ACCOUNT_COUNT": "An account count is missing, so the estimate cannot be adjusted.",
-    "COUNT_SOURCE_MISMATCH": "The two account counts come from different sources and cannot be "
-                             "compared.",
-    "INSUFFICIENT_FLOW_COVERAGE": "Bank statements cover too little of the period to use money "
-                                  "movement.",
+    "INVALID_BASELINE": "The SBI-reported value is zero or invalid, so no estimate is produced.",
+    "MISSING_ACCOUNT_COUNT": "No valid account count is available (blank or zero), so no "
+                             "per-account estimate can be produced.",
+    # rows written by the retired rules
+    "NO_VALIDATED_MODEL": "(Retired rule) No estimator had passed validation.",
+    "COUNT_UNCHANGED_CARRY_FORWARD": "(Retired rule) The count had not changed.",
+    "COUNT_RULE_NOT_VALIDATED": "(Retired rule) The count rule had not passed validation.",
 }
+DAY_STATUS = {True: "Final", False: "Provisional"}
 
 
 def _dec(v) -> Decimal | None:
@@ -125,35 +133,56 @@ def explain_estimate(csp_code: str, *, today: dt.date | None = None) -> dict | N
         out["message"] = ("No estimate has been calculated for this CSP yet. The steps below "
                           "appear once the daily estimate has run.")
         return out
+    if est.method not in (movement.METHOD, "none"):
+        out["has_estimate"] = False
+        out["message"] = ("The latest stored estimate for this CSP was produced by a retired "
+                          "rule and has no daily breakdown. It is replaced the next time the "
+                          "daily estimate runs.")
+        return out
 
     base_n, cur_n = est.baseline_account_count, est.current_account_count
-    combined = est.baseline_value * base_n if est.baseline_value is not None and base_n else None
+    details = est.details or {}
+    cstate = details.get("count") or {}
     count_age = (today - latest_reading[0]).days if latest_reading else None
-    count_stale = count_age is None or count_age > STALE_COUNT_DAYS
+    combined_baseline = (
+        _dec(details.get("baseline_combined"))
+        or (est.baseline_value * base_n if est.baseline_value is not None and base_n else None)
+    )
 
-    # movement since the baseline arrived: transactions apply from the NEXT day
-    deposits = withdrawals = ZERO
+    # the stored day-by-day rows of this cycle
+    cycle = (
+        list(DailyEstimate.objects.filter(
+            csp=csp, method=movement.METHOD, baseline_date=est.baseline_date,
+            baseline_value=est.baseline_value, estimate_date__lte=est.estimate_date,
+        ).order_by("estimate_date"))
+        if est.baseline_date is not None else []
+    )
     days: list[dict] = []
-    complete = flows.proven_complete_dates()
-    movement_available = est.baseline_date is not None
-    if movement_available:
-        rows = FlowAggregate.objects.filter(
-            csp=csp, resolution_mode=flows.MODE_EXACT, flow_date__gt=est.baseline_date,
-            flow_date__lte=today,
-        ).order_by("flow_date")
-        for r in rows:
-            counted, _other = intelligence._split_flow(r.by_category)
-            deposits += counted["deposits"]
-            withdrawals += counted["withdrawals"]
-            days.append({
-                "date": r.flow_date, "deposits": counted["deposits"],
-                "withdrawals": counted["withdrawals"],
-                "net": counted["deposits"] - counted["withdrawals"],
-                "status": ("incomplete (today)" if r.flow_date >= today
-                           else "complete" if r.flow_date in complete
-                           else "not yet proven complete"),
-            })
-    window_days = (today - est.baseline_date).days if est.baseline_date is not None else 0
+    deposits = withdrawals = ZERO
+    excluded = unclassified = duplicates = counted = 0
+    for r in cycle:
+        d = r.details or {}
+        dep, wd = r.eligible_deposits or ZERO, r.eligible_withdrawals or ZERO
+        deposits += dep
+        withdrawals += wd
+        counted += d.get("counted_txns", 0)
+        excluded += d.get("excluded_txns", 0)
+        unclassified += d.get("unclassified_txns", 0)
+        duplicates += d.get("duplicate_refs", 0)
+        days.append({
+            "date": r.estimate_date, "deposits": dep, "withdrawals": wd,
+            "net": r.net_movement or ZERO, "combined": r.estimated_combined,
+            "per_account": r.estimated_value, "count": r.current_account_count,
+            "final": r.is_final, "status": DAY_STATUS[r.is_final],
+            "note": REASON_WORDS.get(r.reason_code, r.reason_code),
+            "provisional_reasons": d.get("provisional_reasons") or [],
+        })
+    net = deposits - withdrawals
+    reconciles = None
+    if combined_baseline is not None and est.estimated_combined is not None and cycle:
+        reconciles = abs(combined_baseline + net - est.estimated_combined) <= Decimal("0.05") * (
+            len(cycle) + 1)
+    window_days = len(cycle) - 1 if cycle else 0
 
     out.update({
         "baseline": {
@@ -165,58 +194,68 @@ def explain_estimate(csp_code: str, *, today: dt.date | None = None) -> dict | N
         },
         "account_count": {
             "at_baseline": base_n, "current": cur_n, "change": est.account_count_change,
-            "source": est.details.get("count_source"),
+            "source": details.get("count_source") or "calling_sheet",
             "last_reading": latest_reading[0] if latest_reading else None,
-            "reading_age_days": count_age, "stale": count_stale,
+            "reading_age_days": count_age, "stale": bool(cstate.get("stale")),
+            "invalid_reading_ignored": bool(cstate.get("invalid_reading_ignored")),
+            "valid_since": cstate.get("count_read_on"),
             "below_gate": cur_n is not None and cur_n < ELIGIBILITY_MIN_ACCOUNTS,
             "gate": ELIGIBILITY_MIN_ACCOUNTS,
+            "effect": (
+                f"The account count changed from {base_n} to {cur_n}. The combined balance is "
+                "NOT scaled by this: only the divisor of the per-account figure changes, from "
+                "the day the new count was received."
+                if base_n and cur_n and base_n != cur_n else
+                "The account count is unchanged since the baseline, so the per-account figure "
+                "moves only with money movement."),
         },
-        "combined_baseline": combined,
+        "combined_baseline": combined_baseline,
+        "combined_now": est.estimated_combined,
         "movement": {
-            "available": movement_available, "from_exclusive": est.baseline_date,
-            "to": today, "deposits": deposits, "withdrawals": withdrawals,
-            "net": deposits - withdrawals, "days": days, "window_days": window_days,
-            "days_with_statements": len(days),
+            "available": est.baseline_date is not None, "from_exclusive": est.baseline_date,
+            "to": est.estimate_date, "deposits": deposits, "withdrawals": withdrawals,
+            "net": net, "days": days[1:], "window_days": window_days,
+            "days_with_statements": sum(1 for r in cycle[1:] if (r.details or {}).get(
+                "counted_txns")),
+            "complete_days": sum(1 for r in cycle[1:] if r.is_final),
             "coverage": est.flow_coverage,
-            "stored_net": est.flow_net,
+            "counted_txns": counted, "excluded_txns": excluded,
+            "unclassified_txns": unclassified, "duplicate_refs": duplicates,
+            "reconciles": reconciles,
             "rule": "Only eligible withdrawals and deposits from exactly matched CSP codes are "
-                    "counted. Movement applies from the day after the baseline arrived.",
+                    "counted, from the day after the baseline arrived. A pool debit is a "
+                    "customer deposit and raises the balance; a pool credit is a customer "
+                    "withdrawal and lowers it.",
         },
         "estimate": {
-            "per_account_average": est.estimated_value, "delta_vs_baseline": est.estimated_delta,
+            "per_account_average": est.estimated_value, "combined": est.estimated_combined,
+            "delta_vs_baseline": est.estimated_delta,
             "method": est.method, "method_words": METHOD_WORDS.get(est.method, est.method),
             "status": est.status, "reason_code": est.reason_code,
             "reason_words": REASON_WORDS.get(est.reason_code, est.reason_code),
+            "final": est.is_final,
+            "provisional_reasons": details.get("provisional_reasons") or [],
             "expected_error_pct": est.expected_error_pct, "error_basis": est.error_basis,
             "calculated_at": est.calculated_at,
         },
-        "not_applied": (
-            "Money movement is shown as evidence. The stored estimator does not add it to the "
-            "balance: the estimate above comes from the method named there. Applying the agreed "
-            "movement rule to the combined balance needs a separate estimator that does not "
-            "exist yet."),
     })
 
     if est.status == "UNAVAILABLE":
         flags.append({"level": "bad", "text": REASON_WORDS.get(est.reason_code,
                                                                "No estimate for this CSP.")})
     if est.status != "VALIDATED":
-        flags.append({"level": "warn", "text": "Provisional: this estimate has not been checked "
-                      "against SBI refreshes, so treat it as indicative only."})
-    if est.method == "carry_forward" and est.status != "UNAVAILABLE":
-        flags.append({"level": "info", "text": "Carried forward: the estimate equals the last "
-                      "SBI-reported average."})
-    if est.details.get("stale"):
-        flags.append({"level": "warn", "text": "The SBI value is older than 3 days."})
-    if count_stale:
-        flags.append({"level": "warn", "text": "The account count reading is stale or missing; "
-                      "the last known count is being used."})
+        flags.append({"level": "warn", "text": "Shadow estimate: it has not been validated "
+                      "against SBI refreshes and has not been approved for production use, so "
+                      "treat it as indicative only."})
+    for reason in details.get("provisional_reasons") or []:
+        flags.append({"level": "warn", "text": reason})
     if not cur_n:
-        flags.append({"level": "bad", "text": "The account count is missing or zero. It needs "
+        flags.append({"level": "bad", "text": "No valid account count is available. It needs "
                       "review."})
-    if est.flow_coverage is not None and est.flow_coverage < 1:
-        flags.append({"level": "warn", "text": f"Bank statements cover {est.flow_coverage:.0%} "
-                      "of the days since the baseline arrived."})
+    if duplicates:
+        flags.append({"level": "warn", "text": f"{duplicates} transaction(s) in this cycle share "
+                      "a reference number with another and are flagged for review. They are "
+                      "still counted until reviewed."})
     if check["state"] == "inconsistent":
         flags.append({"level": "bad", "text": check["text"]})
     return out

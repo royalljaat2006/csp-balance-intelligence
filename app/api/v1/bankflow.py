@@ -188,7 +188,7 @@ def estimates_summary(request: ApiRequest):
     "/account-count-hypothesis",
     response=DataEnvelope[dict],
     auth=RequireScope(_scope),
-    summary="Latest test of 'Avg Balance moves proportionally with account count'",
+    summary="Latest validation run of the movement estimator against carry-forward",
 )
 def account_count_hypothesis(request: ApiRequest):
     return DataEnvelope(
@@ -404,8 +404,9 @@ def review(request: ApiRequest, days: int = 30):
     description=(
         "The stored baseline and its receipt date, the account counts, the combined baseline "
         "(average x count), eligible deposits and withdrawals since the baseline, and the stored "
-        "estimate with its method and status. Movement is shown as evidence and is not added to "
-        "the estimate. 404 for an unknown CSP."
+        "estimate with its method and status. The estimate is the combined balance (average x "
+        "count plus eligible deposits minus withdrawals) divided by the valid account count; an "
+        "account-count change does not scale the combined balance. 404 for an unknown CSP."
     ),
 )
 def estimate_explanation(request: ApiRequest, csp_code: str):
@@ -432,7 +433,7 @@ def estimate_explanation(request: ApiRequest, csp_code: str):
     ),
 )
 def sbi_comparison(
-    request: ApiRequest, only_count_changed: bool = True, search: str = "",
+    request: ApiRequest, only_count_changed: bool = False, search: str = "",
     limit: int = 50, offset: int = 0,
 ):
     from bankflow import sbi_comparison as cmp_mod

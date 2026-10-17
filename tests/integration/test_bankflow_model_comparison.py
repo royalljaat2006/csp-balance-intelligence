@@ -1,14 +1,18 @@
-"""Four-way estimator comparison: carry-forward, growth-only, flow-only, growth-and-flow.
-Time-ordered validation, no leakage, no double counting, honest coverage rules."""
+"""Held-out evaluation of the movement estimator against carry-forward.
+
+The movement rule has no fitted parameters, so every refresh with enough complete statement
+coverage is a genuine held-out test. These tests use SYNTHETIC worlds (clearly artificial data) to
+prove the arithmetic, the leakage rules and the verdict logic; they say nothing about real SBI
+accuracy."""
 
 import datetime as dt
 import decimal
 import random
 
 import pytest
-from bankflow import estimates, flows, model_comparison
+from bankflow import flows, model_comparison
 from bankflow.account_hypothesis import load_series, pairs_from_series, run_hypothesis_test
-from bankflow.models import DailyEstimate, FlowAggregate
+from bankflow.models import FlowAggregate
 from csp.models import Csp, DailyBalance
 
 D = decimal.Decimal
@@ -24,18 +28,25 @@ def complete_days(monkeypatch):
     return days
 
 
-def _flow(csp, day, deposit):
-    """A day of customer-deposit flow: customer-basis signed flow = debit - credit = +deposit."""
+def _flow(csp, day, deposit=0, withdrawal=0):
+    """A day of statement movement. Pool debit = customer deposit, pool credit = withdrawal."""
+    cats = {}
+    if deposit:
+        cats["deposit"] = {"count": 1, "credit": "0", "debit": str(deposit)}
+    if withdrawal:
+        cats["withdrawal"] = {"count": 1, "credit": str(withdrawal), "debit": "0"}
     FlowAggregate.objects.create(
-        csp_id=csp, flow_date=day, resolution_mode="exact_only", txn_count=1,
-        credit_amount=0, debit_amount=deposit, recon_status="RECONCILED",
-        by_category={"deposit": {"count": 1, "credit": "0", "debit": str(deposit)}},
+        csp_id=csp, flow_date=day, resolution_mode="exact_only", txn_count=len(cats),
+        credit_amount=withdrawal, debit_amount=deposit, recon_status="RECONCILED",
+        by_category=cats,
     )
 
 
-def _world(*, events=12, csps=4, beta=2.0, growth=False, seed=3, n0=300, flow_driven=True):
-    """Refresh every 30 days. Either value moves by beta * (flow per account) over the interval
-    (flow_driven) and/or by the account-count ratio (growth)."""
+def _world(*, events=12, csps=4, growth=False, movement_driven=True, seed=3, n0=300,
+           statements=True):
+    """Synthetic: a refresh every 30 days. When `movement_driven`, each new Avg Balance is exactly
+    (previous average x previous count + deposits - withdrawals) / new count, the agreed rule.
+    When `growth`, the count rises at each refresh (which must only change the divisor)."""
     rng = random.Random(seed)
     codes = [f"P{i}" for i in range(csps)]
     for c in codes:
@@ -46,141 +57,96 @@ def _world(*, events=12, csps=4, beta=2.0, growth=False, seed=3, n0=300, flow_dr
         day = START + dt.timedelta(days=30 * k)
         for c in codes:
             if k > 0:
-                total = D(0)
+                net = D(0)
                 for j in range(1, 31):
-                    amt = D(rng.randint(500, 4000))
-                    _flow(c, START + dt.timedelta(days=30 * (k - 1) + j), amt)
-                    total += amt
+                    dep, wd = D(rng.randint(500, 4000)), D(rng.randint(0, 3000))
+                    if statements:
+                        _flow(c, START + dt.timedelta(days=30 * (k - 1) + j), dep, wd)
+                        net += dep - wd
                 new_n = count[c] + (rng.randint(5, 25) if growth else 0)
-                new_v = value[c] * D(new_n) / D(count[c]) if growth else value[c]
-                if flow_driven:
-                    new_v += D(str(beta)) * total / D(new_n)
-                value[c], count[c] = new_v.quantize(D("0.01")), new_n
+                combined = value[c] * count[c] + (net if movement_driven else 0)
+                value[c], count[c] = (combined / new_n).quantize(D("0.01")), new_n
             DailyBalance.objects.create(csp_id=c, balance_date=day, daily_avg_balance=value[c],
                                         account_count=count[c], source="calling_sheet")
     return codes, START + dt.timedelta(days=30 * events)
 
 
-def test_flow_driven_values_validate_a_flow_model_on_held_out_events(complete_days):
-    _world(beta=2.0)
+def test_values_that_follow_the_movement_rule_validate_on_held_out_events(complete_days):
+    _world()
     _, status, _, run = run_hypothesis_test()
-    assert status == "VALIDATED", run.metrics["comparison"]["methods"]
-    assert run.selected_method in ("flow_only", "growth_and_flow")
-    assert abs(run.parameters["beta"] - 2.0) < 1e-6  # recovered from training data only
-    flow = run.metrics["comparison"]["methods"]["flow_only"]["metrics"]
-    assert flow["n_events"] >= 8 and flow["n_pairs"] >= 30 and flow["n_cycles"] >= 6
-    assert flow["candidates"]["flow_only"]["mae"] < flow["candidates"]["carry_forward"]["mae"]
+    assert status == "VALIDATED", run.detail
+    assert run.selected_method == "movement"
+    assert run.parameters == {}  # nothing is fitted
+    m = run.metrics["candidates"]
+    assert m["movement"]["p90_ape_pct"] < 0.1  # rounding to a paisa only
+    assert m["carry_forward"]["mape_pct"] > m["movement"]["mape_pct"]
 
 
-def test_growth_driven_values_do_not_double_count_through_the_flow_term(complete_days):
-    _world(beta=0.0, growth=True, flow_driven=False)
-    _, _, _, run = run_hypothesis_test()
-    both = run.metrics["comparison"]["methods"]["growth_and_flow"]
-    # the flow coefficient is fitted on what growth leaves unexplained (only cent rounding), so
-    # combined ~ growth: the growth effect is not added a second time through the flow term
-    assert abs(both["parameters"]["beta"]) < 1e-3
-    c = both["metrics"]["candidates"]
-    assert c["growth_and_flow"]["mae"] == pytest.approx(0.0, abs=0.05)  # cent rounding only
-    assert run.metrics["comparison"]["methods"]["flow_only"]["metrics"]["candidates"][
-        "flow_only"]["mae"] > 1.0  # flows alone cannot explain a pure account-count effect
+def test_a_count_rise_changes_only_the_divisor_never_the_combined_balance(complete_days):
+    """Money is conserved when accounts are added: the average FALLS. The movement rule predicts
+    that; the old proportional rule (average rises with the count) does not, and it is not
+    selectable."""
+    _world(growth=True, movement_driven=False, statements=False)
+    _, status, _, run = run_hypothesis_test()
+    assert status == "VALIDATED" and run.selected_method == "movement"
+    diag = run.metrics["account_count_rule_diagnostic"]
+    assert diag["status"] != "VALIDATED"  # the retired rule fails on the same data
+    pairs = pairs_from_series(load_series())
+    ev = [e for e in model_comparison.evaluate(pairs) if e.usable][0]
+    p = ev.pair
+    assert ev.predicted == p.prev_value * p.prev_count / p.new_count < p.prev_value
 
 
-def test_no_signal_is_not_validated(complete_days):
-    _world(beta=0.0, flow_driven=False, growth=False)
+def test_no_movement_signal_is_not_validated(complete_days):
+    _world(movement_driven=False)  # values never respond to the statements
     _, status, _, run = run_hypothesis_test()
     assert status != "VALIDATED" and run.selected_method == "carry_forward"
 
 
-def test_training_never_uses_pairs_from_after_the_prediction_origin(complete_days, monkeypatch):
-    _world(beta=2.0)
-    pairs = pairs_from_series(load_series())
-    seen = []
-    real = model_comparison._fit_params
-
-    def spy(train):
-        seen.append(max(r.pair.event_date for r in train))
-        return real(train)
-
-    monkeypatch.setattr(model_comparison, "_fit_params", spy)
-    model_comparison.compare(pairs)
-    events = sorted({p.event_date for p in pairs})
-    origins = [min(p.prev_date for p in pairs if p.event_date == e) for e in events[3:]]
-    held_fits = seen[:-1]  # the last call is the production fit on everything
-    assert len(held_fits) == len(origins)
-    assert all(trained <= origin for trained, origin in zip(held_fits, origins, strict=True))
+def test_the_prediction_never_uses_the_reported_value(complete_days):
+    _world(events=4, csps=2)
+    before = {(e.pair.csp, e.pair.event_date): e.predicted
+              for e in model_comparison.evaluate(pairs_from_series(load_series()))}
+    DailyBalance.objects.filter(balance_date__gt=START).update(daily_avg_balance=D("1"))
+    after = {(e.pair.csp, e.pair.event_date): e.predicted
+             for e in model_comparison.evaluate(pairs_from_series(load_series()))}
+    # every prediction after the first refresh depends on the PREVIOUS reading only; changing all
+    # later readings to 1 leaves the first interval's prediction untouched
+    first = min(k[1] for k in before)
+    assert [v for k, v in before.items() if k[1] == first] == [
+        v for k, v in after.items() if k[1] == first]
 
 
-def test_future_outlier_does_not_change_earlier_validation(complete_days):
-    _world(beta=2.0, events=12)
-    pairs = pairs_from_series(load_series())
-    early = [p for p in pairs if p.event_date <= START + dt.timedelta(days=30 * 9)]
-    a = model_comparison.compare(early)["methods"]["flow_only"]["metrics"]
-    # corrupt only the newest value; the metrics on the early events must be unaffected
-    DailyBalance.objects.filter(balance_date=START + dt.timedelta(days=360)).update(
+def test_a_later_outlier_does_not_change_an_earlier_verdict(complete_days):
+    codes, last = _world(events=12)
+    cutoff = START + dt.timedelta(days=30 * 9)
+    _, early, _, _ = run_hypothesis_test(persist=False, until=cutoff)
+    DailyBalance.objects.filter(csp_id=codes[0], balance_date=last).update(
         daily_avg_balance=D("999999"))
-    pairs2 = pairs_from_series(load_series())
-    early2 = [p for p in pairs2 if p.event_date <= START + dt.timedelta(days=30 * 9)]
-    b = model_comparison.compare(early2)["methods"]["flow_only"]["metrics"]
-    assert a["candidates"] == b["candidates"]
+    _, again, _, _ = run_hypothesis_test(persist=False, until=cutoff)
+    assert early == again
 
 
-def test_insufficient_transaction_coverage_excludes_pairs_and_blocks_validation(monkeypatch):
-    _world(beta=2.0)
-    only = {START + dt.timedelta(days=i) for i in range(0, 360, 4)}  # a quarter of the days
-    monkeypatch.setattr(flows, "proven_complete_dates", lambda: only)
+def test_insufficient_statement_coverage_excludes_pairs_and_blocks_validation(monkeypatch):
+    _world(events=12)
+    monkeypatch.setattr(flows, "proven_complete_dates", lambda: set())
+    metrics, status, _, _ = run_hypothesis_test(persist=False)
+    assert status == "INSUFFICIENT_EVIDENCE"
+    assert metrics["comparison"]["basis"]["pairs_with_flow_coverage"] == 0
+    assert metrics["comparison"]["basis"]["pairs_dropped_low_coverage"] > 0
+
+
+def test_a_gap_is_not_scored_as_zero_movement(monkeypatch):
+    """Half the days missing -> below the 80% bar -> the pair is left out, not predicted flat."""
+    _world(events=2, csps=1)
+    half = {START + dt.timedelta(days=i) for i in range(0, 200, 2)}
+    monkeypatch.setattr(flows, "proven_complete_dates", lambda: half)
+    ev = model_comparison.evaluate(pairs_from_series(load_series()))
+    assert ev and not any(e.usable for e in ev)
+    assert all(e.coverage < model_comparison.MIN_COVERAGE for e in ev)
+
+
+def test_the_gate_is_never_met_by_one_event(complete_days):
+    _world(events=1, csps=3)
     _, status, _, run = run_hypothesis_test()
-    basis = run.metrics["comparison"]["basis"]
-    assert basis["pairs_with_flow_coverage"] == 0 and basis["pairs_dropped_low_coverage"] > 0
-    assert run.metrics["comparison"]["methods"]["flow_only"]["status"] == "INSUFFICIENT_EVIDENCE"
-    assert status != "VALIDATED" and run.selected_method == "carry_forward"
-
-
-def test_estimate_uses_selected_flow_model_and_reports_measured_error(complete_days):
-    codes, last = _world(beta=2.0)
-    _, status, _, run = run_hypothesis_test()
-    assert status == "VALIDATED"
-    extra = [D(1000), D(2000), D(3000)]
-    for i, amt in enumerate(extra, start=1):
-        _flow("P0", last + dt.timedelta(days=i), amt)
-    est_day = last + dt.timedelta(days=3)
-    DailyBalance.objects.create(csp_id="P0", balance_date=est_day,
-                                daily_avg_balance=DailyBalance.objects.get(
-                                    csp_id="P0", balance_date=last).daily_avg_balance,
-                                account_count=300, source="calling_sheet")
-    estimates.compute_daily_estimates(est_day)
-    e = DailyEstimate.objects.get(csp_id="P0", estimate_date=est_day)
-    assert e.status == "VALIDATED" and e.method == run.selected_method
-    assert e.expected_error_pct is not None and "held-out" in e.error_basis
-    expected = e.baseline_value + D(str(run.parameters["beta"])) * sum(extra) / D(300)
-    assert abs(e.estimated_value - expected) < D("0.02")
-    assert e.flow_net == sum(extra)  # each flow counted once, however the count moved
-
-
-def test_flow_model_without_flow_coverage_falls_back_with_a_reason(complete_days, monkeypatch):
-    codes, last = _world(beta=2.0)
-    run_hypothesis_test()
-    est_day = last + dt.timedelta(days=3)
-    DailyBalance.objects.create(csp_id="P1", balance_date=est_day, daily_avg_balance=D("1234"),
-                                account_count=300, source="calling_sheet")
-    monkeypatch.setattr(flows, "proven_complete_dates", lambda: set())  # no proven days
-    estimates.compute_daily_estimates(est_day)
-    e = DailyEstimate.objects.get(csp_id="P1", estimate_date=est_day)
-    assert e.reason_code == "INSUFFICIENT_FLOW_COVERAGE" and e.method == "carry_forward"
-    assert e.status == "INSUFFICIENT_EVIDENCE" and e.estimated_value == e.baseline_value
-
-
-def test_pmjdy_vs_calling_sheet_count_mismatch_is_not_treated_as_growth():
-    from bankflow import pmjdy
-
-    Csp.objects.create(csp_code="M", name="M", account_count=300)
-    DailyBalance.objects.create(csp_id="M", balance_date=d(2026, 9, 1),
-                                daily_avg_balance=D("1000"), account_count=300,
-                                source="calling_sheet")
-    DailyBalance.objects.create(csp_id="M", balance_date=d(2026, 10, 13),
-                                daily_avg_balance=D("1000"), account_count=300,
-                                source="calling_sheet")
-    pmjdy.capture_counts({"M": 360})  # PMJDY says 360 now, but has no reading at the baseline date
-    estimates.compute_daily_estimates(d(2026, 10, 13))
-    e = DailyEstimate.objects.get(csp_id="M", estimate_date=d(2026, 10, 13))
-    assert e.reason_code == "COUNT_SOURCE_MISMATCH" and e.estimated_value == e.baseline_value
-    assert Csp.objects.get(csp_code="M").account_count == 300  # master data untouched
+    assert status == "INSUFFICIENT_EVIDENCE" and run.selected_method == "carry_forward"
