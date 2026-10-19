@@ -21,7 +21,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 from decimal import Decimal
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from common.cache import cache_aside
 from csp.models import Csp, DailyBalance
@@ -637,6 +637,28 @@ def _direction(delta) -> str:
     return "flat" if delta == 0 else ("up" if delta > 0 else "down")
 
 
+def _latest_refresh_date(ids) -> dt.date | None:
+    """The newest day on which SBI's average balance changed for any of these CSPs: the receipt
+    date of each CSP's latest value, as stored on its newest estimate row. None if unknown."""
+    latest = latest_estimate_date()
+    if latest is None or not ids:
+        return None
+    return DailyEstimate.objects.filter(
+        estimate_date=latest, csp_id__in=list(ids), baseline_date__isnull=False,
+    ).aggregate(d=Max("baseline_date"))["d"]
+
+
+def _last_updated() -> dict:
+    """When new information last arrived, from the same freshness facts the Data readiness page
+    uses. Each value is None when that source has never delivered anything."""
+    fr = source_freshness()
+    return {
+        "sheet_at": fr["calling_sheet"]["last_success"],
+        "statements_at": fr["transactions"]["last_processed"],
+        "statements_day": fr["transactions"]["last_flow_date"],
+    }
+
+
 def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
     """The present day against the day before it, for the whole network or for `csp_codes`.
 
@@ -670,12 +692,16 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
         n = o_n = 0
         total = _flow_groups(d, d, idset, by="all").get(None)
         seen = total is not None
+        other_cats: dict[str, int] = {}
         if total is not None:
             withdrawn, deposited, n = total.withdrawals, total.deposits, total.n
             o_credit, o_debit, o_n = total.other
+            other_cats = {cat: v["count"] for cat, v in cast(dict, total.cats).items()
+                          if cat not in COUNTED_CATEGORIES and v["count"]}
         state, note = _flow_state(d, coverage, "today" if d == today else "yesterday")
         fl[d] = {"seen": seen, "withdrawals": withdrawn if seen else None,
                  "deposits": deposited if seen else None, "n": n if seen else None,
+                 "other_cats": other_cats,
                  "other_credit": o_credit if seen else None,
                  "other_debit": o_debit if seen else None, "other_n": o_n if seen else None,
                  "state": state, "note": note}
@@ -730,9 +756,18 @@ def day_compare(today: dt.date | None = None, csp_codes=None) -> dict:
             note="" if est[today][0] is not None or est[yesterday][0] is not None
             else "No reliable estimate yet: the history is still too short."),
     ]
+    excluded: dict[str, dict] = {}
+    for label, d in (("today", today), ("yesterday", yesterday)):
+        for cat, k in cast(dict, fl[d]["other_cats"]).items():
+            excluded.setdefault(cat, {"category": cat, "today": 0, "yesterday": 0})[label] = k
     return {
         "today": today, "yesterday": yesterday, "scope": "network" if csp_codes is None else "csp",
+        "csp_code": (ids[0] if csp_codes is not None and len(ids) == 1 else None),
         "csps": len(ids), "rows": rows, "like_for_like_money": like_for_like,
+        "accounts_reporting": {"today": len(acc[today]), "yesterday": len(acc[yesterday])},
+        "excluded": sorted(excluded.values(), key=lambda e: -(e["today"] + e["yesterday"])),
+        "sbi_last_sent": _latest_refresh_date(ids),
+        "updated": _last_updated(),
         "money_state": {"today": fl[today]["state"], "yesterday": fl[yesterday]["state"],
                         "today_note": fl[today]["note"], "yesterday_note": fl[yesterday]["note"]},
         "other_types": {

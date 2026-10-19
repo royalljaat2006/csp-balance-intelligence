@@ -1,33 +1,99 @@
-{% load fmt %}
-<details class="card" id="dc-card" open data-collapse-on-phone aria-label="Today versus yesterday{% if dc.scope == 'csp' %} for this CSP{% endif %}">
+{% load fmt day_tags %}{% friendly_day dc as v %}
+<details class="card dcx" id="dc-card" open aria-label="Today versus yesterday{% if dc.scope == 'csp' %} for this CSP{% endif %}">
   <summary>
   <header>
     <div><h2><span class="chev" aria-hidden="true">&#9656;</span> Today vs yesterday{% if dc.scope == "csp" %} &middot; this CSP{% endif %}</h2>
-      <p>Today is {{ dc.today|date:"D j M" }} and yesterday {{ dc.yesterday|date:"D j M" }} (India time). A dash means no figure is stored for that day; it is never shown as zero.</p></div>
-    <a class="btn sm" href="{% url 'dashboard:data_readiness' %}">When was this updated?</a>
+      <p>What changed since yesterday? Today is {{ v.today|date:"l j F" }}. Yesterday was {{ v.yesterday|date:"l j F" }}.</p></div>
   </header>
   </summary>
   <div class="body">
-    <div class="grid g4">
-      {% for r in dc.rows %}
-      <div data-dc-key="{{ r.key }}">
-        <div class="small muted">{{ r.label }}</div>
-        <div style="font-size:20px;font-weight:650">{% if r.unit == "rupees" %}{{ r.today|inr }}{% else %}{{ r.today|intc }}{% endif %}</div>
-        <div class="small muted">Yesterday {% if r.unit == "rupees" %}{{ r.yesterday|inr }}{% else %}{{ r.yesterday|intc }}{% endif %}</div>
-        <div class="small">
-          {% if r.change is None %}<span class="muted">No comparison yet</span>{% else %}
-            <b>{% if r.direction == "up" %}&#9650;{% elif r.direction == "down" %}&#9660;{% else %}&ndash;{% endif %}
-            {% if r.unit == "rupees" %}{{ r.change|signed_inr }}{% else %}{{ r.change|signed }}{% endif %}{% if r.change_pct is not None %} ({{ r.change_pct|pct1 }}){% endif %}</b>
-            {% if not r.like_for_like %}<span class="badge info" title="Today is still in progress, so this is not a like-for-like comparison">so far</span>{% endif %}
-          {% endif %}
+
+    <section class="dcx-group" aria-labelledby="dcx-accounts">
+      <h3 id="dcx-accounts">Accounts</h3>
+      <div class="dcx-cards three">
+        {% for c in v.accounts %}
+        <div class="dcx-card" data-dc-key="{{ c.key }}">
+          <div class="dcx-q"><span class="dcx-ico">{% include "dashboard/_icon.html" with name=c.icon %}</span>{{ c.title }}</div>
+          {% if c.today is None %}<div class="dcx-big msg">{{ c.missing }}</div>{% else %}<div class="dcx-big">{{ c.today|intc }}</div>{% endif %}
+          <div class="dcx-prev">Yesterday: {% if c.yesterday is None %}no figure was saved{% else %}{{ c.yesterday|intc }}{% endif %}</div>
+          {% include "dashboard/components/day_status.html" with s=c.status %}
+          {% if c.note %}<p class="dcx-hint">{{ c.note }}</p>{% endif %}
         </div>
-        {% if r.note %}<div class="small muted">{{ r.note }}</div>{% endif %}
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
-    {% if dc.other_types.today.txn_count or dc.other_types.yesterday.txn_count %}
-    <p class="small muted" style="margin-top:12px">Not counted above: transfers, other-bank withdrawals, loan and SSA deposits and unrecognised labels
-      ({{ dc.other_types.today.txn_count|intc }} transactions today, {{ dc.other_types.yesterday.txn_count|intc }} yesterday).</p>
-    {% endif %}
+    </section>
+
+    <section class="dcx-group" aria-labelledby="dcx-money">
+      <h3 id="dcx-money">Money movement</h3>
+      <div class="dcx-cards two">
+        {% for c in v.money %}
+        <div class="dcx-card" data-dc-key="{{ c.key }}">
+          <div class="dcx-q"><span class="dcx-ico {{ c.icon }}">{% include "dashboard/_icon.html" with name=c.icon %}</span>{{ c.title }}</div>
+          <p class="dcx-ask">{{ c.ask }}</p>
+          {% if c.today is None %}<div class="dcx-big msg">{{ c.missing }}</div>
+          {% else %}<div class="dcx-big">{{ c.today|inr }}</div>{% if c.today_partial %}<div class="dcx-tag">So far today</div>{% endif %}{% endif %}
+          <div class="dcx-prev">Yesterday: {% if c.yesterday is None %}{{ c.yesterday_missing }}{% else %}{{ c.yesterday|inr }}{% if c.yesterday_partial %} (part of the day){% endif %}{% endif %}</div>
+          {% include "dashboard/components/day_status.html" with s=c.status %}
+        </div>
+        {% endfor %}
+      </div>
+      <p class="dcx-line">Transactions counted today: <b>{% if v.transactions.today is None %}{{ v.transactions.missing }}{% else %}{{ v.transactions.today|intc }}{% endif %}</b>{% if v.transactions.yesterday is not None %} &middot; yesterday: {{ v.transactions.yesterday|intc }}{% endif %}</p>
+      {% if v.notice %}<p class="dcx-notice" role="status">{% include "dashboard/_icon.html" with name="info" %}<span>{{ v.notice|join:" " }}</span></p>{% endif %}
+      {% if v.excluded %}
+      <p class="dcx-hint">Some types of money movement are not included in these totals.</p>
+      <details class="dcx-more"><summary>What is not included?</summary>
+        <ul>{% for e in v.excluded %}<li><b>{{ e.words }}</b><span class="muted"> &mdash; {{ e.today|intc }} today, {{ e.yesterday|intc }} yesterday</span></li>{% endfor %}</ul>
+      </details>
+      {% elif v.excluded_known %}<p class="dcx-hint">No money movements were left out of these totals.</p>{% endif %}
+    </section>
+
+    <section class="dcx-group" aria-labelledby="dcx-avg">
+      <h3 id="dcx-avg">Money per account</h3>
+      <div class="dcx-cards two">
+        <div class="dcx-card" data-dc-key="observed_avg">
+          <div class="dcx-q"><span class="dcx-ico">{% include "dashboard/_icon.html" with name="coins" %}</span>{{ v.sbi.title }}</div>
+          {% if v.sbi.today is None %}<div class="dcx-big msg">{{ v.sbi.missing }}</div>{% else %}<div class="dcx-big">{{ v.sbi.today|inr }}</div>{% endif %}
+          <div class="dcx-prev">Yesterday: {% if v.sbi.yesterday is None %}no figure was saved{% else %}{{ v.sbi.yesterday|inr }}{% endif %}</div>
+          {% if v.sbi.last_sent %}<div class="dcx-prev">Last updated: {{ v.sbi.last_sent|date:"j M Y" }}</div>{% endif %}
+          {% include "dashboard/components/day_status.html" with s=v.sbi.status %}
+          <p class="dcx-hint">{{ v.sbi.note }}</p>
+        </div>
+        <div class="dcx-card" data-dc-key="estimated_avg">
+          <div class="dcx-q"><span class="dcx-ico est">{% include "dashboard/_icon.html" with name="shadow" %}</span>{{ v.ours.title }}</div>
+          {% if v.ours.today is None %}<div class="dcx-big msg">We need more data first</div><p class="dcx-ask">{{ v.ours.missing }}</p>
+          {% else %}<div class="dcx-big">{{ v.ours.today|inr }}</div><div class="dcx-tag est">Our estimate, not an SBI number</div>
+          <div class="dcx-prev">Yesterday: {% if v.ours.yesterday is None %}no estimate was saved{% else %}{{ v.ours.yesterday|inr }}{% endif %}</div>
+          {% include "dashboard/components/day_status.html" with s=v.ours.status %}{% endif %}
+          <p class="dcx-hint">{{ v.ours.note }}</p>
+          <a class="dcx-link" href="{{ v.ours.link }}">{{ v.ours.link_words }}</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="dcx-group" aria-labelledby="dcx-changed">
+      <h3 id="dcx-changed">What changed?</h3>
+      <div class="dcx-changes">
+        {% for kind, label, icon, items in v.changes %}
+        <div class="dcx-col {{ kind }}">
+          <div class="dcx-colhead">{% include "dashboard/_icon.html" with name=icon %}{{ label }}</div>
+          {% if items %}<ul>{% for i in items %}<li><b>{{ i.title }}</b><span>{{ i.words }}</span></li>{% endfor %}</ul>
+          {% else %}<p class="muted">Nothing here.</p>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="dcx-group" aria-labelledby="dcx-fresh">
+      <h3 id="dcx-fresh">When did we last get new information?</h3>
+      <ul class="dcx-updates">
+        <li>SBI numbers: {% if v.updated.sheet_at %}<b>{{ v.updated.sheet_at|date:"j M Y, g:i A" }}</b>{% if v.updated.sheet_old %} <span class="dcx-old">This is more than a day ago: the source has not refreshed.</span>{% endif %}{% else %}<b>nothing has arrived yet</b>{% endif %}</li>
+        <li>Bank reports: {% if v.updated.statements_at %}<b>{{ v.updated.statements_at|date:"j M Y, g:i A" }}</b>{% if v.updated.statements_day %} (covering up to {{ v.updated.statements_day|date:"j M" }}){% endif %}{% else %}<b>no bank report has arrived yet</b>{% endif %}</li>
+      </ul>
+      <a class="btn sm" href="{% url 'dashboard:data_readiness' %}">See every update</a>
+    </section>
+
+    <details class="dcx-more why"><summary>Why are some numbers missing?</summary>
+      <ul>{% for w in v.why %}<li>{{ w }}</li>{% endfor %}</ul>
+    </details>
   </div>
 </details>

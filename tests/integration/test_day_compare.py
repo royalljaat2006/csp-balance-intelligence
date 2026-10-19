@@ -233,8 +233,8 @@ def test_the_strip_is_on_every_data_page(staff, url):
     # ... and the shell endpoint (what the page fetches next) returns the strip
     strip = staff.get("/dashboard/shell/").json()["strip_html"]
     assert "Today vs yesterday" in strip and 'data-dc-key="accounts"' in strip, url
-    assert f"{TODAY:%a} {TODAY.day} {TODAY:%b}" in strip
-    assert f"{YESTERDAY:%a} {YESTERDAY.day} {YESTERDAY:%b}" in strip
+    assert f"{TODAY:%A} {TODAY.day} {TODAY:%B}" in strip
+    assert f"{YESTERDAY:%A} {YESTERDAY.day} {YESTERDAY:%B}" in strip
     # every later visit finds it cached and has the strip inline: no placeholder, no fetch
     warm = staff.get(url).content.decode()
     assert 'data-dc-key="accounts"' in warm and 'id="dc-slot"' not in warm, url
@@ -304,3 +304,68 @@ def test_api_day_compare_scope_and_csp_filter(client, api_key):
     assert {r["key"]: r for r in net["rows"]}["accounts"]["today"] == 360
     one = client.get(url + "?csp=A", HTTP_X_API_KEY=report).json()["data"]
     assert one["scope"] == "csp" and {r["key"]: r for r in one["rows"]}["accounts"]["today"] == 310
+
+
+# ---------------------------------------------------------------- the plain-language section
+def test_excluded_types_come_from_the_statement_data_and_the_strip_lists_them(staff):
+    csp("A")
+    bal("A", EARLIER, 1000, 300)
+    bal("A", TODAY, 1000, 300)
+    flow("A", YESTERDAY, withdrawal=500, deposit=900, transfer=300)
+    r = intelligence.day_compare()
+    assert r["excluded"] == [{"category": "transfer", "today": 0, "yesterday": 4}]
+    strip = staff.get("/dashboard/shell/").json()["strip_html"]
+    assert "What is not included?" in strip and "Money sent from one account to another" in strip
+    assert "Money taken out today" in strip
+    assert "report has not arrived" in strip.replace("&#x27;", "'")
+
+
+def test_a_missing_day_is_never_drawn_as_zero_on_the_real_strip(staff):
+    csp("A")
+    bal("A", EARLIER, 1000, 300)
+    strip = staff.get("/dashboard/shell/").json()["strip_html"]
+    flat = "".join(strip.split())
+    assert "₹0<" not in flat and ">0<" not in flat
+    assert "No figure was saved for today" in strip or "Not enough information yet" in strip
+
+
+def test_the_new_payload_keys_are_additive_and_the_api_still_serialises(client, api_key):
+    csp("A")
+    bal("A", EARLIER, 1000, 300)
+    bal("A", TODAY, 1000, 300)
+    DailyEstimate.objects.create(
+        csp_id="A", estimate_date=TODAY, method="movement", status="INSUFFICIENT_EVIDENCE",
+        reason_code="X", baseline_value=D(1000), baseline_date=EARLIER, estimated_value=D(1000),
+        calculated_at=timezone.now())
+    data = client.get("/api/v1/bank-flow/day-compare",
+                      HTTP_X_API_KEY=api_key("report:read")).json()["data"]
+    assert {"rows", "today", "yesterday", "scope", "like_for_like_money", "money_state",
+            "other_types", "notes"} <= set(data)  # everything the API had before is still there
+    assert {"excluded", "sbi_last_sent", "updated", "accounts_reporting"} <= set(data)
+    assert data["sbi_last_sent"] == EARLIER.isoformat()
+
+
+def test_the_csp_strip_links_to_that_csps_explanation_page(staff):
+    from django.template.loader import render_to_string
+
+    csp("A")
+    bal("A", EARLIER, 1000, 300)
+    bal("A", TODAY, 1000, 300)
+    dc = intelligence.day_compare(csp_codes=["A"])
+    assert dc["csp_code"] == "A"
+    html = render_to_string("dashboard/components/day_compare.html", {"dc": dc})
+    assert 'href="/dashboard/csp/A/explain/"' in html and "How did we calculate this?" in html
+    assert staff.get("/dashboard/csp/A/explain/").status_code == 200
+
+
+def test_the_section_reads_the_same_numbers_as_the_backend(staff):
+    csp("A", n=310)
+    bal("A", YESTERDAY, 1000, 305)
+    bal("A", TODAY, 1000, 310)
+    dc = intelligence.day_compare()
+    acc = rows(dc)["accounts"]
+    strip = staff.get("/dashboard/shell/").json()["strip_html"]
+    flat = "".join(strip.split())
+    assert f">{acc['today']:,}<" in flat or f">{acc['today']}<" in flat
+    assert f"Yesterday: {acc['yesterday']}" in " ".join(strip.split())
+    assert f"{acc['change']} more than yesterday" in strip
