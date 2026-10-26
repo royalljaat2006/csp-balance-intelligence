@@ -1,0 +1,23 @@
+{
+  "description": "Golden cases for draft_csp_nudges: what the service must keep or drop from a model reply. Each case is a reply the model could plausibly send, the CSP codes that were offered as candidates, and the draft texts that must survive. Add a case whenever a new failure is seen in production; every case runs before a release.",
+  "version": 1,
+  "candidates": ["1A850001", "1A850002"],
+  "cases": [
+    {"name": "valid_single", "reply": {"drafts": [{"csp_code": "1A850001", "text": "You are Rs 500 away from S2."}]}, "kept": ["You are Rs 500 away from S2."]},
+    {"name": "valid_two", "reply": {"drafts": [{"csp_code": "1A850001", "text": "A"}, {"csp_code": "1A850002", "text": "B"}]}, "kept": ["A", "B"]},
+    {"name": "hallucinated_code_dropped", "reply": {"drafts": [{"csp_code": "1A859999", "text": "Invented"}]}, "kept": []},
+    {"name": "one_valid_one_invented", "reply": {"drafts": [{"csp_code": "1A850002", "text": "Real"}, {"csp_code": "1A850003", "text": "Fake"}]}, "kept": ["Real"]},
+    {"name": "empty_text_dropped", "reply": {"drafts": [{"csp_code": "1A850001", "text": "   "}]}, "kept": []},
+    {"name": "missing_text_dropped", "reply": {"drafts": [{"csp_code": "1A850001"}]}, "kept": []},
+    {"name": "missing_code_dropped", "reply": {"drafts": [{"text": "No code"}]}, "kept": []},
+    {"name": "drafts_not_a_list", "reply": {"drafts": "oops"}, "kept": []},
+    {"name": "drafts_key_missing", "reply": {"messages": []}, "kept": []},
+    {"name": "empty_list", "reply": {"drafts": []}, "kept": []},
+    {"name": "entry_not_an_object", "reply": {"drafts": ["1A850001", 7, null]}, "kept": []},
+    {"name": "text_trimmed", "reply": {"drafts": [{"csp_code": "1A850001", "text": "  Padded  "}]}, "kept": ["Padded"]},
+    {"name": "code_wrong_type_dropped", "reply": {"drafts": [{"csp_code": 12345, "text": "Number code"}]}, "kept": []},
+    {"name": "duplicate_code_both_kept", "reply": {"drafts": [{"csp_code": "1A850001", "text": "First"}, {"csp_code": "1A850001", "text": "Second"}]}, "kept": ["First", "Second"]},
+    {"name": "extra_fields_ignored", "reply": {"drafts": [{"csp_code": "1A850002", "text": "Fine", "confidence": 0.9}], "note": "x"}, "kept": ["Fine"]},
+    {"name": "lowercase_code_dropped", "reply": {"drafts": [{"csp_code": "1a850001", "text": "Case"}]}, "kept": []}
+  ]
+}

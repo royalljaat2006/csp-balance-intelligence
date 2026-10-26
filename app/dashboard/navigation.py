@@ -25,7 +25,7 @@ SECTION_OF: dict[str, str] = {
     "bank_flow": "sbi",
     "month_end": "outlook",
     "more": "ops", "messaging": "ops", "ai_operations": "ops", "ai_recommendations": "ops",
-    "agent_monitoring": "ops", "system_health": "ops", "pipeline": "ops",
+    "agent_monitoring": "ops", "agent_quality": "ops", "system_health": "ops", "pipeline": "ops",
     "pipeline_events": "ops", "pipeline_history": "ops", "pipeline_node_detail": "ops",
     "api_docs": "ops", "audit": "ops", "admin_embed": "ops",
 }
@@ -93,6 +93,7 @@ MORE_GROUPS: list[tuple[str, list[tuple[str, str, bool, str]]]] = [
         ("AI recommendations", "ai_recommendations", True, "Suggested next steps."),
         ("Draft messages", "messaging", True, "Drafts for CSPs. Nothing is ever sent from here."),
         ("Assistant monitoring", "agent_monitoring", True, "How the assistants are doing."),
+        ("Assistant quality", "agent_quality", True, "How often people keep what it writes."),
     ]),
     ("Reference", [
         ("Incentive slabs", "balance_intelligence", False, "Rule #19 positions (production)."),

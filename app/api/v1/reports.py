@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from autopilot import quality
 from csp import services
 from ninja import Router
 
@@ -40,3 +41,20 @@ def overview(request: ApiRequest, month: str | None = None):
         ),
         request_id=request.request_id,
     )
+
+
+@router.get(
+    "/agent-quality",
+    response=DataEnvelope[dict],
+    auth=RequireScope(_scope),
+    summary="How well the AI assistant is doing, from what people did with its output",
+    description=(
+        "Aggregate counts and rates only (no message text): the share of drafted messages "
+        "approved as written, how much people change the ones they keep (Levenshtein, as a "
+        "share of length), model-call and investigation completion, and tokens per answered "
+        "call by week. `days` is 1 to 365. A measure with no rows behind it is null with "
+        "status `no_data`, never 0."
+    ),
+)
+def agent_quality(request: ApiRequest, days: int = 30):
+    return DataEnvelope(data=quality.agent_quality(days), request_id=request.request_id)

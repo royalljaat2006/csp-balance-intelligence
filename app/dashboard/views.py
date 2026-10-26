@@ -16,6 +16,8 @@ import datetime as dt
 import decimal
 
 from autopilot import monitoring as agent_monitoring_service
+from autopilot import quality as agent_quality_service
+from autopilot.feedback import MAX_TEXT_CHARS
 from autopilot.models import (
     AgentAction,
     AgentFinding,
@@ -26,7 +28,11 @@ from autopilot.models import (
     Insight,
     PriorityCall,
 )
-from autopilot.services import approve_draft_message, reject_draft_message
+from autopilot.services import (
+    approve_draft_message,
+    edit_and_approve_draft,
+    reject_draft_message,
+)
 from autopilot.tasks import enqueue_agent_run
 from bankflow import explain, outlook, sbi_comparison
 from bankflow import intelligence as bankflow_intelligence
@@ -47,6 +53,7 @@ from .charts import points as chart_points
 from .charts import querystring
 from .charts import spec as chart_spec
 from .pipeline_sse import stream_pipeline_events
+from .templatetags.fmt import inr
 
 
 def _decimal_to_float(value):
@@ -265,14 +272,16 @@ def messaging(request):
         action = request.POST.get("action")
         if action == "approve":
             approve_draft_message(message, request.user)
+        elif action == "edit_approve":
+            edit_and_approve_draft(message, request.user, request.POST.get("text", ""))
         elif action == "reject":
             reject_draft_message(message, request.user)
         return redirect(request.get_full_path())
 
     status_filter = request.GET.get("status", "")
-    messages_qs = DraftMessage.objects.select_related("csp", "reviewed_by").order_by(
-        "-generated_at"
-    )
+    messages_qs = DraftMessage.objects.select_related(
+        "csp", "reviewed_by", "interaction"
+    ).order_by("-generated_at")
     if status_filter:
         messages_qs = messages_qs.filter(status=status_filter)
 
@@ -281,16 +290,54 @@ def messaging(request):
         for value, label in DraftMessage.Status.choices
     ]
 
+    shown = list(messages_qs[:200])
+    for message in shown:
+        message.why = _draft_why(message)
     return render(
         request,
         "dashboard/messaging.html",
         {
-            "messages": messages_qs[:200],
+            "messages": shown,
+            "max_text_chars": MAX_TEXT_CHARS,
             "status_filter": status_filter,
             "status_rows": status_rows,
             "total_count": DraftMessage.objects.count(),
         },
     )
+
+
+# What the assistant was shown for one CSP, in plain words. Only keys it was really given appear.
+_WHY_LABELS = (
+    ("slab", "Current slab", str),
+    ("gap", "Gap to the next slab", inr),
+    ("reason", "Why this CSP was picked", str),
+    ("trend_flag", "Trend", str),
+    ("mom_change_pct", "Change on last month (%)", str),
+    ("account_count", "Accounts", str),
+    ("net_new_accounts", "Net new accounts", str),
+)
+
+
+def _draft_why(message) -> list[tuple[str, str]]:
+    """The figures the assistant was given for this draft, from the snapshot stored with it
+    (not re-read from live data, which may have changed since)."""
+    ctx = message.context or {}
+    return [(label, str(fmt(ctx[key]))) for key, label, fmt in _WHY_LABELS
+            if ctx.get(key) not in (None, "")]
+
+
+@login_required
+def agent_quality(request):
+    """How the assistant is doing, measured from what people did with its output. Staff-only,
+    like Messaging. Reads autopilot.quality, the same function the API serves."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Assistant quality is restricted to staff accounts.")
+    try:
+        days = int(request.GET.get("days", 30))
+    except ValueError:
+        days = 30
+    return render(request, "dashboard/agent_quality.html",
+                  {"q": agent_quality_service.agent_quality(days), "windows": (7, 30, 90)})
 
 
 @login_required

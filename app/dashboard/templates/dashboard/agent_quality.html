@@ -1,0 +1,40 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Assistant quality · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / <a href="{% url 'dashboard:ai_operations' %}">AI operations</a> / Assistant quality</div>
+  <h1>How well is the assistant doing?</h1>
+  <p class="lede">Measured from what people actually did with its output over the last {{ q.days }} days. A figure with nothing behind it says "no data yet", never 0.</p></div>
+  <div class="row">{% for w in windows %}<a class="btn sm{% if w == q.days %} primary{% endif %}" href="?days={{ w }}">{{ w }} days</a>{% endfor %}</div></div>
+{% endblock %}
+{% block content %}
+{% with a=q.implicit_acceptance c=q.correction_delta r=q.call_reliability i=q.investigation_completion e=q.context_efficiency %}
+<section class="grid g4" aria-label="Headline measures">
+  <div class="card stat"><div class="label"><span>Kept as written</span>{% include "dashboard/components/quality_badge.html" with status=a.status %}</div>
+    <div class="value">{{ a.implicit_acceptance_rate|pct0 }}</div>
+    <div class="hint">Target {{ a.target|pct0 }} or more. {{ a.kept_as_written }} of {{ a.decided }} decided drafts were approved without any change.</div></div>
+  <div class="card stat"><div class="label"><span>How much people change</span></div>
+    <div class="value">{{ c.value|pct0 }}</div>
+    <div class="hint">{{ c.note }}{% if a.mean_characters_changed is not None %} On average {{ a.mean_characters_changed|floatformat:1 }} characters per kept message.{% endif %}</div></div>
+  <div class="card stat"><div class="label"><span>Model calls that worked</span>{% include "dashboard/components/quality_badge.html" with status=r.status %}</div>
+    <div class="value">{{ r.rate|pct0 }}</div>
+    <div class="hint">Target {{ r.target|pct0 }} or more. {{ r.answered }} of {{ r.calls }} calls returned a usable answer; {{ r.unavailable }} unavailable, {{ r.bad_json }} unreadable.</div></div>
+  <div class="card stat"><div class="label"><span>Investigations finished</span>{% include "dashboard/components/quality_badge.html" with status=i.status %}</div>
+    <div class="value">{{ i.rate|pct0 }}</div>
+    <div class="hint">Target {{ i.target|pct0 }} or more. {{ i.completed }} of {{ i.finished }} reached a result; {{ i.needs_data }} needed more data, {{ i.failed }} failed.</div></div>
+</section>
+
+<section class="card"><header><div><h2>What people did with drafted messages</h2><p>Only drafts decided in this period, and only drafts written since this record began.</p></div></header>
+  <div class="body"><dl class="kv"><dt>Approved as written</dt><dd>{{ a.kept_as_written }}</dd><dt>Edited, then approved</dt><dd>{{ a.edited_then_kept }}</dd><dt>Rejected</dt><dd>{{ a.rejected }}</dd></dl>
+  <p class="small muted">Edit and approve a message on the <a href="{% url 'dashboard:messaging' %}">Draft messages</a> page. Rejecting counts against the assistant; editing is the more useful signal.</p></div></section>
+
+<section class="card"><header><div><h2>Tokens spent per answered call</h2><p>Fewer is better. A falling line means the assistant is being given less noise.</p></div></header>
+  <div class="body">{% if e.calls %}
+    <p>Average <b>{{ e.mean_tokens_per_call|floatformat:0 }}</b> tokens per call over {{ e.calls }} calls{% if e.trend %}; across the weeks shown the trend is <b>{{ e.trend }}</b>{% endif %}.</p>
+    <div class="table-wrap"><table class="t"><thead><tr><th>Week</th><th>Calls</th><th>Average tokens</th></tr></thead><tbody>{% for w in e.by_week %}<tr><td>{{ w.week }}</td><td>{{ w.calls }}</td><td>{{ w.mean_tokens|floatformat:0 }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}{% include "dashboard/components/empty.html" with title="No token counts yet" text="Counts appear once the assistant has made calls that report usage." %}{% endif %}</div></section>
+
+<section class="card"><header><div><h2>Not measured, and why</h2></div></header>
+  <div class="body"><ul>{% for n in q.not_measured %}<li><b>{{ n.name }}.</b> {{ n.why }}</li>{% endfor %}</ul></div></section>
+{% endwith %}
+{% endblock %}

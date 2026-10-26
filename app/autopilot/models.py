@@ -105,6 +105,41 @@ class ReviewedIngestRun(models.Model):
         return f"reviewed: ingest_log #{self.ingest_log_id}"
 
 
+class AgentInteraction(models.Model):
+    """One call to the language model, recorded exactly as it happened: the
+    prompt, the context JSON that was injected, the raw reply, the token usage
+    and whether it produced a usable answer. Rows are written once by
+    `nemotron_client.chat_json` and never edited afterwards, so a past answer
+    can always be explained from what the model was actually shown, not from
+    live data that has since changed. What a person later did with the output
+    (edit, approve, reject) lives on the produced record, e.g. DraftMessage."""
+
+    class Outcome(models.TextChoices):
+        OK = "ok", "Answered"
+        UNAVAILABLE = "unavailable", "Unavailable"
+        BAD_JSON = "bad_json", "Not valid JSON"
+
+    purpose = models.CharField(max_length=60, blank=True, default="")
+    model = models.CharField(max_length=100, blank=True, default="")
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    system_prompt = models.TextField(blank=True, default="")
+    # The user message: the real, already-computed figures the model was given.
+    context = models.TextField(blank=True, default="")
+    raw_output = models.TextField(blank=True, default="")
+    error = models.CharField(max_length=300, blank=True, default="")
+    prompt_tokens = models.PositiveIntegerField(null=True, blank=True)
+    completion_tokens = models.PositiveIntegerField(null=True, blank=True)
+    finish_reason = models.CharField(max_length=30, blank=True, default="")
+    latency_ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.purpose or 'call'} #{self.pk} ({self.outcome})"
+
+
 class DraftMessage(models.Model):
     """A Nemotron-drafted nudge for one CSP (e.g. "you're only ₹125 away
     from S2") — DRAFT ONLY. This codebase has no messaging-provider
@@ -134,6 +169,19 @@ class DraftMessage(models.Model):
     reviewed_by = models.ForeignKey(
         "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
+    # Feedback trail. `original_text` is what the model wrote and never changes;
+    # `text` is what a person finally approved. `context` is the exact figures the
+    # model was given for THIS CSP. Rows from before this trail existed have a
+    # blank original_text and are left out of the edit metrics.
+    interaction = models.ForeignKey(
+        "AgentInteraction", on_delete=models.SET_NULL, null=True, blank=True, related_name="drafts"
+    )
+    # db_default as well as default: the previous release keeps inserting drafts without these
+    # columns between `migrate` and the restart, and must not hit a NOT NULL error.
+    original_text = models.TextField(blank=True, default="", db_default="")
+    context = models.JSONField(default=dict, blank=True, db_default={})
+    edit_distance = models.PositiveIntegerField(null=True, blank=True)
+    edited_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-generated_at"]

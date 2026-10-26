@@ -8,6 +8,8 @@ never crash the caller" behaviour.
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import json
 import re
 import time
@@ -32,6 +34,52 @@ class NemotronUnavailable(Exception):
 
 _REQUEST_TIMEOUT_SECONDS = 30.0
 
+# Bounds on what one telemetry row keeps, so a runaway prompt or reply cannot bloat the table.
+_MAX_CONTEXT_CHARS = 200_000
+_MAX_OUTPUT_CHARS = 50_000
+
+# The id of the AgentInteraction written by this thread's most recent chat_json call, so the
+# caller can link what it produces (e.g. a DraftMessage) back to what the model was shown.
+_last_interaction_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "autopilot_last_interaction_id", default=None
+)
+
+
+def last_interaction_id() -> int | None:
+    """The AgentInteraction recorded by the latest chat_json call in this context, if any."""
+    return _last_interaction_id.get()
+
+
+def forget_last_interaction() -> None:
+    """Call just before chat_json when the result will be linked to its interaction, so an id
+    left by an earlier call can never be attached to something this call did not produce."""
+    _last_interaction_id.set(None)
+
+
+def _record_interaction(
+    *, purpose: str, system_prompt: str, user_prompt: str, outcome: str, started: float,
+    raw_output: str = "", error: str = "", response=None,
+) -> None:
+    """Write one immutable AgentInteraction row. Telemetry must never break the call it
+    describes, so any failure here is logged and swallowed."""
+    try:
+        from .models import AgentInteraction
+
+        usage = getattr(response, "usage", None)
+        choice = response.choices[0] if response is not None and response.choices else None
+        row = AgentInteraction.objects.create(
+            purpose=purpose[:60], model=str(settings.NEMOTRON_MODEL)[:100], outcome=outcome,
+            system_prompt=system_prompt, context=user_prompt[:_MAX_CONTEXT_CHARS],
+            raw_output=raw_output[:_MAX_OUTPUT_CHARS], error=error[:300],
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            finish_reason=str(getattr(choice, "finish_reason", "") or "")[:30],
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+        _last_interaction_id.set(row.pk)
+    except Exception as exc:  # noqa: BLE001 — telemetry is best effort
+        logger.warning("interaction_not_recorded", error_type=type(exc).__name__, error=str(exc))
+
 
 def _client() -> OpenAI:
     if not settings.NEMOTRON_API_KEY:
@@ -47,7 +95,9 @@ def _client() -> OpenAI:
     )
 
 
-def chat_json(system_prompt: str, user_prompt: str, *, max_tokens: int = 3072) -> dict:
+def chat_json(
+    system_prompt: str, user_prompt: str, *, max_tokens: int = 3072, purpose: str = ""
+) -> dict:
     """
     Sends a chat completion and parses the response as JSON.
 
@@ -70,8 +120,16 @@ def chat_json(system_prompt: str, user_prompt: str, *, max_tokens: int = 3072) -
 
     Callers must still validate the *shape* of the parsed dict — this only
     guarantees valid JSON, not that it matches the schema they asked for.
+
+    Every call, successful or not, is recorded as one AgentInteraction (prompt, injected
+    context, raw reply, token usage, outcome); `purpose` labels which feature made it.
     """
     started = time.monotonic()
+    _last_interaction_id.set(None)
+    record = functools.partial(
+        _record_interaction, purpose=purpose, system_prompt=system_prompt,
+        user_prompt=user_prompt, started=started,
+    )
     try:
         response = _client().chat.completions.create(
             model=settings.NEMOTRON_MODEL,
@@ -87,12 +145,14 @@ def chat_json(system_prompt: str, user_prompt: str, *, max_tokens: int = 3072) -
         metrics.record_external_api_call(
             service="nemotron", outcome="unconfigured", duration_seconds=time.monotonic() - started
         )
+        record(outcome="unavailable", error="NEMOTRON_API_KEY is not set")
         raise
     except Exception as exc:  # noqa: BLE001 — any SDK/network failure is "unavailable this run"
         metrics.record_external_api_call(
             service="nemotron", outcome="error", duration_seconds=time.monotonic() - started
         )
         logger.error("nemotron_call_failed", error_type=type(exc).__name__, error=str(exc))
+        record(outcome="unavailable", error=f"{type(exc).__name__}: {exc}")
         raise NemotronUnavailable(f"Nemotron call failed: {type(exc).__name__}: {exc}") from exc
     metrics.record_external_api_call(
         service="nemotron", outcome="ok", duration_seconds=time.monotonic() - started
@@ -101,7 +161,11 @@ def chat_json(system_prompt: str, user_prompt: str, *, max_tokens: int = 3072) -
     content = (response.choices[0].message.content or "").strip()
     cleaned = _FENCE_RE.sub("", content).strip()
     try:
-        return json.loads(cleaned)
+        parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         logger.error("nemotron_bad_json", raw=content[:500])
+        record(outcome="bad_json", raw_output=content, error=str(exc),
+                            response=response)
         raise NemotronUnavailable(f"Nemotron returned non-JSON output: {exc}") from exc
+    record(outcome="ok", raw_output=content, response=response)
+    return parsed

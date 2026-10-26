@@ -20,14 +20,25 @@
   <div class="body flush table-wrap"><table class="t"><thead><tr><th>CSP</th><th>Message</th><th>Status</th><th>Drafted</th><th>Decision</th></tr></thead><tbody>
     {% for m in messages %}
     <tr><td class="name"><a href="{% url 'dashboard:csp_detail' m.csp.csp_code %}">{{ m.csp.name|default:m.csp.csp_code }}</a><span class="sub mono">{{ m.csp.csp_code }}</span></td>
-      <td style="max-width:420px">{{ m.text }}<span class="sub">{{ m.get_channel_display }}</span></td>
+      <td style="max-width:420px">{{ m.text }}<span class="sub">{{ m.get_channel_display }}{% if m.edit_distance %} &middot; edited by a person ({{ m.edit_distance }} character{{ m.edit_distance|pluralize }} changed){% endif %}</span>
+        {% if m.why or m.original_text %}<details class="more"><summary>Why this message?</summary><div class="body">
+          {% if m.why %}<p class="small muted">The figures the assistant was given for this CSP, saved when it wrote the message:</p>
+          <dl class="kv">{% for label, value in m.why %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>{% endif %}
+          {% if m.interaction %}<p class="small muted">Written by {{ m.interaction.model|default:"the assistant" }}, {{ m.interaction.created_at|date:"j M, g:i a" }}.</p>{% endif %}
+          {% if m.edit_distance %}<p class="small"><b>What the assistant first wrote:</b> {{ m.original_text }}</p>{% endif %}
+        </div></details>{% endif %}</td>
       <td>{% if m.status == "draft" %}{% include "dashboard/components/badge.html" with tone="info" text="Draft only" %}{% elif m.status == "approved" %}{% include "dashboard/components/badge.html" with tone="ok" text="Approved" %}{% else %}{% include "dashboard/components/badge.html" with tone="" text="Rejected" %}{% endif %}</td>
       <td>{{ m.generated_at|date:"j M, g:i a" }}</td>
       <td>{% if m.status == "draft" %}
         <div class="row">
-          <form method="post">{% csrf_token %}<input type="hidden" name="message_id" value="{{ m.id }}"><button type="submit" name="action" value="approve" class="btn sm primary">Approve</button></form>
+          <form method="post">{% csrf_token %}<input type="hidden" name="message_id" value="{{ m.id }}"><button type="submit" name="action" value="approve" class="btn sm primary">Approve as written</button></form>
           <form method="post">{% csrf_token %}<input type="hidden" name="message_id" value="{{ m.id }}"><button type="submit" name="action" value="reject" class="btn sm danger">Reject</button></form>
-        </div>{% elif m.reviewed_by %}<span class="small muted">{{ m.get_status_display }} by {{ m.reviewed_by.get_username }}, {{ m.reviewed_at|date:"j M, g:i a" }}</span>{% endif %}</td></tr>
+        </div>
+        <details class="more"><summary>Edit, then approve</summary><form method="post" class="stack">{% csrf_token %}<input type="hidden" name="message_id" value="{{ m.id }}">
+          <label class="small" for="t{{ m.id }}">Change the wording here. Your edit is saved with the original, so the assistant can be measured on how much people have to fix.</label>
+          <textarea id="t{{ m.id }}" name="text" rows="4" maxlength="{{ max_text_chars }}" required style="width:100%">{{ m.text }}</textarea>
+          <button type="submit" name="action" value="edit_approve" class="btn sm primary">Save my wording and approve</button></form></details>
+        {% elif m.reviewed_by %}<span class="small muted">{{ m.get_status_display }} by {{ m.reviewed_by.get_username }}, {{ m.reviewed_at|date:"j M, g:i a" }}</span>{% endif %}</td></tr>
     {% empty %}<tr><td colspan="5">{% include "dashboard/components/empty.html" with title="No draft messages yet" text="Drafts are written once a day by the assistant." %}</td></tr>{% endfor %}
   </tbody></table></div></section>
 {% endblock %}

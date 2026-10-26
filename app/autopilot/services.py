@@ -27,8 +27,14 @@ from csp.services import (
 from django.conf import settings
 from django.utils import timezone
 
+from .feedback import MAX_TEXT_CHARS, edit_distance
 from .models import AnomalyFlag, DraftMessage, Insight, PriorityCall, ReviewedIngestRun
-from .nemotron_client import NemotronUnavailable, chat_json
+from .nemotron_client import (
+    NemotronUnavailable,
+    chat_json,
+    forget_last_interaction,
+    last_interaction_id,
+)
 
 logger = structlog.get_logger("autopilot")
 
@@ -98,7 +104,9 @@ def generate_daily_briefing(month: str | None = None) -> Insight | None:
         '{"headline": "<one sentence, under 20 words>", "body": "<2-4 plain-text sentences>"}'
     )
     try:
-        result = chat_json(system_prompt, json.dumps(context, default=str))
+        result = chat_json(
+            system_prompt, json.dumps(context, default=str), purpose="daily_briefing"
+        )
     except NemotronUnavailable as exc:
         logger.warning("briefing_skipped", reason=str(exc))
         return None
@@ -144,7 +152,8 @@ def generate_priority_calls(month: str | None = None, limit: int = 15) -> list[P
         # (finish_reason="length", no JSON ever emitted). Confirmed fixed
         # at 8192 against the real API, not just guessed.
         result = chat_json(
-            system_prompt, json.dumps({"candidates": candidates}, default=str), max_tokens=8192
+            system_prompt, json.dumps({"candidates": candidates}, default=str), max_tokens=8192,
+            purpose="priority_calls",
         )
     except NemotronUnavailable as exc:
         logger.warning("priority_calls_skipped", reason=str(exc))
@@ -221,7 +230,9 @@ def flag_ingestion_anomalies(ingest_log: IngestLog) -> list[AnomalyFlag]:
         ", ...]}"
     )
     try:
-        result = chat_json(system_prompt, json.dumps(context, default=str))
+        result = chat_json(
+            system_prompt, json.dumps(context, default=str), purpose="anomaly_review"
+        )
     except NemotronUnavailable as exc:
         logger.warning("anomaly_review_skipped", reason=str(exc), ingest_log_id=ingest_log.id)
         return []
@@ -293,17 +304,21 @@ def draft_csp_nudges(month: str | None = None, limit: int = 10) -> list[DraftMes
         'Respond with ONLY a JSON object, no other text: {"drafts": [{"csp_code": "...", '
         '"text": "..."}, ...]}'
     )
+    forget_last_interaction()
     try:
         # See generate_priority_calls' comment above — same reasoning-model
         # token-budget issue, same fix.
         result = chat_json(
-            system_prompt, json.dumps({"candidates": candidates}, default=str), max_tokens=8192
+            system_prompt, json.dumps({"candidates": candidates}, default=str), max_tokens=8192,
+            purpose="nudge_drafts",
         )
     except NemotronUnavailable as exc:
         logger.warning("draft_nudges_skipped", reason=str(exc))
         return []
 
-    valid_codes = {c["csp_code"] for c in candidates}
+    context_by_code = {c["csp_code"]: c for c in candidates}
+    valid_codes = set(context_by_code)
+    interaction_id = last_interaction_id()
     entries = result.get("drafts")
     if not isinstance(entries, list):
         logger.warning("draft_nudges_invalid_shape", result=result)
@@ -319,8 +334,13 @@ def draft_csp_nudges(month: str | None = None, limit: int = 10) -> list[DraftMes
         text = str(entry.get("text") or "").strip()
         if not text:
             continue
+        text = text[:MAX_TEXT_CHARS]
         created.append(
-            DraftMessage(csp_id=code, channel=DraftMessage.Channel.SMS, text=text[:2000])
+            DraftMessage(
+                csp_id=code, channel=DraftMessage.Channel.SMS, text=text,
+                # What the model wrote and the figures it was given, kept for the feedback trail.
+                original_text=text, context=context_by_code[code], interaction_id=interaction_id,
+            )
         )
     DraftMessage.objects.bulk_create(created)
     return created
@@ -350,4 +370,33 @@ def reject_draft_message(message: DraftMessage, user) -> bool:
     message.reviewed_at = timezone.now()
     message.reviewed_by = user
     message.save(update_fields=["status", "reviewed_at", "reviewed_by"])
+    return True
+
+
+def edit_and_approve_draft(message: DraftMessage, user, new_text: str) -> bool:
+    """A person corrects the wording in place and approves it in one step. The model's own
+    text stays in `original_text` and the Levenshtein distance to the final wording is stored,
+    which is the correction signal the quality page reports. Returns False (nothing changed)
+    when the draft was already handled, or the new text is empty or too long."""
+    new_text = (new_text or "").strip()
+    if message.status != DraftMessage.Status.DRAFT or not new_text:
+        return False
+    if len(new_text) > MAX_TEXT_CHARS:
+        return False
+    now = timezone.now()
+    fields = ["text", "status", "reviewed_at", "reviewed_by"]
+    if not message.original_text:
+        # an older draft written before the trail existed: its current text is the original
+        message.original_text = message.text
+        fields.append("original_text")
+    if new_text != message.text:
+        message.text = new_text
+        message.edited_at = now
+        fields.append("edited_at")
+    message.edit_distance = edit_distance(message.original_text, message.text)
+    fields.append("edit_distance")
+    message.status = DraftMessage.Status.APPROVED
+    message.reviewed_at = now
+    message.reviewed_by = user
+    message.save(update_fields=fields)
     return True

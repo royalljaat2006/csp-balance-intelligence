@@ -11,7 +11,7 @@
   <dt>Model</dt><dd>{{ model_used|default:"—" }}</dd><dt>Data period</dt><dd>{{ month }}</dd>
   <dt>Status</dt><dd>{% if model_used %}{% include "dashboard/components/badge.html" with tone="ok" text="Active" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Not configured" %}{% endif %}</dd></dl></div></section>
 
-<section class="card"><header><div><h2>CSP operations assistant</h2><p>Reads stored figures, flags at-risk CSPs with the existing comparison, and may draft a nudge for a person to approve. It never sends anything.</p></div><a class="btn sm" href="{% url 'dashboard:agent_monitoring' %}">Assistant monitoring</a></header>
+<section class="card"><header><div><h2>CSP operations assistant</h2><p>Reads stored figures, flags at-risk CSPs with the existing comparison, and may draft a nudge for a person to approve. It never sends anything.</p></div><div class="row"><a class="btn sm" href="{% url 'dashboard:agent_quality' %}">How well is it doing?</a><a class="btn sm" href="{% url 'dashboard:agent_monitoring' %}">Assistant monitoring</a></div></header>
   <div class="body stack">
     {% if agent_run_result %}{% include "dashboard/components/callout.html" with tone="info" text=agent_run_result %}{% endif %}
     <form method="post">{% csrf_token %}<button type="submit" name="action" value="run_agent" class="btn primary">Run the assistant now</button></form>

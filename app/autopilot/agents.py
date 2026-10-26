@@ -368,7 +368,10 @@ def _reason_about_verified_findings(verified_findings: list[AgentFinding]) -> di
         '[{"csp_code": "...", "text": "..."}, ...]}'
     )
     try:
-        result = chat_json(system_prompt, json.dumps(payload, default=str), max_tokens=4096)
+        result = chat_json(
+            system_prompt, json.dumps(payload, default=str), max_tokens=4096,
+            purpose="action_agent_drafts",
+        )
     except NemotronUnavailable as exc:
         logger.warning("action_agent_reasoning_skipped", reason=str(exc))
         return {"drafts": [], "note": f"AI drafting unavailable this run: {exc}"}
