@@ -5,7 +5,7 @@
   <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / <a href="{% url 'dashboard:ai_operations' %}">AI operations</a> / Assistant quality</div>
   <h1>How well is the assistant doing?</h1>
   <p class="lede">Measured from what people actually did with its output over the last {{ q.days }} days. A figure with nothing behind it says "no data yet", never 0.</p></div>
-  <div class="row">{% for w in windows %}<a class="btn sm{% if w == q.days %} primary{% endif %}" href="?days={{ w }}">{{ w }} days</a>{% endfor %}</div></div>
+  <div class="row"><a class="btn sm" href="{% url 'dashboard:agent_activity' %}">See every call</a>{% for w in windows %}<a class="btn sm{% if w == q.days %} primary{% endif %}" href="?days={{ w }}">{{ w }} days</a>{% endfor %}</div></div>
 {% endblock %}
 {% block content %}
 {% with a=q.implicit_acceptance c=q.correction_delta r=q.call_reliability i=q.investigation_completion e=q.context_efficiency %}

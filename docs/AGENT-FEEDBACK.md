@@ -20,6 +20,19 @@ On **Draft messages** (`/dashboard/messaging/`): approve as written, reject, or 
 (change the wording in place). *Why this message?* shows the figures the assistant was given for that
 CSP, saved when it wrote the message.
 
+## Seeing what the assistant did (`autopilot/activity.py`, page `/dashboard/agent-activity/`, staff only)
+
+One list of every model call, newest first, filterable by purpose, result and period (7, 30 or 90
+days). Opening a call shows the instructions the model was given, the figures it was shown, what it
+answered, token counts, how it finished, what went wrong if it failed, and the drafts it produced.
+A second section, *What people changed*, shows each reworded draft word by word (removed words
+struck through, added words underlined, with hidden "removed" and "added" labels for screen readers).
+Long text is shortened on the page only; the stored row is never changed.
+
+API: `GET /api/v1/reports/agent-interactions` (scope `report:read`; `purpose`, `outcome`, `days`,
+`limit`, `offset`) returns **metadata only**: time, purpose, model, outcome, tokens, finish reason,
+latency. Prompts, context and replies hold CSP names and figures, so they are not served by the API.
+
 ## Measures (`autopilot/quality.py`, page `/dashboard/agent-quality/`, API `GET /api/v1/reports/agent-quality?days=30`)
 
 | Measure | Definition | Target |

@@ -1,0 +1,59 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Assistant activity · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / <a href="{% url 'dashboard:ai_operations' %}">AI operations</a> / Assistant activity</div>
+  <h1>What the assistant did</h1>
+  <p class="lede">Every time the assistant asked the AI model for something: what it was shown, what came back, and what people then did with the drafts. Nothing here is edited after the fact.</p></div>
+  <div class="row"><a class="btn sm" href="{% url 'dashboard:agent_quality' %}">How well is it doing?</a></div></div>
+{% endblock %}
+{% block content %}
+{% with s=summary %}
+<section class="grid g4" aria-label="Summary for the last {{ days }} days">
+  <div class="card stat"><div class="label"><span>Model calls</span></div><div class="value">{{ s.calls|intc }}</div><div class="hint">In the last {{ days }} days.</div></div>
+  <div class="card stat"><div class="label"><span>Answered</span></div><div class="value">{{ s.answered|intc }}</div><div class="hint">Unavailable: {{ s.unavailable }}. Unreadable: {{ s.bad_json }}.</div></div>
+  <div class="card stat"><div class="label"><span>Drafts written</span></div><div class="value">{{ s.drafts_written|intc }}</div><div class="hint">People reworded {{ s.drafts_edited }} of them before approving.</div></div>
+  <div class="card stat"><div class="label"><span>Last call</span></div><div class="value" style="font-size:20px">{% if s.last_call %}{{ s.last_call|timesince }} ago{% else %}never{% endif %}</div>
+    <div class="hint">{% if s.mean_tokens %}About {{ s.mean_tokens|floatformat:0 }} tokens per answered call.{% else %}No token counts yet.{% endif %}</div></div>
+</section>
+{% endwith %}
+
+<section class="card"><header><div><h2>Calls</h2><p>{{ total|intc }} match. Open one to see exactly what the model was given and what it said.</p></div></header>
+  <div class="body">
+    <form class="filters" method="get">
+      <label>What for<select name="purpose" data-autosubmit><option value="">All</option>{% for p in purposes %}<option value="{{ p }}"{% if purpose_filter == p %} selected{% endif %}>{{ p|default:"(unlabelled)" }}</option>{% endfor %}</select></label>
+      <label>Result<select name="outcome" data-autosubmit><option value="">All</option>{% for value, label in outcome_choices %}<option value="{{ value }}"{% if outcome_filter == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label>Period<select name="days" data-autosubmit>{% for w in windows %}<option value="{{ w }}"{% if w == days %} selected{% endif %}>Last {{ w }} days</option>{% endfor %}</select></label>
+    </form>
+    <div class="calls" style="margin-top:12px">
+      {% for c in calls %}
+      <details class="more call"><summary>
+        <b>{{ c.purpose }}</b>
+        {% if c.outcome == "ok" %}{% include "dashboard/components/badge.html" with tone="ok" text="Answered" %}{% elif c.outcome == "unavailable" %}{% include "dashboard/components/badge.html" with tone="warn" text="Unavailable" %}{% else %}{% include "dashboard/components/badge.html" with tone="bad" text=c.outcome_label %}{% endif %}
+        <span class="small muted">{{ c.created_at|date:"j M, g:i a" }}</span>
+        <span class="small muted">{{ c.model|default:"model not recorded" }}</span>
+        {% if c.total_tokens is not None %}<span class="small muted">{{ c.total_tokens|intc }} tokens</span>{% endif %}
+        <span class="small muted">{{ c.latency_ms|intc }} ms</span>
+        {% if c.drafts %}<span class="small muted">{{ c.drafts|length }} draft{{ c.drafts|length|pluralize }}</span>{% endif %}
+      </summary>
+      <div class="body">
+        <dl class="kv"><dt>Prompt tokens</dt><dd>{{ c.prompt_tokens|intc }}</dd><dt>Reply tokens</dt><dd>{{ c.completion_tokens|intc }}</dd><dt>Finished because</dt><dd>{{ c.finish_reason|default:"—" }}</dd><dt>Call number</dt><dd>#{{ c.id }}</dd></dl>
+        {% if c.error %}<p class="small"><b>What went wrong:</b> {{ c.error }}</p>{% endif %}
+        <h4>Instructions the model was given</h4><pre>{{ c.system_prompt }}</pre>
+        <h4>The figures it was shown</h4><pre>{{ c.context }}</pre>{% if c.context_cut %}<p class="small muted">Shortened here; the full text is stored.</p>{% endif %}
+        <h4>What it answered</h4>{% if c.reply %}<pre>{{ c.reply }}</pre>{% if c.reply_cut %}<p class="small muted">Shortened here; the full text is stored.</p>{% endif %}{% else %}<p class="small muted">No answer came back.</p>{% endif %}
+        {% if c.drafts %}<h4>Drafts this call produced</h4>
+        <ul>{% for d in c.drafts %}<li><span class="mono">{{ d.csp_id }}</span> &middot; {{ d.status }}{% if d.edit_distance %} &middot; reworded by a person ({{ d.edit_distance }} character{{ d.edit_distance|pluralize }} changed){% endif %}: {{ d.text }}</li>{% endfor %}</ul>{% endif %}
+      </div></details>
+      {% empty %}{% include "dashboard/components/empty.html" with title="No model calls in this period" text="Calls appear here the next time the assistant runs." %}{% endfor %}
+    </div>
+  </div>
+  {% include "dashboard/components/pager.html" %}
+</section>
+
+<section class="card"><header><div><h2>What people changed</h2><p>Drafts that were reworded before approval, last {{ days }} days. <span class="diff"><del>Struck through</del> was removed, <ins>underlined</ins> was added.</span></p></div></header>
+  <div class="body">{% if edits %}<ul class="stack" style="list-style:none;padding:0;margin:0">
+    {% for e in edits %}<li class="diff"><b>{{ e.csp }}</b> <span class="small muted">{{ e.edited_at|date:"j M, g:i a" }}{% if e.by %} by {{ e.by }}{% endif %} &middot; {{ e.distance }} character{{ e.distance|pluralize }} changed</span><br>
+      {% for kind, text in e.diff %}{% if kind == "removed" %}<del><span class="sr-only">removed: </span>{{ text }}</del>{% elif kind == "added" %}<ins><span class="sr-only">added: </span>{{ text }}</ins>{% else %}{{ text }}{% endif %} {% endfor %}</li>{% endfor %}</ul>
+  {% else %}{% include "dashboard/components/empty.html" with title="No reworded drafts yet" text="When a person edits a draft on the Draft messages page before approving, the change shows here." %}{% endif %}</div></section>
+{% endblock %}

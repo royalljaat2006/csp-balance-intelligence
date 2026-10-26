@@ -387,3 +387,12 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .dcx-old { color: var(--warn); font-weight: 600; }
 @media (max-width: 1100px) { .dcx-changes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dcx-cards.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .dcx-cards.three, .dcx-cards.two, .dcx-changes { grid-template-columns: minmax(0, 1fr); } .dcx-big { font-size: 28px; } }
+
+/* assistant activity: a person's edit shown word by word, with marks so colour is never the only cue */
+.diff del { background: var(--bad-wash); color: var(--bad); text-decoration: line-through; padding: 0 2px; border-radius: 3px; }
+.diff ins { background: var(--good-wash); color: var(--good); text-decoration: underline; padding: 0 2px; border-radius: 3px; }
+.calls { display: grid; gap: 10px; }
+details.call > summary { gap: 12px; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
+details.call > summary::after { margin-left: auto; }
+details.call pre { white-space: pre-wrap; word-break: break-word; background: var(--sunken); border-radius: var(--r-sm); padding: 10px 12px; max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12.5px; margin: 6px 0 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

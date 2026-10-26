@@ -15,12 +15,14 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 
+from autopilot import activity as agent_activity_service
 from autopilot import monitoring as agent_monitoring_service
 from autopilot import quality as agent_quality_service
 from autopilot.feedback import MAX_TEXT_CHARS
 from autopilot.models import (
     AgentAction,
     AgentFinding,
+    AgentInteraction,
     AgentTask,
     AgentVerification,
     AnomalyFlag,
@@ -338,6 +340,35 @@ def agent_quality(request):
         days = 30
     return render(request, "dashboard/agent_quality.html",
                   {"q": agent_quality_service.agent_quality(days), "windows": (7, 30, 90)})
+
+
+@login_required
+def agent_activity(request):
+    """Every model call the assistant made, with what it was shown, what it answered and what
+    people then did with the drafts that came out of it. Staff-only: the text includes CSP names
+    and figures. Reads autopilot.activity, the same module the API's metadata list uses."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Assistant activity is restricted to staff accounts.")
+    try:
+        days = int(request.GET.get("days", 30))
+    except ValueError:
+        days = 30
+    days = days if days in (7, 30, 90) else 30
+    purpose = request.GET.get("purpose", "")[:60]
+    outcome = request.GET.get("outcome", "")
+    if outcome not in {value for value, _ in AgentInteraction.Outcome.choices}:
+        outcome = ""
+    page, offset, page_size = _paginate(request, page_size=15)
+    log = agent_activity_service.call_log(
+        purpose=purpose, outcome=outcome, days=days, limit=page_size, offset=offset)
+    return render(request, "dashboard/agent_activity.html", {
+        "summary": agent_activity_service.summary(days),
+        "calls": log["rows"], "edits": agent_activity_service.recent_edits(days),
+        "purposes": agent_activity_service.purposes(), "purpose_filter": purpose,
+        "outcome_filter": outcome, "outcome_choices": AgentInteraction.Outcome.choices,
+        "days": days, "windows": (7, 30, 90),
+        "page": page, "total": log["total"], "total_pages": max(1, -(-log["total"] // page_size)),
+    })
 
 
 @login_required
