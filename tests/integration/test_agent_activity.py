@@ -189,3 +189,21 @@ def test_api_filters_and_paging(client):
         "limit": 2, "offset": 0, "total": 3}
     assert len(client.get(url + "?limit=2&offset=2", headers=key).json()["data"]) == 2
     assert client.get(url + "?limit=99999", headers=key).json()["pagination"]["limit"] == 500
+
+
+# ------------------------------------------------------------------ the Eko Kiosk logo
+def test_the_logo_is_in_the_sidebar_the_login_page_and_the_tab_icon(staff_client):
+    page = staff_client.get("/dashboard/agent-activity/").content.decode()
+    assert page.count("dashboard/eko-kiosk-logo.png") == 2  # tab icon and sidebar
+    assert 'class="brand-logo"' in page and 'alt="Eko Kiosk"' in page
+    from django.test import Client
+
+    login = Client().get("/dashboard/login/").content.decode()
+    assert 'class="login-logo"' in login and "dashboard/eko-kiosk-logo.png" in login
+
+
+def test_the_logo_file_is_a_real_png_that_ships_with_the_static_files():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    png = root / "app" / "dashboard" / "static" / "dashboard" / "eko-kiosk-logo.png"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

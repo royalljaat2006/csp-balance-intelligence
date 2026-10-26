@@ -77,6 +77,8 @@ a:hover { color: var(--brand-ink); }
   border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 4px;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; text-decoration: none; color: var(--ink); }
+.brand-logo { height: 38px; width: auto; border-radius: 6px; flex: none; display: block; }
+.login-logo { height: 56px; width: auto; border-radius: 8px; display: block; margin: 0 0 12px; }
 .brand-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--brand); color: #fff;
   display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
 .brand b { display: block; font-size: 14px; line-height: 1.2; }

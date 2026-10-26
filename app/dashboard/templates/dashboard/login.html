@@ -1,9 +1,9 @@
-{% extends "dashboard/base.html" %}
+{% extends "dashboard/base.html" %}{% load static %}
 {% block title %}Sign in · CSP Balance Intelligence{% endblock %}
 {% block anon %}
 <main class="login" id="main">
   <div class="card">
-    <header><div><h1 style="font-size:20px">CSP Balance Intelligence</h1>
+    <header><div><img class="login-logo" src="{% static 'dashboard/eko-kiosk-logo.png' %}" alt="Eko Kiosk" width="107" height="70"><h1 style="font-size:20px">CSP Balance Intelligence</h1>
       <p>Sign in to see CSP balances, data readiness and estimates. Ask an administrator for an account if you do not have one.</p></div></header>
     <div class="body">
       <form method="post">

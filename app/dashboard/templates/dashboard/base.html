@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}CSP Balance Intelligence{% endblock %}</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/png" href="{% static 'dashboard/eko-kiosk-logo.png' %}">
   <script>try{var t=localStorage.getItem("csp-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <link rel="stylesheet" href="{% static 'dashboard/app.css' %}">
   {% block head %}{% endblock %}
@@ -16,7 +16,7 @@
   <div class="scrim" id="scrim"></div>
   <nav class="nav" id="nav" aria-label="Main">
     <a class="brand" href="{% url 'dashboard:home' %}">
-      <span class="brand-mark" aria-hidden="true">₹</span>
+      <img class="brand-logo" src="{% static 'dashboard/eko-kiosk-logo.png' %}" alt="Eko Kiosk" width="107" height="70">
       <span><b>CSP Balance Intelligence</b><span>{% if env_badge %}{{ env_badge|capfirst }} environment{% endif %}</span></span>
     </a>
     {% for group, items in nav_groups %}
