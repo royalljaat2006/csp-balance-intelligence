@@ -279,7 +279,7 @@ NEMOTRON_MODEL = env("NEMOTRON_MODEL", default="nvidia/nemotron-3-super-120b-a12
 # Analysis-only: nothing in bankflow writes DailyBalance or switches the balance
 # source. The watch folder is only ever READ; files are never moved or deleted.
 BANKFLOW_WATCH_DIR = env(
-    "BANKFLOW_WATCH_DIR", default="/home/kapil/login_automation/yonosbi-automation/downloads"
+    "BANKFLOW_WATCH_DIR", default="/home/adarsh/login_automation/yonosbi-automation/downloads"
 )
 # Only statements of this pool account (last 5 digits) are accepted; others are quarantined.
 BANKFLOW_EXPECTED_ACCOUNT_SUFFIX = env("BANKFLOW_EXPECTED_ACCOUNT_SUFFIX", default="71556")

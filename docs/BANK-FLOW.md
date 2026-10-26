@@ -217,14 +217,14 @@ API `GET /api/v1/bank-flow/{summary,code-resolution,flows,evaluations,target}` (
 
 ## Running on the server — read-only on other teams' folders
 
-The statement folder (`/home/kapil/login_automation/yonosbi-automation/downloads`) belongs to another
+The statement folder (`/home/adarsh/login_automation/yonosbi-automation/downloads`) belongs to another
 team. This project only **reads** it. Nothing here creates, moves, renames, locks or deletes anything in
 it; every write goes to this project's own database. Mount it **read-only** so that is enforced, not just promised.
 
 **1. Look first, with plain shell tools (no project code needed, read-only):**
 
 ```bash
-D=/home/kapil/login_automation/yonosbi-automation/downloads
+D=/home/adarsh/login_automation/yonosbi-automation/downloads
 ls -la --time-style=full-iso "$D"
 find "$D" -type f \( -iname '*.xls' -o -iname '*.xlsx' -o -iname '*.txt' -o -iname '*.csv' \) \
      -printf '%TY-%Tm-%Td %TH:%TM  %10s bytes  %p\n' | sort

@@ -485,7 +485,7 @@ tables only, `bankflow` 0001-0006; two later migrations only add an index: `bank
    a folder; if the path does not exist Docker creates an empty folder there and the sheet cannot be read).
 2. Statement folder: set `BANKFLOW_STATEMENT_DIR_HOST` (default `./data/bank_statements`). It belongs to another
    team and is mounted **read-only**. Either let the container user read
-   `/home/kapil/login_automation/yonosbi-automation/downloads` (the owner grants it; do not change permissions
+   `/home/adarsh/login_automation/yonosbi-automation/downloads` (the owner grants it; do not change permissions
    yourself), or keep a read-only copy in `./data/bank_statements` with a cron on the host:
    `rsync -rt --prune-empty-dirs --include='*/' --include='statement_1556_*' --exclude='*' <src>/ ./data/bank_statements/`
    (no `--ignore-existing`: today's statement is a day-to-date cut that grows during the day; the importer

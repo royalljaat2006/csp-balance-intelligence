@@ -11,9 +11,9 @@ the script refuses a destination inside this repository.
 Settings (environment variables, or the repo's .env -- never printed):
   R730_SSH_HOST            host or IP
   R730_SSH_PORT            default 22
-  R730_SSH_USER            the account that is allowed to read the folder (e.g. kapil)
+  R730_SSH_USER            an account allowed to read the folder
   R730_SSH_PASSWORD        or R730_SSH_KEY_FILE (path to a private key)
-  R730_STATEMENT_DIR       default /home/kapil/login_automation/yonosbi-automation/downloads
+  R730_STATEMENT_DIR       default /home/adarsh/login_automation/yonosbi-automation/downloads
   R730_SSH_HOSTKEY_SHA256  optional; if set, the server's host key must match (base64, no padding)
   LOCAL_STATEMENT_DIR      default <repo>/../_private/bank_statements
 
@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_REMOTE = "/home/kapil/login_automation/yonosbi-automation/downloads"
+DEFAULT_REMOTE = "/home/adarsh/login_automation/yonosbi-automation/downloads"
 DEFAULT_PATTERN = "statement_1556_*"
 # Never read these, even if a pattern matches (they hold the other team's credentials/state).
 NEVER_READ = {"credential_health.json", "credential_latch.json", "run_state.json"}
