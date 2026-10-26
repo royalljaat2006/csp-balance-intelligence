@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "dashboard",
     "autopilot",
     "bankflow",
+    "learning",
 ]
 
 MIDDLEWARE = [

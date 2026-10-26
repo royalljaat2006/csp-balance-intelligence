@@ -19,6 +19,7 @@ from .comparisons import network_router as comparisons_network_router
 from .comparisons import router as comparisons_router
 from .csps import router as csps_router
 from .incentives import router as incentives_router
+from .learning import router as learning_router
 from .projections import router as projections_router
 from .reports import router as reports_router
 from .transactions import router as transactions_router
@@ -57,3 +58,4 @@ api.add_router("/csps", comparisons_router)
 api.add_router("/reports", reports_router)
 api.add_router("/bank-flow", bankflow_router)
 api.add_router("/comparisons", comparisons_network_router)
+api.add_router("/learning", learning_router)

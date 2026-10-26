@@ -49,6 +49,9 @@ from django.db.models import Max, Min
 from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from learning import feedback as learning_feedback
+from learning import overview as learning_overview_service
+from learning.models import LivePrediction, PredictionFeedback
 
 from . import pipeline_state, plain, shell
 from .charts import points as chart_points
@@ -368,6 +371,43 @@ def agent_activity(request):
         "outcome_filter": outcome, "outcome_choices": AgentInteraction.Outcome.choices,
         "days": days, "windows": (7, 30, 90),
         "page": page, "total": log["total"], "total_pages": max(1, -(-log["total"] // page_size)),
+    })
+
+
+@login_required
+def learning_centre(request):
+    """Agent Learning Centre: how the shadow Avg Balance estimate has fared against the SBI values
+    that followed, in plain words. Staff-only like the other assistant pages. It reads the stored
+    learning records (learning.overview) and offers two actions: give feedback on an estimate and
+    move a piece of feedback along. Feedback is an opinion and never an observed balance."""
+    if not request.user.is_staff:
+        return HttpResponseForbidden("The Learning Centre is restricted to staff accounts.")
+    form_error = ""
+    if request.method == "POST":
+        action = request.POST.get("action")
+        try:
+            if action == "feedback":
+                prediction = get_object_or_404(LivePrediction, pk=request.POST.get("prediction_id"))
+                learning_feedback.submit(
+                    prediction, request.user.get_username(), request.POST.get("verdict", ""),
+                    request.POST.get("reason", ""), request.POST.get("note", ""))
+            elif action == "feedback_status":
+                item = get_object_or_404(PredictionFeedback, pk=request.POST.get("feedback_id"))
+                learning_feedback.set_status(
+                    item, request.user, request.POST.get("status", ""),
+                    request.POST.get("note", ""))
+            else:
+                form_error = "That action is not available."
+        except learning_feedback.FeedbackError as exc:
+            form_error = str(exc)
+        if not form_error:
+            return redirect(request.path)
+    data = learning_overview_service.learning_overview()
+    return render(request, "dashboard/learning.html", {
+        **data, "form_error": form_error, "reasons": PredictionFeedback.Reason.choices,
+        "verdicts": PredictionFeedback.Verdict.choices, "statuses": [
+            (v, label) for v, label in PredictionFeedback.Status.choices if v != "OPEN"] + [
+            ("OPEN", "Reopen")],
     })
 
 

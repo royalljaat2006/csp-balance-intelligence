@@ -21,6 +21,8 @@ SCOPE_CHOICES = [
     ("transaction:read", "transaction:read"),
     ("report:read", "report:read"),
     ("comparison:read", "comparison:read"),
+    # the one write scope: submit feedback on an estimate (an opinion, never a balance)
+    ("feedback:write", "feedback:write"),
 ]
 ALL_SCOPES = [value for value, _ in SCOPE_CHOICES]
 

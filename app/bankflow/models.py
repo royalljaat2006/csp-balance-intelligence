@@ -239,10 +239,32 @@ class UnresolvedFlowDaily(models.Model):
 
 
 class ModelVersion(models.Model):
+    """A named estimation method. Rows used only to label an EvaluationRun have in_registry False;
+    the learning app registers the methods it compares (carry-forward, flow-only, the movement rule,
+    ...) with a stage, and records every change of stage in learning.ModelEvent. The db defaults
+    keep rows written by the previous release valid during a rolling deploy."""
+
+    class Stage(models.TextChoices):
+        BASELINE = "BASELINE", "Baseline (reference)"
+        CANDIDATE = "CANDIDATE", "Candidate"
+        ACTIVE = "ACTIVE", "Active"
+        RETIRED = "RETIRED", "Retired"
+
     name = models.CharField(max_length=64)
     version = models.CharField(max_length=32)
     definition = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    in_registry = models.BooleanField(default=False, db_default=False)
+    stage = models.CharField(
+        max_length=12, choices=Stage.choices, default=Stage.CANDIDATE, db_default="CANDIDATE"
+    )
+    # Can the live estimator actually run this method? Only then can it become ACTIVE.
+    live_supported = models.BooleanField(default=False, db_default=False)
+    # Why this method may never be promoted (a business rule), or blank.
+    blocked_reason = models.CharField(max_length=200, blank=True, default="", db_default="")
+    description = models.CharField(max_length=300, blank=True, default="", db_default="")
+    # Last day of data any fitted parameter saw. Null: the method has no fitted parameters.
+    training_cutoff = models.DateField(null=True, blank=True)
 
     class Meta:
         constraints = [

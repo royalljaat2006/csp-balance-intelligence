@@ -37,6 +37,7 @@ urlpatterns = [
     path("ai/", views.ai_operations, name="ai_operations"),
     path("agent-quality/", views.agent_quality, name="agent_quality"),
     path("agent-activity/", views.agent_activity, name="agent_activity"),
+    path("learning/", views.learning_centre, name="learning"),
     path("agent-monitoring/", views.agent_monitoring, name="agent_monitoring"),
     path("risk/", views.risk, name="risk"),
     path("agent-findings/", views.agent_findings, name="agent_findings"),

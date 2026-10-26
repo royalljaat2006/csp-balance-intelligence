@@ -33,6 +33,12 @@ Errors follow docs/API-ERRORS.md. All timestamps IST (PRD §13).
 | `/api/v1/bank-flow/exceptions` | GET | v1 | CSP and network alerts with evidence and next action | `report:read` | — | active |
 | `/api/v1/bank-flow/progress` | GET | v1 | What each automated step did today and yesterday | `report:read` | — | active |
 | `/api/v1/bank-flow/day-compare` | GET | v1 | Today against yesterday, network-wide or one CSP | `report:read` | — | active |
+| `/api/v1/learning/predictions` | GET | v1 | Frozen estimates with the SBI value that scored them | `report:read` | — | active |
+| `/api/v1/learning/predictions/{id}` | GET | v1 | One frozen estimate | `report:read` | — | active |
+| `/api/v1/learning/evaluation` | GET | v1 | Accuracy, or `INSUFFICIENT_EVIDENCE` | `report:read` | — | active |
+| `/api/v1/learning/models` | GET | v1 | Candidate and active methods, evaluations, change history | `report:read` | — | active |
+| `/api/v1/learning/feedback` | GET | v1 | Human feedback on estimates with its audit trail | `report:read` | — | active |
+| `/api/v1/learning/predictions/{id}/feedback` | POST | v1 | Say an estimate was useful or looks wrong (an opinion, never a balance) | `feedback:write` | — | active |
 | `/api/v1/bank-flow/csp-day-compare` | GET | v1 | Every CSP, today against yesterday | `report:read` | — | active |
 | `/api/v1/bank-flow/data-readiness` | GET | v1 | Six stages from received to estimate, technical vs reliable verdict | `report:read` | — | active |
 | `/api/v1/bank-flow/review` | GET | v1 | Everything needing review: unlinked codes, labels, duplicates, counts, gaps | `report:read` | — | active |

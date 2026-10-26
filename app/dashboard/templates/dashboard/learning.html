@@ -1,0 +1,120 @@
+{% extends "dashboard/base.html" %}{% load fmt %}
+{% block title %}Agent learning centre · CSP Balance Intelligence{% endblock %}
+{% block header %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="{% url 'dashboard:more' %}">Operations</a> / <a href="{% url 'dashboard:ai_operations' %}">AI operations</a> / Learning centre</div>
+  <h1>How good is the estimate, really?</h1>
+  <p class="lede">Every estimate is saved before SBI reports its next figure. When SBI does, the two are compared here. The estimate is our own guess and is never treated as the truth; only SBI's figure is.</p></div>
+  <div class="row"><a class="btn sm" href="{% url 'dashboard:bank_flow' %}">SBI comparison</a></div></div>
+{% endblock %}
+{% block content %}
+{% if form_error %}{% include "dashboard/components/callout.html" with tone="warn" text=form_error %}{% endif %}
+
+{% if not registry_ready %}
+<section class="card"><div class="body">{% include "dashboard/components/empty.html" with title="The learning loop has not been started" text="No estimate has been saved yet. Run the freeze step (manage.py freeze_predictions) once estimates are final, then record_outcomes when SBI refreshes." %}</div></section>
+{% else %}
+
+{# ---------------------------------------------------------------- 1. the active model #}
+<section class="card"><header><div><h2>The method in use</h2><p>{{ active.text }}</p></div>{% include "dashboard/components/badge.html" with tone="shadow" text="Shadow estimate" %}</header>
+  <div class="body"><dl class="kv">
+    <dt>Method</dt><dd><b>{{ active.label }}</b></dd>
+    <dt>How it works</dt><dd>{{ active.description }}</dd>
+    <dt>Tested on SBI's past refreshes</dt><dd>{% if active.evaluation %}{{ active.evaluation.verdict_label }}. {{ active.evaluation.plain }}{% else %}Not yet checked{% endif %}</dd>
+    <dt>Validation status</dt><dd>{{ active.estimator_status_label }}</dd>
+    <dt>Approved for production</dt><dd>{{ active.production_approval }}</dd></dl></div></section>
+
+{# ---------------------------------------------------------------- 2. counts #}
+<section class="grid g4" aria-label="Predictions so far">
+  <div class="card stat"><div class="label"><span>Estimates saved</span></div><div class="value">{{ counts.predictions|intc }}</div><div class="hint">Each is kept exactly as it was made.</div></div>
+  <div class="card stat"><div class="label"><span>Checked against SBI</span></div><div class="value">{{ counts.scored|intc }}</div><div class="hint">SBI has since reported a new figure.</div></div>
+  <div class="card stat"><div class="label"><span>Still waiting</span></div><div class="value">{{ counts.waiting|intc }}</div><div class="hint">SBI has not reported a new figure yet.</div></div>
+  <div class="card stat"><div class="label"><span>Feedback to review</span></div><div class="value">{{ feedback_open_total|intc }}</div><div class="hint">Opinions from people, not SBI figures.</div></div>
+</section>
+
+{# ---------------------------------------------------------------- 3. accuracy #}
+<section class="card"><header><div><h2>How accurate has it been?</h2><p>Only checks made with good data count here. Data problems are shown separately below so they are not blamed on the method.</p></div>
+  {% if accuracy.accuracy_claim == "INSUFFICIENT_EVIDENCE" %}{% include "dashboard/components/badge.html" with tone="info" text="Not enough evidence yet" %}{% elif accuracy.accuracy_claim == "VALIDATED" %}{% include "dashboard/components/badge.html" with tone="ok" text="Evidence bar met" %}{% elif accuracy.accuracy_claim == "PROVISIONAL" %}{% include "dashboard/components/badge.html" with tone="info" text="Promising, not proven" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text="Not better than carry-forward" %}{% endif %}</header>
+  <div class="body">
+  {% if accuracy.metrics %}
+    <p>{{ accuracy.evidence.plain }}</p>
+    <dl class="kv">
+      <dt>Estimates checked</dt><dd>{{ accuracy.metrics.n }} (one per CSP per SBI refresh, the one made closest to it)</dd>
+      <dt>Typical miss (average)</dt><dd>{{ accuracy.metrics.mae|inr }} per account</dd>
+      <dt>Typical miss if SBI's value had simply been carried forward</dt><dd>{{ accuracy.metrics.carry_forward_mae|inr }} per account</dd>
+      <dt>Leans high or low?</dt><dd>{% if accuracy.metrics.bias > 0 %}Too high by {{ accuracy.metrics.bias|inr }} on average{% elif accuracy.metrics.bias < 0 %}Too low by {{ accuracy.metrics.bias|inr }} on average{% else %}Neither{% endif %} &middot; {{ accuracy.metrics.over }} too high, {{ accuracy.metrics.under }} too low, {{ accuracy.metrics.exact }} exact</dd>
+      <dt>Large misses weigh more (RMSE)</dt><dd>{{ accuracy.metrics.rmse|inr }}</dd>
+      <dt>As a percentage of SBI's figure</dt><dd>{% if accuracy.metrics.mape_pct is not None %}{{ accuracy.metrics.mape_pct|floatformat:2 }}% on {{ accuracy.metrics.mape_n }} checks{% if accuracy.metrics.mape_excluded_small_actual %} ({{ accuracy.metrics.mape_excluded_small_actual }} left out because SBI's figure was too small for a percentage to mean anything){% endif %}{% else %}Not available{% endif %}</dd></dl>
+  {% else %}
+    <p><b>We cannot say how accurate the estimate is yet.</b> {{ accuracy.evidence.plain }} No accuracy figure is shown until the evidence is enough, because a number from too few checks would only look like a result.</p>
+  {% endif %}
+  <p class="small muted">To be called accurate the estimate must beat carry-forward across at least 8 separate SBI refresh days over at least 6 months, in two thirds of them, with the gain clearly above chance. Even then, a separate approval is needed before it is used for anything real.</p>
+  </div></section>
+
+{% if accuracy.metrics %}
+<section class="card"><header><div><h2>Accuracy by how far ahead, group and CSP</h2><p>A row without enough checks says so instead of showing a number.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Slice</th><th class="num">Checks</th><th class="num">Typical miss</th><th class="num">Leans (avg)</th><th>Status</th></tr></thead><tbody>
+  {% for e in accuracy.by_horizon %}<tr><td>{{ e.horizon }} ahead</td><td class="num">{{ e.n }}</td>{% if e.status == "SUPPORTED" %}<td class="num">{{ e.mae|inr }}</td><td class="num">{{ e.bias|signed_inr }}</td><td>Enough checks</td>{% else %}<td class="num">&mdash;</td><td class="num">&mdash;</td><td>Not enough yet: {{ e.missing|join:"; " }}</td>{% endif %}</tr>{% endfor %}
+  {% for e in accuracy.by_cohort %}<tr><td>{{ e.cohort }}</td><td class="num">{{ e.n }}</td>{% if e.status == "SUPPORTED" %}<td class="num">{{ e.mae|inr }}</td><td class="num">{{ e.bias|signed_inr }}</td><td>Enough checks</td>{% else %}<td class="num">&mdash;</td><td class="num">&mdash;</td><td>Not enough yet: {{ e.missing|join:"; " }}</td>{% endif %}</tr>{% endfor %}
+  {% for e in accuracy.by_csp %}{% if e.status == "SUPPORTED" %}<tr><td class="mono">{{ e.csp_code }}</td><td class="num">{{ e.n }}</td><td class="num">{{ e.mae|inr }}</td><td class="num">{{ e.bias|signed_inr }}</td><td>Enough checks</td></tr>{% endif %}{% endfor %}
+  </tbody></table></div></section>
+{% endif %}
+
+{# ---------------------------------------------------------------- 4. why not to trust it yet / data quality #}
+<section class="card"><header><div><h2>Why the estimate cannot be fully trusted yet</h2><p>What is missing, from the stored facts.</p></div></header>
+  <div class="body">{% if why_not_trusted %}<ul>{% for w in why_not_trusted %}<li>{{ w }}</li>{% endfor %}</ul>{% else %}<p>Nothing is currently holding the evidence back.</p>{% endif %}
+  {% if accuracy.data_quality.total %}<p class="small muted">Of {{ accuracy.data_quality.total }} checked estimates, {{ accuracy.data_quality.ok }} had good data{% for q, n in accuracy.data_quality.problems.items %}; {{ n }}: {{ quality_words|get_item:q|lower }}{% endfor %}.</p>{% endif %}
+  {% if accuracy.leakage_excluded %}<p class="small muted">{{ accuracy.leakage_excluded }} check(s) were left out because the estimate was not clearly made before SBI's figure was seen.</p>{% endif %}</div></section>
+
+{# ---------------------------------------------------------------- 5. estimated vs observed #}
+<section class="card"><header><div><h2>Estimated versus what SBI reported</h2><p>The latest checks. A positive difference means our estimate was too high.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>CSP</th><th>Estimate made</th><th>SBI figure first seen</th><th class="num">We estimated</th><th class="num">SBI reported</th><th class="num">Difference</th><th>Data</th><th>Your view</th></tr></thead><tbody>
+  {% for c in comparisons %}<tr>
+    <td class="name"><a href="{% url 'dashboard:csp_detail' c.csp_code %}">{{ c.csp_name|default:c.csp_code }}</a><span class="sub mono">{{ c.csp_code }}</span></td>
+    <td>{{ c.estimate_date|date:"j M Y" }}</td><td>{{ c.observed_on|date:"j M Y" }} <span class="sub">{{ c.horizon_days }} day{{ c.horizon_days|pluralize }} later</span></td>
+    <td class="num">{{ c.estimated|inr }}</td><td class="num">{{ c.observed|inr }}</td>
+    <td class="num">{{ c.error|signed_inr }}<span class="sub">{{ c.direction_label }}</span></td>
+    <td>{% if c.quality == "OK" %}{% include "dashboard/components/badge.html" with tone="ok" text="Good data" %}{% else %}{% include "dashboard/components/badge.html" with tone="warn" text=c.quality_label %}{% endif %}</td>
+    <td><details class="more"><summary>Feedback{% if c.feedback_count %} ({{ c.feedback_count }}){% endif %}</summary><form method="post" class="stack">{% csrf_token %}<input type="hidden" name="action" value="feedback"><input type="hidden" name="prediction_id" value="{{ c.prediction_id }}">
+      <label class="small">Was this estimate useful?<select name="verdict" required>{% for v, l in verdicts %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></label>
+      <label class="small">If not, why?<select name="reason"><option value="">&mdash;</option>{% for v, l in reasons %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></label>
+      <label class="small">Note (optional). Do not write customer names, account numbers or phone numbers.<textarea name="note" rows="2" maxlength="500" style="width:100%"></textarea></label>
+      <button class="btn sm primary" type="submit">Send feedback</button></form></details></td></tr>
+  {% empty %}<tr><td colspan="8">{% include "dashboard/components/empty.html" with title="Nothing has been checked yet" text="Rows appear once SBI reports a new figure for a CSP whose estimate was saved." %}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+
+{# ---------------------------------------------------------------- 6. over / under trend #}
+{% if accuracy.trend %}
+<section class="card"><header><div><h2>Does it lean high or low?</h2><p>By month of SBI's refresh. The counts are always shown; the average difference only when there are enough checks.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Month</th><th class="num">Checks</th><th class="num">Too high</th><th class="num">Too low</th><th class="num">Average difference</th></tr></thead><tbody>
+  {% for t in accuracy.trend %}<tr><td>{{ t.month }}</td><td class="num">{{ t.n }}</td><td class="num">{{ t.over }}</td><td class="num">{{ t.under }}</td><td class="num">{% if t.mean_signed_error is not None %}{{ t.mean_signed_error|signed_inr }}{% else %}Not enough checks{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+{% endif %}
+
+{# ---------------------------------------------------------------- 7. feedback waiting #}
+<section class="card"><header><div><h2>Feedback waiting for review</h2><p>What people think of an estimate. It is never used as SBI's figure.</p></div></header>
+  <div class="body">{% for f in feedback_waiting %}
+    <div class="stack" style="border-top:1px solid var(--line);padding:10px 0">
+      <div><b>{{ f.csp_name|default:f.csp_code }}</b> <span class="mono small">{{ f.csp_code }}</span> &middot; estimate of {{ f.estimate_date|date:"j M Y" }} &middot; {{ f.verdict_label }}{% if f.reason_label %} &middot; {{ f.reason_label }}{% endif %} &middot; {{ f.status_label }}</div>
+      {% if f.note %}<div class="small">&ldquo;{{ f.note }}&rdquo;</div>{% endif %}
+      <div class="small muted">From {{ f.by }}, {{ f.at|date:"j M, g:i a" }}</div>
+      <form method="post" class="row">{% csrf_token %}<input type="hidden" name="action" value="feedback_status"><input type="hidden" name="feedback_id" value="{{ f.id }}">
+        <select name="status" aria-label="New status">{% for v, l in statuses %}{% if v != f.status %}<option value="{{ v }}">{{ l }}</option>{% endif %}{% endfor %}</select>
+        <input type="text" name="note" maxlength="500" placeholder="What was done (needed to close it)" style="flex:1">
+        <button class="btn sm" type="submit">Update</button></form></div>
+  {% empty %}{% include "dashboard/components/empty.html" with title="No feedback is waiting" text="When someone says an estimate looks wrong, it appears here until it is looked at." %}{% endfor %}</div></section>
+
+{# ---------------------------------------------------------------- 8. candidate models #}
+<section class="card"><header><div><h2>Other ways of estimating, compared</h2><p>Each method guesses SBI's next figure from the last one, the account counts and the bank movement, and is scored on what SBI really reported, in date order. None is switched on automatically.</p></div></header>
+  <div class="body flush table-wrap"><table class="t"><thead><tr><th>Method</th><th>Role</th><th>Result</th><th class="num">Refreshes</th><th class="num">Months</th><th class="num">Better than carry-forward by</th></tr></thead><tbody>
+  {% for m in models %}<tr><td><b>{{ m.label }}</b><span class="sub">{{ m.description }}</span>{% if m.blocked_reason %}<span class="sub">Blocked: {{ m.blocked_reason }}</span>{% elif m.promotion_problems %}<span class="sub">Cannot be switched on yet: {{ m.promotion_problems|join:" " }}</span>{% endif %}</td>
+    <td>{{ m.stage_label }}</td>
+    <td>{% with e=m.latest_evaluation %}{% if e %}{% if e.verdict == "RECOMMENDED" %}{% include "dashboard/components/badge.html" with tone="ok" text=e.verdict_label %}{% elif e.verdict == "NOT_RECOMMENDED" %}{% include "dashboard/components/badge.html" with tone="warn" text=e.verdict_label %}{% else %}{% include "dashboard/components/badge.html" with tone="info" text=e.verdict_label %}{% endif %}<span class="sub">{{ e.plain }}</span>{% else %}{% if m.stage == "BASELINE" %}The reference every method must beat{% else %}Not evaluated yet{% endif %}{% endif %}{% endwith %}</td>
+    <td class="num">{% if m.latest_evaluation %}{{ m.latest_evaluation.n_events }}{% else %}&mdash;{% endif %}</td><td class="num">{% if m.latest_evaluation %}{{ m.latest_evaluation.n_cycles }}{% else %}&mdash;{% endif %}</td>
+    <td class="num">{% with e=m.latest_evaluation %}{% if e and e.verdict == "RECOMMENDED" or e and e.verdict == "NOT_RECOMMENDED" %}{{ e.relative_gain|pct0 }}{% else %}&mdash;{% endif %}{% endwith %}</td></tr>
+  {% endfor %}</tbody></table></div></section>
+
+{# ---------------------------------------------------------------- 9. history #}
+<section class="card"><header><div><h2>Method change history</h2><p>Who changed which method, when and why. Changes are never edited afterwards.</p></div></header>
+  <div class="body">{% if history %}<ul class="stack" style="list-style:none;padding:0;margin:0">{% for h in history %}<li><b>{{ h.kind_label }}</b>: {{ h.model_label }}{% if h.previous %} (was {{ h.previous }}){% endif %} <span class="small muted">{{ h.at|date:"j M Y, g:i a" }} by {{ h.actor }}</span>{% if h.reason %}<br><span class="small">{{ h.reason }}</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p>No changes yet.</p>{% endif %}</div></section>
+{% endif %}
+{% endblock %}

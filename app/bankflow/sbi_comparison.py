@@ -149,19 +149,12 @@ def _method_metrics(run: HypothesisRun) -> dict:
     return run.metrics or {}
 
 
-def gate(run: HypothesisRun | None) -> dict:
-    """The agreed acceptance criteria, each with the stored observation. Never a verdict of its
-    own: `satisfied` is True only when every computable criterion is met, and even then the
-    separate approval is outstanding, so the predictor stays shadow-only."""
-    if run is None:
-        return {
-            "has_run": False, "status": "NOT_RUN", "satisfied": False, "criteria": [],
-            "text": "No validation run exists yet. The predictor has not been evaluated.",
-            "approval": "Not granted",
-        }
-    m = _method_metrics(run)
+def criteria_for(m: dict, method: str) -> list[dict]:
+    """The agreed acceptance criteria, each with the stored observation, for one method's metrics
+    (the shape account_hypothesis.score_rows returns). Shared by the validation gate and by the
+    learning app's candidate evaluation, so both judge a method by the same pre-declared rules."""
     cmp_ = m.get("primary_vs_carry_forward") or {}
-    p90 = ((m.get("candidates") or {}).get(mc.METHOD) or {}).get("p90_ape_pct")
+    p90 = ((m.get("candidates") or {}).get(method) or {}).get("p90_ape_pct")
     ci = cmp_.get("mae_gain_ci95_over_events") or [None, None]
     n_events, n_cycles, n_pairs = m.get("n_events", 0), m.get("n_cycles", 0), m.get("n_pairs", 0)
     win, gain = cmp_.get("event_win_share"), cmp_.get("relative_mae_gain")
@@ -169,7 +162,7 @@ def gate(run: HypothesisRun | None) -> dict:
     def c(label, required, observed, met):
         return {"label": label, "required": required, "observed": observed, "met": met}
 
-    criteria = [
+    return [
         c("90th-percentile absolute % error on held-out refreshes", f"{P90_LIMIT_PCT:g}% or less",
           None if p90 is None else f"{p90:.2f}%", None if p90 is None else p90 <= P90_LIMIT_PCT),
         c("Beats carry-forward", "Lower error than carry-forward",
@@ -191,6 +184,20 @@ def gate(run: HypothesisRun | None) -> dict:
         c("Comparisons (system requirement)", f"At least {ah.MIN_PAIRS_VALIDATED}", str(n_pairs),
           n_pairs >= ah.MIN_PAIRS_VALIDATED),
     ]
+
+
+def gate(run: HypothesisRun | None) -> dict:
+    """The agreed acceptance criteria, each with the stored observation. Never a verdict of its
+    own: `satisfied` is True only when every computable criterion is met, and even then the
+    separate approval is outstanding, so the predictor stays shadow-only."""
+    if run is None:
+        return {
+            "has_run": False, "status": "NOT_RUN", "satisfied": False, "criteria": [],
+            "text": "No validation run exists yet. The predictor has not been evaluated.",
+            "approval": "Not granted",
+        }
+    m = _method_metrics(run)
+    criteria = criteria_for(m, mc.METHOD)
     met = all(x["met"] is True for x in criteria)
     return {
         "has_run": True, "status": run.status, "detail": run.detail, "run_at": run.created_at,
