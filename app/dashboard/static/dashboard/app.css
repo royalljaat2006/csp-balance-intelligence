@@ -339,7 +339,11 @@ details.card > summary > header p { color: var(--ink-3); font-size: 13px; margin
 details.card:not([open]) > summary > header { padding-bottom: 16px; }
 
 .btn svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-html, body { max-width: 100%; overflow-x: hidden; }
+/* Stop sideways scrolling without making <body> a scroll container: overflow hidden on both
+   html and body does, and that stops the sticky sidebar and top bar from staying in view. */
+html { overflow-x: hidden; }
+html, body { max-width: 100%; }
+body { overflow-x: clip; }
 
 .fresh { white-space: nowrap; }
 @media (max-width: 520px) { .fresh { font-size: 12px; padding: 4px 8px; } }
